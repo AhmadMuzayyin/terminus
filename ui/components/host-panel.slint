@@ -1,4 +1,4 @@
-import { ScrollView, ComboBox, SpinBox } from "std-widgets.slint";
+import { ScrollView, SpinBox } from "std-widgets.slint";
 import { Tokens } from "../tokens.slint";
 import { HostsModel, NewHostForm } from "../models.slint";
 import { DialogField, DialogButton, GroupChipPicker } from "./dialogs.slint";
@@ -59,7 +59,10 @@ export component HostSlideOver inherits Rectangle {
         port: port-spin.value,
         username: username-field.value,
         password: password-field.value,
-        kind: kind-combo.current-value == "Cisco IOS" ? "cisco_ios" : "ssh",
+        // Selector "Jenis koneksi" (SSH/Cisco IOS) DIHAPUS — panel ini
+        // fokus SSH saja (atas permintaan eksplisit user), selalu
+        // kirim "ssh".
+        kind: "ssh",
         group-id: root.selected-group-id,
         tags: tags-field.value,
     };
@@ -68,6 +71,17 @@ export component HostSlideOver inherits Rectangle {
         VerticalLayout {
             padding: 20px;
             spacing: Tokens.stack-gap;
+            // WAJIB — akar masalah SAMA PERSIS dengan yang sudah
+            // diperbaiki di `TerminalSettingsPanel` (terminal-settings
+            // .slint): default `VerticalLayout` (BUKAN "start")
+            // mendistribusikan sisa ruang vertikal ke elemen yang TIDAK
+            // punya height eksplisit — di sini `port-spin` (`SpinBox`
+            // std-widget, tidak seperti `DialogField` yang eksplisit
+            // `height: 56px`) yang jadi "penyerap"-nya, melar jadi
+            // kotak raksasa (laporan user: "input port masih tidak
+            // sama ukurannya"). `alignment: start` maksa konten mepet
+            // ke atas, tidak ada elemen yang melar.
+            alignment: start;
 
             HorizontalLayout {
                 spacing: 8px;
@@ -146,7 +160,7 @@ export component HostSlideOver inherits Rectangle {
                 placeholder: "mis. 192.168.1.10";
                 initial-value: HostsModel.panel-host-host;
             }
-            port-spin := SpinBox { minimum: 1; maximum: 65535; value: HostsModel.panel-host-port; }
+            port-spin := SpinBox { width: 100%; minimum: 1; maximum: 65535; value: HostsModel.panel-host-port; }
             username-field := DialogField {
                 label-text: "Username";
                 placeholder: "mis. root";
@@ -161,17 +175,6 @@ export component HostSlideOver inherits Rectangle {
                 label-text: "Tags";
                 placeholder: "mis. production, database";
                 initial-value: HostsModel.panel-host-tags;
-            }
-
-            Text {
-                text: "Jenis koneksi";
-                color: Tokens.on-surface-variant;
-                font-family: Tokens.font-body;
-                font-size: 12px;
-            }
-            kind-combo := ComboBox {
-                model: ["SSH", "Cisco IOS"];
-                current-value: HostsModel.panel-host-kind == "cisco_ios" ? "Cisco IOS" : "SSH";
             }
 
             Text {

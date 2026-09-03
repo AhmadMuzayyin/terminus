@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Tokens } from "../tokens.slint";
-import { ConsoleModel, TerminalTabsModel } from "../models.slint";
+import { ConsoleModel } from "../models.slint";
 import { TerminalRowView } from "./terminal-view.slint";
 
 // Area terminal interaktif buat sesi Console (serial) — pola SAMA
@@ -16,7 +16,23 @@ import { TerminalRowView } from "./terminal-view.slint";
 // `terminal-view.slint`, cuma bagian yang beda (keyboard mapping +
 // global mana yang dibaca) yang dobel.
 export component ConsoleView inherits Rectangle {
-    background: TerminalTabsModel.terminal-bg-color;
+    // SENGAJA BUKAN `TerminalTabsModel.terminal-bg-color` (itu punya
+    // tab SSH, ganti-ganti tiap pindah host — lihat `switch_to_tab` di
+    // state.rs) — dulu ke-reuse dari situ, akibatnya begitu user ganti
+    // tema di SATU tab SSH, background Console ikut kebawa berubah
+    // juga (laporan user: "tema nya tidak boleh campur... harus punya
+    // tema sendiri sendiri"). Console TIDAK punya UI ganti tema sama
+    // sekali (selalu render pakai `terminus_dark()`, lihat
+    // `render_and_push_console` di state.rs) — `Tokens.surface-
+    // container-lowest` di bawah ini NILAINYA SENGAJA sama persis
+    // (`#060e20`) dengan `terminus_dark().background`, supaya area
+    // KOSONG (sel yang belum ketulisan apa-apa, TIDAK dapat "run" dari
+    // `grid_to_plain_rows` — makanya kelihatan "background cuma
+    // ngikutin teks" waktu warnanya beda dari container-nya, laporan
+    // user yang kedua) nyambung mulus sewarna dengan background asli
+    // sel yang KETULISAN. Independen total dari apa pun yang terjadi
+    // di tab SSH manapun.
+    background: Tokens.surface-container-lowest;
 
     focus-scope := FocusScope {
         key-pressed(event) => {

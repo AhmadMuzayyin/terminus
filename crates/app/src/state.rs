@@ -81,11 +81,18 @@ pub struct AppState {
     /// perlu nunggu byte baru dari SSH buat re-render tampilan yang
     /// sudah ada.
     terminals: Arc<Mutex<HashMap<Uuid, TerminalInstance>>>,
-    /// Color theme terminal yang lagi aktif — GLOBAL buat semua tab
-    /// (bukan per-host), diubah lewat panel pengaturan (⚙ di halaman
-    /// Terminal). Dibaca ULANG tiap kali render (bukan disimpan di
-    /// `TerminalInstance`) — lihat `TerminalInstance::snapshot`.
-    terminal_theme: Arc<Mutex<terminus_term_emulator::palette::Palette>>,
+    /// Nama color theme (lihat `terminus_term_emulator::palette::
+    /// built_in_themes()`) PER HOST — diubah lewat panel pengaturan (⚙
+    /// di halaman Terminal), disimpan keyed by `HostProfile::id` (atas
+    /// permintaan eksplisit user: "setiap host bisa beda theme").
+    /// Host yang belum pernah eksplisit ganti tema TIDAK ada entry-nya
+    /// di sini — `theme_name_for()`/`palette_for()` fallback ke
+    /// default "Terminus Dark". SENGAJA cuma in-memory (hidup selama
+    /// app jalan, TIDAK ditulis ke vault) — bukan lintas restart app,
+    /// lihat catatan yang sama di komentar `theme_name_for()`. Dibaca
+    /// ULANG tiap kali render (bukan disimpan di `TerminalInstance`)
+    /// — lihat `TerminalInstance::snapshot`.
+    terminal_themes: Arc<Mutex<HashMap<Uuid, String>>>,
     /// Id host/grup yang lagi dicentang buat bulk delete (checkbox di
     /// tiap kartu, lihat `HostsModel.host-selection-toggled`/`group-
     /// selection-toggled` di models.slint). Dipegang Rust (bukan
@@ -155,6 +162,11 @@ pub struct AppState {
     /// — layar Connecting SENGAJA cuma bisa nampilin satu proses
     /// connect dalam satu waktu (lihat `ConnectingModel`).
     active_connect: Arc<Mutex<Option<(Option<Uuid>, tokio::task::AbortHandle)>>>,
+    /// Host yang lagi "nunggu" password diisi lewat layar Connecting
+    /// (`ConnectingModel.needs-password`, lihat `on_host_connect_
+    /// requested` & `on_password_submitted`) — `None` waktu tidak lagi
+    /// nunggu input apa pun.
+    pending_password_profile: Arc<Mutex<Option<HostProfile>>>,
 }
 
 /// Dipanggil sekali dari `main.rs` setelah `AppWindow::new()`. Nyambungin
@@ -172,7 +184,7 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultStore) -> Arc<AppState> {
         tab_meta: Arc::new(Mutex::new(Vec::new())),
         tab_cache: Arc::new(Mutex::new(HashMap::new())),
         terminals: Arc::new(Mutex::new(HashMap::new())),
-        terminal_theme: Arc::new(Mutex::new(terminus_term_emulator::palette::terminus_dark())),
+        terminal_themes: Arc::new(Mutex::new(HashMap::new())),
         selected_hosts: Arc::new(Mutex::new(std::collections::HashSet::new())),
         selected_groups: Arc::new(Mutex::new(std::collections::HashSet::new())),
         sftp: Arc::new(TokioMutex::new(None)),
@@ -188,6 +200,7 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultStore) -> Arc<AppState> {
         console_terminal: Arc::new(Mutex::new(None)),
         console_ports: Arc::new(Mutex::new(Vec::new())),
         active_connect: Arc::new(Mutex::new(None)),
+        pending_password_profile: Arc::new(Mutex::new(None)),
     });
 
     let is_first_run = !state.vault.lock().unwrap().is_initialized().unwrap_or(false);
@@ -218,12 +231,12 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultStore) -> Arc<AppState> {
             .map(|(_, p)| slint::Color::from_rgb_u8(p.ansi[2].r, p.ansi[2].g, p.ansi[2].b))
             .collect::<Vec<_>>(),
     )));
-    // Background terminal ikut tema AKTIF (`state.terminal_theme`,
-    // default `terminus_dark()`) — dulu TIDAK ada, `TerminalView`/
-    // wrapper-nya pakai token statis yang tidak ikut ganti tema, lihat
-    // komentar panjang `terminal-bg-color` di models.slint.
+    // Background terminal ikut tema — belum ada host aktif waktu
+    // startup, jadi ini SENGAJA default global (`terminus_dark()`)
+    // langsung, bukan lookup per-host (lihat `theme_name_for`/
+    // `palette_for`, dipakai begitu ada tab yang benar-benar aktif).
     {
-        let bg = state.terminal_theme.lock().unwrap_or_else(|e| e.into_inner()).background;
+        let bg = terminus_term_emulator::palette::terminus_dark().background;
         tm.set_terminal_bg_color(slint::Color::from_rgb_u8(bg.r, bg.g, bg.b));
     }
 
@@ -989,29 +1002,49 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     return;
                 }
             };
+            // `Ok(bytes) if !bytes.is_empty()` — dua skenario "belum
+            // ada password" yang dua-duanya HARUS lewat jalur prompt di
+            // bawah, bukan cuma `Err`: (1) `read_secret` gagal/`Err`
+            // (credential_id belum PERNAH di-`store_secret`, skenario
+            // paling umum: host hasil Import SecureCRT), (2) `Ok(vec
+            // ![])` (PERNAH tersimpan tapi kosong — bisa terjadi kalau
+            // host baru dibuat dengan field Password sengaja dikosongi).
             let password = {
                 let vault = state.vault.lock().unwrap();
                 match vault.read_secret(credential_id) {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                    Err(e) => {
-                        // Skenario paling umum kena ini: host hasil
-                        // Import (lihat `on_import_xml_requested`) yang
-                        // memang belum punya password tersimpan sama
-                        // sekali — kasih hint eksplisit, bukan cuma
-                        // pesan error database mentah.
-                        show_notice(
-                            &ui,
-                            &format!("Gagal baca kredensial (mungkin belum diisi password): {e}"),
-                            true,
-                        );
-                        return;
-                    }
+                    Ok(bytes) if !bytes.is_empty() => Some(String::from_utf8_lossy(&bytes).to_string()),
+                    _ => None,
                 }
             };
 
-            let ui_weak_task = ui_weak.clone();
-            let state_task = state.clone();
-            track_connect_task(&state, Some(uuid), perform_connect(ui_weak_task, state_task, profile, password));
+            match password {
+                Some(password) => {
+                    let ui_weak_task = ui_weak.clone();
+                    let state_task = state.clone();
+                    track_connect_task(&state, Some(uuid), perform_connect(ui_weak_task, state_task, profile, password));
+                }
+                None => {
+                    // Password belum ada — DULU langsung gagal dengan
+                    // notice error, user harus buka panel Host Details
+                    // manual dulu. SEKARANG (atas permintaan eksplisit
+                    // user): tampilkan layar Connecting dalam mode
+                    // "minta password" (`ConnectingModel.needs-
+                    // password`), simpan profile-nya di `state.pending_
+                    // password_profile` biar `on_password_submitted`
+                    // (di bawah) tahu connect ke siapa begitu user
+                    // submit.
+                    let label = profile.label.clone();
+                    let subtitle = format!("SSH {}:{}", profile.host, profile.port);
+                    let avatar_letter = label.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string());
+                    *state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = Some(profile);
+                    let cm = ui.global::<ConnectingModel>();
+                    cm.set_label(label.into());
+                    cm.set_subtitle(subtitle.into());
+                    cm.set_avatar_letter(avatar_letter.into());
+                    cm.set_needs_password(true);
+                    cm.set_visible(true);
+                }
+            }
         });
     }
 
@@ -1353,13 +1386,22 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak = ui_weak.clone();
             let state = state.clone();
             tokio::spawn(async move {
-                *state.terminal_theme.lock().unwrap_or_else(|e| e.into_inner()) = theme;
                 let active_id = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner());
+                // Simpan PER HOST (bukan lagi satu nilai global untuk
+                // semua tab) — atas permintaan eksplisit user: "setiap
+                // host bisa beda theme". Tanpa tab aktif (harusnya
+                // tidak mungkin — panel pengaturan ini cuma bisa
+                // dibuka dari halaman Terminal, yang berarti ADA tab
+                // aktif — tapi dijaga jaga-jaga) ganti tema tidak
+                // "nempel" ke host mana pun, cuma ganti tampilan
+                // sesaat kalau kebetulan lagi tidak ada tab.
+                if let Some(id) = active_id {
+                    state.terminal_themes.lock().unwrap_or_else(|e| e.into_inner()).insert(id, name.to_string());
+                }
                 // Update background PANEL terminal juga (bukan cuma
-                // per-sel teks) — TERLEPAS ada tab aktif atau tidak,
-                // biar begitu user buka/pindah tab ke Terminal
-                // nanti sudah kepakai. Lihat komentar `terminal-bg-
-                // color` di models.slint.
+                // per-sel teks) — biar begitu user buka/pindah tab ke
+                // Terminal nanti sudah kepakai. Lihat komentar
+                // `terminal-bg-color` di models.slint.
                 let bg = slint::Color::from_rgb_u8(theme.background.r, theme.background.g, theme.background.b);
                 let ui_weak_bg = ui_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -2400,22 +2442,73 @@ where
 /// `perform_connect`/`sftp_connect_and_refresh`/`on_console_connect_
 /// requested`, bukan lewat callback terpisah).
 fn wire_connecting_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
-    let ui_weak = ui.as_weak();
-    let state = state.clone();
-    ui.global::<ConnectingModel>().on_cancel_requested(move || {
-        let Some(ui) = ui_weak.upgrade() else { return };
-        let prev = state.active_connect.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some((host_id, handle)) = prev {
-            handle.abort();
-            if let Some(uuid) = host_id {
-                set_status(&state, uuid, "offline");
-                refresh_hosts_model(&ui, &state);
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ConnectingModel>().on_cancel_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let prev = state.active_connect.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some((host_id, handle)) = prev {
+                handle.abort();
+                if let Some(uuid) = host_id {
+                    set_status(&state, uuid, "offline");
+                    refresh_hosts_model(&ui, &state);
+                }
             }
-        }
-        ui.global::<ConnectingModel>().set_visible(false);
-        ui.global::<SftpModel>().set_connecting(false);
-        ui.global::<ConsoleModel>().set_connecting(false);
-    });
+            // Batal juga membersihkan permintaan password yang lagi
+            // menggantung (kalau lagi di mode itu) — jangan sampai
+            // submit "nyasar" nyambung ke host yang sudah dibatalkan.
+            *state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let cm = ui.global::<ConnectingModel>();
+            cm.set_needs_password(false);
+            cm.set_visible(false);
+            ui.global::<SftpModel>().set_connecting(false);
+            ui.global::<ConsoleModel>().set_connecting(false);
+        });
+    }
+
+    // --- Password diisi di layar Connecting (host tersimpan yang
+    //     belum ada password — lihat `on_host_connect_requested` &
+    //     komentar panjang `ConnectingModel.needs-password`,
+    //     models.slint) — simpan ke vault (biar tidak ditanya lagi
+    //     next time) SEKALIGUS langsung connect, satu submit. ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ConnectingModel>().on_password_submitted(move |password: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let password = password.to_string();
+            if password.is_empty() {
+                return; // kosong -> jangan apa-apa, biarkan user coba lagi/Batal
+            }
+            let Some(profile) = state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+                return;
+            };
+            let credential_id = match &profile.auth {
+                AuthMethod::Password { credential_id } => *credential_id,
+                _ => return,
+            };
+            let uuid = profile.id;
+            ui.global::<ConnectingModel>().set_needs_password(false);
+
+            let vault = state.vault.clone();
+            let password_bytes = password.clone().into_bytes();
+            let ui_weak_task = ui_weak.clone();
+            let state_task = state.clone();
+            let fut = async move {
+                // Simpan dulu (best-effort — gagal simpan TIDAK
+                // menggagalkan connect-nya, cuma berarti next time
+                // ditanya lagi) baru connect, biar begitu login sukses
+                // password itu SUDAH ada di vault buat next time.
+                let _ = tokio::task::spawn_blocking(move || {
+                    vault.lock().unwrap().store_secret(credential_id, &password_bytes)
+                })
+                .await;
+                perform_connect(ui_weak_task, state_task, profile, password).await;
+            };
+            track_connect_task(&state, Some(uuid), fut);
+        });
+    }
 }
 
 /// Task yang hidup selama satu sesi Console berlangsung — pola SAMA
@@ -2482,16 +2575,16 @@ fn spawn_console_reader(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, m
     });
 }
 
-/// Snapshot `state.console_terminal` (pakai color theme yang lagi
-/// aktif — SAMA tema yang dipakai tab SSH, `TerminalTabsModel`
-/// bukanlah "punya" Console, tapi tema terminal memang pengaturan
-/// GLOBAL, lihat komentar `AppState.terminal_theme`) dan dorong ke
-/// `ConsoleModel.rows`.
+/// Snapshot `state.console_terminal` dan dorong ke `ConsoleModel.rows`.
+/// Console (serial) TIDAK punya konsep `HostProfile`/`Uuid` (port
+/// dipilih ulang tiap sesi, lihat komentar panjang di `page-console
+/// .slint`), jadi TIDAK ikut fitur tema-per-host — selalu pakai
+/// default global (`terminus_dark()`).
 fn render_and_push_console(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>) {
     let plain = {
         let terminal = state.console_terminal.lock().unwrap_or_else(|e| e.into_inner());
         let Some(term) = terminal.as_ref() else { return };
-        let theme = state.terminal_theme.lock().unwrap_or_else(|e| e.into_inner());
+        let theme = terminus_term_emulator::palette::terminus_dark();
         console::grid_to_plain_rows(&term.snapshot(&theme))
     };
     let ui_weak2 = ui_weak.clone();
@@ -2794,6 +2887,15 @@ fn switch_to_tab(ui: &AppWindow, state: &Arc<AppState>, id: Uuid) {
         Some(rows) => console::plain_rows_to_slint(rows),
         None => ModelRc::new(VecModel::from(Vec::<TermRow>::new())),
     });
+    // Tema PER HOST (lihat `AppState.terminal_themes`) — begitu pindah
+    // (atau baru connect ke) tab ini, indikator "Color Theme" yang lagi
+    // ke-highlight di panel pengaturan DAN warna background panel
+    // terminal harus ikut tema HOST INI, bukan nyisa dari tab
+    // sebelumnya.
+    let theme_name = theme_name_for(state, id);
+    let palette = terminus_term_emulator::palette::by_name(&theme_name).unwrap_or_else(terminus_term_emulator::palette::terminus_dark);
+    tm.set_terminal_theme_name(theme_name.into());
+    tm.set_terminal_bg_color(slint::Color::from_rgb_u8(palette.background.r, palette.background.g, palette.background.b));
     ui.set_current_page(6); // 6 = halaman virtual Terminal, lihat app-window.slint
 }
 
@@ -3026,7 +3128,7 @@ fn render_and_cache_tab(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>,
     let plain = {
         let terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
         let Some(term) = terminals.get(&host_id) else { return };
-        let theme = state.terminal_theme.lock().unwrap_or_else(|e| e.into_inner());
+        let theme = palette_for(state, host_id);
         console::grid_to_plain_rows(&term.snapshot(&theme))
     };
     state.tab_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(host_id, plain.clone());
@@ -3073,6 +3175,28 @@ fn scan_monospace_fonts() -> Vec<slint::SharedString> {
 
 fn set_status(state: &Arc<AppState>, id: Uuid, status: &str) {
     state.statuses.lock().unwrap().insert(id, status.to_string());
+}
+
+/// Nama tema tersimpan buat host ini (lihat `AppState.terminal_themes`)
+/// — "Terminus Dark" (default) kalau host itu belum pernah eksplisit
+/// ganti tema.
+fn theme_name_for(state: &Arc<AppState>, host_id: Uuid) -> String {
+    state
+        .terminal_themes
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&host_id)
+        .cloned()
+        .unwrap_or_else(|| "Terminus Dark".to_string())
+}
+
+/// `Palette` beneran buat host ini — resolve nama tema
+/// (`theme_name_for`) lewat `palette::by_name`, fallback ke
+/// `terminus_dark()` kalau namanya (harusnya tidak pernah terjadi,
+/// nama SELALU dari daftar built-in) tidak dikenali.
+fn palette_for(state: &Arc<AppState>, host_id: Uuid) -> terminus_term_emulator::palette::Palette {
+    let name = theme_name_for(state, host_id);
+    terminus_term_emulator::palette::by_name(&name).unwrap_or_else(terminus_term_emulator::palette::terminus_dark)
 }
 
 fn status_of(state: &Arc<AppState>, id: Uuid) -> String {

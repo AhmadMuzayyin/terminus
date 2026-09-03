@@ -88,6 +88,11 @@ component TabChip inherits Rectangle {
 // perlu dikonfirmasi dulu sebagai pekerjaan tersendiri.
 export component TerminalTabBar inherits Rectangle {
     in property <bool> sidebar-collapsed: false;
+    // Disembunyikan waktu layar unlock (belum ada sidebar buat
+    // ditoggle sama sekali di situ — NavRail cuma dirender sesudah
+    // `VaultModel.is-unlocked`, lihat app-window.slint) — atas
+    // permintaan eksplisit user.
+    in property <bool> show-sidebar-toggle: true;
     in property <bool> show-search: true;
     // Cuma tampil waktu halaman Terminal aktif (atas permintaan user
     // — sebelumnya SELALU ada, dianggap tidak relevan di halaman lain).
@@ -120,7 +125,7 @@ export component TerminalTabBar inherits Rectangle {
         // 0, kosong tanpa konten) alih-alih melebar. Default (`stretch`,
         // tanpa nulis `alignment` sama sekali) yang benar di sini.
 
-        Rectangle {
+        if root.show-sidebar-toggle : Rectangle {
             width: 40px;
             height: 40px;
             border-radius: Tokens.radius-default;
@@ -137,7 +142,7 @@ export component TerminalTabBar inherits Rectangle {
             }
             sidebar-touch := TouchArea { clicked => { root.toggle-sidebar-requested(); } }
         }
-        Rectangle {
+        if root.show-sidebar-toggle : Rectangle {
             width: 1px;
             background: Tokens.outline-variant;
         }

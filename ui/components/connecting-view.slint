@@ -1,5 +1,5 @@
 import { Tokens } from "../tokens.slint";
-import { DialogButton } from "./dialogs.slint";
+import { DialogButton, DialogField } from "./dialogs.slint";
 import { ConnectingModel } from "../models.slint";
 
 // Titik-titik loading ("● ● ●" bergantian terang-redup) — indikator
@@ -92,27 +92,63 @@ export component ConnectingView inherits Rectangle {
 
         Rectangle { height: Tokens.gutter-md; }
 
-        HorizontalLayout {
+        // Host TERSIMPAN yang belum ada password (mis. hasil Import
+        // SecureCRT) — minta di sini, LANGSUNG lanjut connect otomatis
+        // begitu di-submit (lihat komentar panjang `ConnectingModel
+        // .needs-password`, models.slint), gantikan spinner selama
+        // menunggu input.
+        if ConnectingModel.needs-password : HorizontalLayout {
             alignment: center;
-            LoadingDots { }
+            VerticalLayout {
+                width: 260px;
+                spacing: Tokens.stack-gap;
+                pw-field := DialogField {
+                    label-text: "Password";
+                    is-password: true;
+                    auto-focus: true;
+                    accepted => { ConnectingModel.password-submitted(self.value); }
+                }
+                HorizontalLayout {
+                    spacing: Tokens.inline-gap;
+                    DialogButton {
+                        label-text: "Batal";
+                        horizontal-stretch: 1;
+                        clicked => { ConnectingModel.cancel-requested(); }
+                    }
+                    DialogButton {
+                        label-text: "Connect";
+                        filled: true;
+                        horizontal-stretch: 1;
+                        clicked => { ConnectingModel.password-submitted(pw-field.value); }
+                    }
+                }
+            }
         }
 
-        Text {
-            text: "Menghubungkan...";
-            color: Tokens.on-surface-variant;
-            font-family: Tokens.font-body;
-            font-size: 12px;
-            horizontal-alignment: center;
-        }
+        if !ConnectingModel.needs-password : VerticalLayout {
+            spacing: Tokens.gutter-md;
+            HorizontalLayout {
+                alignment: center;
+                LoadingDots { }
+            }
 
-        Rectangle { height: Tokens.gutter-md; }
+            Text {
+                text: "Menghubungkan...";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
 
-        HorizontalLayout {
-            alignment: center;
-            DialogButton {
-                label-text: "Batal";
-                width: 120px;
-                clicked => { ConnectingModel.cancel-requested(); }
+            Rectangle { height: Tokens.gutter-md; }
+
+            HorizontalLayout {
+                alignment: center;
+                DialogButton {
+                    label-text: "Batal";
+                    width: 120px;
+                    clicked => { ConnectingModel.cancel-requested(); }
+                }
             }
         }
     }

@@ -560,6 +560,19 @@ export global ConnectingModel {
     // tidak ada sesi yang "kebuka sendiri" belakangan sesudah user
     // sudah membatalkan & pindah ke halaman lain.
     callback cancel-requested();
+
+    // Host TERSIMPAN yang belum pernah diisi password (mis. hasil
+    // Import SecureCRT) — dulu langsung gagal connect dengan pesan
+    // error "mungkin belum diisi password", user harus buka panel Host
+    // Details dulu buat isi manual SEBELUM connect. Sekarang (atas
+    // permintaan eksplisit user): begitu proses connect ketahuan host
+    // ini belum ada password tersimpan, layar Connecting ganti jadi
+    // form isi password (bukan spinner) — submit di sini LANGSUNG
+    // lanjut connect otomatis (Rust yang urus simpan ke vault +
+    // connect, lihat `on_password_submitted` di state.rs), tidak perlu
+    // bolak-balik ke panel Host Details lagi.
+    in-out property <bool> needs-password: false;
+    callback password-submitted(string);
 }
 
 // State unlock/create vault. Terpisah dari HostsModel karena logically

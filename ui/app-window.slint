@@ -58,51 +58,60 @@ export component AppWindow inherits Window {
         : root.current-page == 2 ? "Console"
         : "Terminal";
 
-    // SELALU diinstansiasi (bukan `if VaultModel.is-unlocked : ...`
-    // lagi) + `visible:` sebagai gantinya — `window-bar` di dalamnya
-    // butuh bisa dipanggil lewat id dari `focus-search()` (public
-    // function root, dipanggil Rust buat shortcut Ctrl+S) yang
-    // TIDAK BISA menjangkau id di dalam blok `if` (lihat catatan
-    // sama persis di `terminal-tabs-bar.slint` soal `search-field`).
-    // Sebelum unlock, VaultDialog nutup semuanya sebagai overlay di
-    // atas (lihat di bawah) jadi tidak kelihatan meski `visible:false`
-    // bukan `if` — cuma beda "tidak digambar" vs "tidak pernah ada",
-    // tidak ada dampak visual/fungsional lain.
+    // SELALU diinstansiasi — `window-bar` di dalamnya butuh bisa
+    // dipanggil lewat id dari `focus-search()` (public function root,
+    // dipanggil Rust buat shortcut Ctrl+S) yang TIDAK BISA menjangkau
+    // id di dalam blok `if` (lihat catatan sama persis di
+    // `terminal-tabs-bar.slint` soal `search-field`).
     VerticalLayout {
-        visible: VaultModel.is-unlocked;
-        // Window bar — SELALU di paling atas jendela, DI LUAR/DI ATAS
-        // NavRail+halaman (bukan lagi di dalam kolom kanan) supaya
-        // tombol togglenya bisa nyembunyiin NavRail tanpa ikut
-        // kesembunyi sendiri. Isinya: tombol toggle sidebar + daftar
-        // tab SSH yang lagi terbuka (lihat komentar panjang di
-        // `TerminalTabBar`).
+        // Window bar — SELALU di paling atas jendela, TERMASUK
+        // SEBELUM vault di-unlock (atas permintaan eksplisit user).
+        // Dulu window-bar ini ikut ke-hide bareng seluruh isi jendela
+        // selama layar unlock (`visible: VaultModel.is-unlocked` di
+        // level `VerticalLayout` ini) — karena `no-frame: true` di
+        // atas juga menghapus title bar ASLI OS, hasilnya jendela
+        // waktu locked LITERALLY tidak punya cara close/minimize/drag
+        // sama sekali lewat UI manapun. Sekarang window-bar jadi anak
+        // LANGSUNG `VerticalLayout` ini (bukan lagi di dalam blok yang
+        // di-gate `is-unlocked`), search box & gear pengaturan-nya
+        // sendiri tetap disembunyikan selama locked (tidak ada
+        // gunanya cari host yang datanya belum ke-load).
         window-bar := TerminalTabBar {
             sidebar-collapsed: root.sidebar-collapsed;
-            show-search: root.current-page != 6;
-            show-settings-gear: root.current-page == 6;
+            show-sidebar-toggle: VaultModel.is-unlocked;
+            show-search: VaultModel.is-unlocked && root.current-page != 6;
+            show-settings-gear: VaultModel.is-unlocked && root.current-page == 6;
             toggle-sidebar-requested => { root.sidebar-collapsed = !root.sidebar-collapsed; }
         }
 
-        // Layar "Connecting" GANTIKAN seluruh area ini (NavRail +
-        // halaman) selama proses connect — window bar (di atas) TETAP
-        // kelihatan (minimize/maximize/close tetap jalan), makanya
-        // ditaruh di sini (bukan overlay/scrim menutupi semuanya) —
-        // benar-benar "pindah ke halaman baru", persis permintaan
-        // eksplisit user, dipakai SATU komponen yang sama oleh SEMUA
-        // alur connect (SSH/SFTP/Console, lihat `ConnectingModel` di
-        // models.slint).
-        if ConnectingModel.visible : ConnectingView { }
-        if !ConnectingModel.visible : HorizontalLayout {
-            if !root.sidebar-collapsed : NavRail {
-                current-page: root.current-page;
-                page-selected(i) => { root.current-page = i; }
-            }
+        // Sebelum unlock: `VaultDialog` (SUDAH opaque, bukan scrim
+        // transparan — lihat komentar di dalamnya) ngisi SISA area DI
+        // BAWAH window-bar, bukan lagi overlay yang nutupin window-bar
+        // juga. Sesudah unlock: konten app biasa (NavRail+halaman,
+        // atau layar Connecting).
+        if !VaultModel.is-unlocked : VaultDialog { }
+        if VaultModel.is-unlocked : VerticalLayout {
+            // Layar "Connecting" GANTIKAN seluruh area ini (NavRail +
+            // halaman) selama proses connect — window bar (di atas)
+            // TETAP kelihatan (minimize/maximize/close tetap jalan),
+            // makanya ditaruh di sini (bukan overlay/scrim menutupi
+            // semuanya) — benar-benar "pindah ke halaman baru", persis
+            // permintaan eksplisit user, dipakai SATU komponen yang
+            // sama oleh SEMUA alur connect (SSH/SFTP/Console, lihat
+            // `ConnectingModel` di models.slint).
+            if ConnectingModel.visible : ConnectingView { }
+            if !ConnectingModel.visible : HorizontalLayout {
+                if !root.sidebar-collapsed : NavRail {
+                    current-page: root.current-page;
+                    page-selected(i) => { root.current-page = i; }
+                }
 
-            VerticalLayout {
-                if root.current-page == 0 : PageHosts { }
-                if root.current-page == 1 : PageSftp { }
-                if root.current-page == 2 : PageConsole { }
-                if root.current-page == 6 : PageTerminal { }
+                VerticalLayout {
+                    if root.current-page == 0 : PageHosts { }
+                    if root.current-page == 1 : PageSftp { }
+                    if root.current-page == 2 : PageConsole { }
+                    if root.current-page == 6 : PageTerminal { }
+                }
             }
         }
     }
@@ -121,8 +130,6 @@ export component AppWindow inherits Window {
     public function focus-search() {
         window-bar.focus-search();
     }
-
-    if !VaultModel.is-unlocked : VaultDialog { }
 
     if VaultModel.is-unlocked && HostsModel.show-new-group-dialog : NewGroupDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-delete-open : ConfirmDeleteHostDialog { }

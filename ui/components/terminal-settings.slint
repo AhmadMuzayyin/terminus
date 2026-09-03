@@ -268,6 +268,19 @@ export component TerminalSettingsPanel inherits Rectangle {
         VerticalLayout {
             padding: 20px;
             spacing: Tokens.stack-gap;
+            // WAJIB — tanpa ini, default `VerticalLayout` (BUKAN
+            // "start", terbukti lewat `slint-viewer --screenshot`:
+            // nambah `vertical-stretch: 0` ke tiap anak SATU-SATU
+            // TIDAK mengubah apa pun) mendistribusikan sisa ruang
+            // vertikal ANTAR elemen (bukan menggelembungkan SATU
+            // elemen) — panel ini `height: 100%` di titik instansiasi
+            // (`page-terminal.slint`), jauh lebih tinggi dari
+            // kontennya, jadi tiap jeda antar section melar jadi jarak
+            // kosong besar & ambigu (laporan user). `alignment: start`
+            // maksa konten mepet ke atas, sisa ruang jadi SATU jeda di
+            // paling bawah (aman, di area scroll) — pola sama persis
+            // dipakai `page-sftp.slint`/`page-hosts.slint`.
+            alignment: start;
 
             HorizontalLayout {
                 Text {

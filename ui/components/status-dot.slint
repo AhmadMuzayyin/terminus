@@ -1,0 +1,18 @@
+import { Tokens } from "../tokens.slint";
+
+// Titik indikator status kecil (online/offline/connecting/failed).
+// Dipakai di HostCard, ConsolePage header, dst — lihat SessionStatus
+// di terminus-core (Connecting/Connected/Disconnected/Failed).
+export component StatusDot inherits Rectangle {
+    in property <string> status: "offline"; // "online" | "connecting" | "offline" | "failed"
+
+    width: 8px;
+    height: 8px;
+    border-radius: self.width / 2;
+    background: root.status == "online" ? Tokens.success
+        : root.status == "connecting" ? Tokens.warning
+        : root.status == "failed" ? Tokens.error
+        : Tokens.outline;
+
+    animate background { duration: Tokens.transition-normal; }
+}

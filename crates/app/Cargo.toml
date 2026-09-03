@@ -1,0 +1,29 @@
+[package]
+name = "terminus-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "terminus"
+path = "src/main.rs"
+
+[dependencies]
+terminus-core.workspace = true
+terminus-ssh-engine.workspace = true
+terminus-sftp-engine.workspace = true
+terminus-term-emulator.workspace = true
+terminus-cisco-driver.workspace = true
+terminus-serial-engine.workspace = true
+terminus-vault.workspace = true
+slint.workspace = true
+rfd.workspace = true
+fontdb.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

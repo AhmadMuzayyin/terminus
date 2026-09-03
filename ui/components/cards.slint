@@ -1,0 +1,474 @@
+import { Tokens } from "../tokens.slint";
+import { StatusDot } from "./status-dot.slint";
+import { IconTrash } from "./icons.slint";
+
+// --- Data shapes dipakai halaman Hosts/Groups/SFTP ---
+// Sengaja bertipe string/int sederhana (bukan Uuid dsb) supaya gampang
+// diisi dummy data untuk desain, dan gampang di-`set` dari Rust lewat
+// `ModelRc` begitu Tahap 5 (wiring VaultStore) dikerjakan.
+export struct HostItem {
+    id: string,          // Uuid HostProfile, string kosong utk item dummy/placeholder
+    label: string,
+    address: string, // "host:port"
+    kind: string,     // "SSH" | "IOS"
+    tags: string,      // tag digabung koma, mis. "production, database"
+    status: string,     // "online" | "offline" | "connecting" | "failed"
+    group: string,       // nama grup, "" kalau host ini tidak masuk grup manapun
+    checked: bool,        // dicentang buat bulk delete? diisi Rust dari state seleksi
+}
+
+export struct GroupItem {
+    id: string, // Uuid HostGroup
+    name: string,
+    subtitle: string,
+    online-count: int,
+    total-count: int,
+    accent: color,
+    checked: bool, // dicentang buat bulk delete? diisi Rust dari state seleksi
+}
+
+export struct FileEntry {
+    name: string,
+    is-dir: bool,
+    size: string,
+    modified: string,
+    // Dicentang buat bulk delete lewat menu "select option" (Select
+    // All/klik satu-satu) — sama pola dengan `HostItem.checked` di
+    // atas, diisi Rust dari state seleksi per-panel.
+    checked: bool,
+}
+
+// Kartu satu host di Dashboard — lihat refrensi GUI/hosts_dashboard.
+export component HostCard inherits Rectangle {
+    in property <HostItem> item;
+    // Nama callback dipertahankan (klik body kartu), tapi maknanya di
+    // level pemanggil (HostGrid) sekarang "select" — buka panel detail
+    // di kanan — BUKAN langsung connect. Connect jadi aksi eksplisit
+    // dari toolbar/panel. Edit & hapus juga pindah ke panel itu (lihat
+    // ui/components/host-panel.slint), makanya kartu ini balik simpel:
+    // cuma highlight border waktu `selected`.
+    in property <bool> selected: false;
+    // Checkbox bulk-delete di pojok kiri atas — terpisah dari `selected`
+    // (yang itu buat slide-over detail). Klik checkbox TIDAK boleh ikut
+    // trigger `connect-clicked`/select, makanya punya TouchArea sendiri
+    // & dideklarasikan setelah `touch` badan kartu (z-order menang).
+    callback checkbox-toggled();
+    // Single-click (didebounce lewat `click-timer` di bawah) -> select.
+    // Double-click -> connect LANGSUNG. SENGAJA tidak lagi `<=>` alias
+    // langsung ke `touch.clicked`/`touch.double-clicked` — kalau
+    // langsung dialias, `clicked` SELALU ikut kepanggil di SETIAP
+    // double-click juga (perilaku bawaan TouchArea: `clicked` duluan,
+    // BARU `double-clicked`), yang bikin slide-over sempat kebuka
+    // sekilas sebelum ke-superseded pindah connect — dilaporkan user
+    // sebagai "double-click tidak seharusnya buka slide-over sama
+    // sekali". Timer 220ms ini yang menahan `connect-clicked` supaya
+    // BATAL kepanggil kalau ternyata klik kedua datang sebelum timer
+    // habis (berarti itu double-click, bukan dua single-click terpisah).
+    callback connect-clicked();
+    callback double-clicked();
+    callback delete-clicked();
+
+    width: 260px;
+    height: 96px;
+    border-radius: Tokens.radius-lg;
+    background: touch.pressed ? Tokens.primary-container.darker(30%)
+        : touch.has-hover ? Tokens.surface-container-high
+        : Tokens.surface-container;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Tokens.primary : Tokens.outline-variant;
+    animate background { duration: Tokens.transition-fast; }
+    // Backstop: label/tags panjang HARUS kepotong "…" di dalam kartu
+    // (lihat `overflow: elide` di bawah), tapi ini jaring pengaman
+    // kedua kalau ada yang lolos — sama kayak fix overflow slide-over
+    // sebelumnya, JANGAN biarkan bocor ke kartu tetangga.
+    clip: true;
+
+    touch := TouchArea {
+        clicked => { click-timer.running = true; }
+        double-clicked => {
+            click-timer.running = false;
+            root.double-clicked();
+        }
+    }
+    click-timer := Timer {
+        interval: 220ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.connect-clicked();
+        }
+    }
+
+    VerticalLayout {
+        padding: Tokens.gutter-md;
+        alignment: center;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: Tokens.inline-gap;
+
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: Tokens.radius-md;
+                background: root.item.kind == "IOS" ? Tokens.warning-container : Tokens.primary-container;
+                Text {
+                    text: root.item.kind;
+                    color: Tokens.on-primary;
+                    font-family: Tokens.font-mono;
+                    font-size: 10px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+
+            // `horizontal-stretch: 1` WAJIB di sini — tanpa ini,
+            // VerticalLayout melebar sesuai teks label/tags TERPANJANG
+            // (tidak dibatasi lebar kartu), dan karena `HorizontalLayout`
+            // tidak clip anaknya sendiri, label panjang bakal bocor
+            // keluar kartu (persis bug yang sama dengan GroupCard di
+            // bawah & slide-over sebelumnya). Dikombinasikan dengan
+            // `overflow: elide` di Text-nya, teks kepanjangan sekarang
+            // kepotong "…" rapi di dalam batas kartu.
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.item.label;
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-body;
+                    font-size: Tokens.text-body-md;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.item.tags;
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+            // Tanda status/"connected" (StatusDot) SENGAJA dihapus dari
+            // sini atas permintaan user — kartu List sekarang murni
+            // identitas host, tanpa embel-embel status koneksi.
+        }
+
+        // Host/IP SENGAJA tidak ditampilkan lagi di kartu (privasi di
+        // tampilan awal/grid) — cuma kelihatan di slide-over "Host
+        // Details" waktu kartunya diklik, lihat `host-panel.slint`.
+    }
+
+    // Checkbox bulk-delete DI ATAS, tombol delete DEMPET di BAWAHNYA —
+    // dua-duanya di tepi KANAN kartu sekarang (bukan checkbox kiri
+    // atas + delete kanan tengah kayak sebelumnya, atas permintaan
+    // user). Right edge-nya SAMA (`parent.width - 8px`) buat kedua
+    // elemen, jadi kolomnya rapi lurus — dan karena posisinya dihitung
+    // dari `parent.width` (bukan angka mutlak), tetap responsive waktu
+    // kartu resize. Checkbox dideklarasikan SEBELUM delete (bukan
+    // setelah) SENGAJA — keduanya sama-sama TouchArea terpisah dari
+    // `touch` badan kartu, urutan di antara mereka berdua sendiri
+    // tidak penting (area-nya tidak overlap satu sama lain).
+    Rectangle {
+        // Center-nya SAMA dengan center tombol delete (36px) di
+        // bawah — `parent.width - 26px` (bukan disamakan tepi kanan,
+        // yang bikin dua-duanya kelihatan "geser" karena lebarnya
+        // beda, laporan user "di sejajarin"). checkbox 20px -> x
+        // digeser -10px dari center itu.
+        x: parent.width - 36px;
+        y: 8px;
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: root.item.checked ? Tokens.primary : Tokens.surface-container-high;
+        border-width: 1px;
+        border-color: root.item.checked ? Tokens.primary : Tokens.outline-variant;
+        animate background { duration: Tokens.transition-fast; }
+        Text {
+            visible: root.item.checked;
+            text: "✓";
+            color: Tokens.on-primary;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+        chk-touch := TouchArea { clicked => { root.checkbox-toggled(); } }
+    }
+
+    // Delete — SELALU ada (bukan hover-only), dideklarasikan PALING
+    // TERAKHIR supaya z-order-nya pasti paling atas dibanding `touch`
+    // yang menutupi seluruh kartu — lihat komentar panjang yang sama di
+    // `GroupCard` di bawah soal kenapa ini penting.
+    Rectangle {
+        x: parent.width - 44px;
+        y: 32px;
+        width: 36px;
+        height: 36px;
+        border-radius: Tokens.radius-default;
+        background: del-touch.pressed ? Tokens.error.with-alpha(35%) : del-touch.has-hover ? Tokens.error.with-alpha(25%) : transparent;
+        animate background { duration: Tokens.transition-fast; }
+        IconTrash {
+            // Ikon garis (line icon) — GANTI emoji "🗑" (punya warna
+            // bawaan sendiri, tidak ikut tema, dilaporkan user "kurang
+            // jelas") — `icons.slint`.
+            width: 20px;
+            height: 20px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            color: del-touch.has-hover ? Tokens.error : Tokens.on-surface-variant;
+        }
+        del-touch := TouchArea { clicked => { root.delete-clicked(); } }
+    }
+}
+
+// Kartu grup host — lihat refrensi GUI/host_grouping/screen.png
+// (border-left berwarna aksen + statistik online/total).
+export component GroupCard inherits Rectangle {
+    in property <GroupItem> item;
+    callback clicked <=> touch.clicked;
+    callback delete-clicked();
+    callback checkbox-toggled();
+
+    width: 260px;
+    height: 148px;
+    border-radius: Tokens.radius-lg;
+    background: touch.pressed ? Tokens.primary-container.darker(30%)
+        : touch.has-hover ? Tokens.surface-container-high
+        : Tokens.surface-container;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+    animate background { duration: Tokens.transition-fast; }
+    // Backstop: nama grup panjang (mis. hasil Import XML: "ROUTER /
+    // BAROKAH") HARUS kepotong "…" (lihat `overflow: elide` di bawah),
+    // ini jaring pengaman kedua kalau ada yang lolos.
+    clip: true;
+
+    touch := TouchArea { }
+
+    Rectangle {
+        x: 0;
+        width: 3px;
+        height: 100%;
+        background: root.item.accent;
+        border-top-left-radius: Tokens.radius-lg;
+        border-bottom-left-radius: Tokens.radius-lg;
+    }
+
+    VerticalLayout {
+        padding: Tokens.gutter-md;
+        padding-left: Tokens.gutter-md + 6px;
+        spacing: Tokens.stack-gap;
+
+        HorizontalLayout {
+            spacing: Tokens.inline-gap;
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: Tokens.radius-md;
+                background: root.item.accent.with-alpha(20%);
+                Text {
+                    text: "▤";
+                    color: root.item.accent;
+                    font-size: 20px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+            // `horizontal-stretch: 1` WAJIB — tanpa ini kolom teks
+            // melebar sesuai nama grup TERPANJANG, tidak dibatasi
+            // lebar kartu, dan bocor keluar (persis bug yang
+            // dilaporkan: "ROUTER / BAROKAH" nembus tepi kartu).
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Text {
+                    text: root.item.name;
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-sm;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.item.subtitle;
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-mono;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        Rectangle {
+            height: 1px;
+            background: Tokens.outline-variant;
+        }
+
+        HorizontalLayout {
+            HorizontalLayout {
+                spacing: 6px;
+                width: 50%;
+                StatusDot {
+                    status: root.item.online-count > 0 ? "online" : "offline";
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: root.item.online-count + " Online";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-mono;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                width: 50%;
+                Rectangle {
+                    x: parent.width - self.width;
+                    width: count-text.preferred-width + 12px;
+                    height: 22px;
+                    border-radius: Tokens.radius-default;
+                    background: Tokens.surface-container-high;
+                    count-text := Text {
+                        text: root.item.total-count + " Hosts";
+                        color: Tokens.on-surface-variant;
+                        font-family: Tokens.font-mono;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete — SELALU ada sekarang (bukan cuma nongol pas hover kartu
+    // lagi), target klik lebih besar (32x32, sebelumnya 20x20 — laporan
+    // user: "kurang besar" & "tidak bisa ditekan"), digeser sedikit
+    // masuk dari sudut biar tidak kena clip `border-radius` kartu.
+    // Dideklarasikan PALING TERAKHIR di component ini SENGAJA — Slint
+    // menggambar & hit-test elemen yang dideklarasikan belakangan LEBIH
+    // ATAS dibanding yang sebelumnya, jadi ini dijamin menang dari
+    // `touch` (TouchArea buka grup) yang menutupi seluruh kartu di
+    // region yang sama, bukan cuma "kebetulan kepencet" waktu hover.
+    Rectangle {
+        x: parent.width - 46px;
+        y: 32px;
+        width: 38px;
+        height: 38px;
+        border-radius: Tokens.radius-default;
+        background: del-touch.pressed ? Tokens.error.with-alpha(35%) : del-touch.has-hover ? Tokens.error.with-alpha(25%) : transparent;
+        animate background { duration: Tokens.transition-fast; }
+        IconTrash {
+            // Ikon garis (line icon) — GANTI emoji "🗑".
+            width: 22px;
+            height: 22px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            color: del-touch.has-hover ? Tokens.error : Tokens.on-surface-variant;
+        }
+        del-touch := TouchArea { clicked => { root.delete-clicked(); } }
+    }
+
+    // Checkbox bulk-delete DI ATAS delete, dempet, dua-duanya di tepi
+    // KANAN (bukan kiri atas lagi, atas permintaan user) — CENTER-nya
+    // sama dengan center tombol delete (38px) di atas (bukan tepi
+    // kanan disamakan, yang bikin dua-duanya kelihatan "geser" karena
+    // lebarnya beda — laporan user "di sejajarin"), tetap responsive
+    // karena dihitung dari `parent.width`. TouchArea terpisah dari
+    // `touch` badan kartu.
+    Rectangle {
+        x: parent.width - 37px;
+        y: 8px;
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: root.item.checked ? Tokens.primary : Tokens.surface-container-high;
+        border-width: 1px;
+        border-color: root.item.checked ? Tokens.primary : Tokens.outline-variant;
+        animate background { duration: Tokens.transition-fast; }
+        Text {
+            visible: root.item.checked;
+            text: "✓";
+            color: Tokens.on-primary;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+        chk-touch := TouchArea { clicked => { root.checkbox-toggled(); } }
+    }
+}
+
+// Satu baris file/folder di file browser SFTP — lihat
+// refrensi GUI/sftp_client/screen.png.
+export component FileRow inherits Rectangle {
+    in property <FileEntry> entry;
+    in property <bool> selected: false;
+    callback clicked <=> touch.clicked;
+    // Klik dua kali folder -> navigasi masuk (lihat `FilePane` di
+    // page-sftp.slint). Alias LANGSUNG (bukan didebounce kayak
+    // `HostCard` — di sana debounce perlu karena `clicked` juga
+    // punya aksi sendiri yang harus DIBATALKAN kalau ternyata double-
+    // click; di sini `clicked` cuma toggle `selected`, aman dua-duanya
+    // kepanggil beruntun).
+    callback double-clicked <=> touch.double-clicked;
+
+    height: 34px;
+    background: root.selected ? Tokens.primary-container.with-alpha(25%) : touch.has-hover ? Tokens.surface-container-high : transparent;
+    animate background { duration: Tokens.transition-fast; }
+
+    touch := TouchArea { }
+
+    HorizontalLayout {
+        padding-left: Tokens.inline-gap;
+        padding-right: Tokens.inline-gap;
+        spacing: Tokens.inline-gap;
+
+        Text {
+            text: root.entry.is-dir ? "▸" : "▪";
+            color: root.entry.is-dir ? Tokens.warning : Tokens.on-surface-variant;
+            width: 16px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.name;
+            color: Tokens.on-surface;
+            font-family: Tokens.font-mono;
+            font-size: Tokens.text-label-mono;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.entry.size;
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-mono;
+            font-size: 11px;
+            width: 70px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.modified;
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-mono;
+            font-size: 11px;
+            width: 90px;
+            vertical-alignment: center;
+        }
+    }
+}

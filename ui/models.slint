@@ -1,0 +1,583 @@
+import { HostItem, GroupItem, FileEntry } from "./components/cards.slint";
+
+// Data form host, dipakai buat create (New Host) MAUPUN save (panel
+// detail host) — dikirim satu kali daripada banyak argumen posisional
+// terpisah, biar gampang ditambah field-nya nanti (mis. private key).
+export struct NewHostForm {
+    label: string,
+    host: string,
+    port: int,
+    username: string,
+    password: string,
+    kind: string,      // "ssh" | "cisco_ios"
+    group-id: string,   // "" = tanpa grup
+    tags: string,        // dipisah koma, mis. "production, database"
+}
+
+// Data + aksi seputar halaman Hosts (list/groups/drill-down + CRUD).
+//
+// Kenapa `global`, bukan property biasa di `PageHosts`: Rust cuma bisa
+// langsung `set_xxx`/`on_xxx` ke property & callback yang dideklarasikan
+// di komponen ROOT (AppWindow) atau di `global`. `PageHosts` sekarang
+// diinstansiasi kondisional (`if current-page == 0 : PageHosts {}`) di
+// app-window.slint, jadi Rust TIDAK BISA nembak property-nya langsung.
+// Global ini yang jadi titik temu satu-satunya antara Rust (backend
+// vault/ssh-engine) dan komponen manapun di UI tree.
+export global HostsModel {
+    in-out property <[HostItem]> ungrouped-hosts: [];
+    in-out property <[GroupItem]> groups: [];
+    in-out property <[HostItem]> active-group-hosts: [];
+
+    in-out property <string> view-mode: "list"; // "list" | "groups"
+    in-out property <string> selected-group-id: ""; // "" = belum drill-down
+    in-out property <string> selected-group-name: "";
+
+    // Pencarian global (kotak di TopBar, lihat `top-tabs.slint`) — beda
+    // dari List/Groups di atas, ini nyari di SEMUA host sekaligus
+    // (ungrouped MAUPUN yang di dalam grup manapun), bukan cuma yang
+    // lagi ditampilkan. `search-query` != "" -> halaman Hosts nampilin
+    // `search-results` (di-isi Rust, lihat `on_search_requested` di
+    // state.rs) menggantikan tampilan List/Groups biasa sementara.
+    in-out property <string> search-query: "";
+    in-out property <[HostItem]> search-results: [];
+    callback search-requested(string /* query */);
+    // Shortcut Ctrl+S (halaman Hosts, lihat `key-pressed` di
+    // page-hosts.slint) — auto-fokus ke kotak pencarian. Kotak
+    // pencarian-nya sendiri hidup di `TerminalTabBar` (window bar,
+    // beda file/scope dari `PageHosts`), makanya lewat callback global
+    // di sini, DIHANDLE (bukan cuma diteruskan) dari app-window.slint
+    // yang punya akses ke instance window bar-nya.
+    callback focus-search-requested();
+
+    // UI state murni (dialog buka/tutup) — sengaja tidak lewat Rust,
+    // cukup di-toggle langsung dari Slint sendiri.
+    in-out property <bool> show-new-group-dialog: false;
+
+    // State loading — Rust set `true` PAS callback ditembak (sebelum
+    // kerjaan vault-nya jalan), `false` waktu hasilnya udah balik.
+    // Tombol terkait didisable & ganti label waktu true, biar user
+    // tahu operasinya lagi diproses (bukan diem karena freeze).
+    in-out property <bool> creating-host: false; // slide-over mode "New Host", tombol "Simpan"
+    in-out property <bool> creating-group: false; // dialog New Group, tombol "Simpan"
+    in-out property <bool> panel-busy: false; // slide-over: Simpan/Duplicate/Remove/Connect
+
+    // Konfirmasi hapus host — sengaja BUKAN langsung hapus pas klik
+    // "Remove" di panel (operasi merusak & susah dibalikin: password
+    // terenkripsi host itu ikut kehapus dari vault). Alurnya:
+    // 1. Klik "Remove" -> Slint SENDIRI (tanpa Rust) buka dialog
+    //    konfirmasi, isi `confirm-delete-host-*` dari data panel.
+    // 2. "Batal" -> Slint sendiri tutup lagi, tidak ada apa-apa
+    //    terjadi ke vault.
+    // 3. "Hapus" (destruktif) -> BARU panggil `host-delete-requested`
+    //    beneran. Rust set `deleting-host=true` (dialog TETAP kebuka,
+    //    tombol "Hapus" ganti jadi state loading) sampai kerjaannya
+    //    selesai, baru Rust sendiri yang nutup dialog
+    //    (`confirm-delete-open=false`) — bukan Slint langsung nutup
+    //    pas diklik, biar user beneran lihat "sedang menghapus".
+    in-out property <bool> confirm-delete-open: false;
+    in-out property <string> confirm-delete-host-id: "";
+    in-out property <string> confirm-delete-host-label: "";
+    in-out property <bool> deleting-host: false;
+
+    // Konfirmasi hapus GRUP — sama alurnya dengan hapus host di atas,
+    // TAPI sekarang lebih penting lagi: `delete_group` di vault SUDAH
+    // DIUBAH (atas permintaan eksplisit user) buat cascade-hapus semua
+    // host DI DALAM grup itu juga (sebelumnya cuma di-ungroup) —
+    // dialognya nyebut jumlah host yang bakal ikut kehapus
+    // (`confirm-delete-group-host-count`, diisi Rust) biar user sadar
+    // ini bukan cuma "hapus folder kosong".
+    in-out property <bool> confirm-delete-group-open: false;
+    in-out property <string> confirm-delete-group-id: "";
+    in-out property <string> confirm-delete-group-label: "";
+    in-out property <int> confirm-delete-group-host-count: 0;
+    in-out property <bool> deleting-group: false;
+
+    // Bulk delete — checkbox kecil SELALU ada di tiap kartu host/grup
+    // (bukan lewat toggle "mode pilih" terpisah, biar tidak nambah
+    // state UI lagi) yang men-toggle keanggotaan lewat callback di
+    // bawah (Rust yang pegang HashSet-nya, `selected-*-count` cuma
+    // buat ditampilkan). Toolbar nampilin tombol "Hapus Terpilih"
+    // waktu count > 0, lewat SATU dialog konfirmasi (`confirm-bulk-
+    // delete-*`) yang bisa dipakai buat host MAUPUN grup
+    // (`confirm-bulk-delete-kind` yang bedain kalimatnya).
+    callback host-selection-toggled(string);
+    in-out property <int> selected-host-count: 0;
+    callback group-selection-toggled(string);
+    in-out property <int> selected-group-count: 0;
+    // "Select All" — toggle checkbox di header grid (`HostGrid`/
+    // `GroupGrid`), kirim `select` (true = select semua, false =
+    // deselect semua) + array item yang lagi TAMPIL di grid itu
+    // (`root.items`, dikirim APA ADANYA — Rust yang ekstrak `.id`
+    // masing-masing), bukan cuma id string, biar Slint tidak perlu
+    // "map" array yang tidak didukung ekspresinya.
+    callback select-all-hosts-requested(bool /* select */, [HostItem]);
+    callback select-all-groups-requested(bool /* select */, [GroupItem]);
+
+    in-out property <bool> confirm-bulk-delete-open: false;
+    in-out property <string> confirm-bulk-delete-kind: "host"; // "host" | "group"
+    in-out property <bool> deleting-bulk: false;
+    callback bulk-delete-hosts-requested();
+    callback bulk-delete-groups-requested();
+
+    // Slide-over "Host Details" dari kanan — dipakai buat DUA mode:
+    // "New Host" (`panel-is-new: true`, field kosong, tanpa Duplicate/
+    // Remove) MAUPUN edit host yang sudah ada (`panel-is-new: false`,
+    // field ke-prefill dari vault). Ini SATU-SATUNYA cara nambah host
+    // sekarang — TIDAK ADA dialog modal terpisah lagi, biar konsisten
+    // (lihat `ui/components/host-panel.slint`).
+    //
+    // Waktu edit, field-nya harus di-prefill dari data ASLI (vault),
+    // yang cuma Rust bisa baca — makanya `panel-visible`+`panel-host-*`
+    // di-toggle/isi DARI RUST (di handler `host-selected`). Waktu
+    // create-baru, field-nya memang harus KOSONG (bukan data vault),
+    // makanya Slint SENDIRI yang boleh reset — lihat `open-create-
+    // panel()` di bawah. Nutup panel ("×") juga boleh langsung dari
+    // Slint (cuma UI state).
+    in-out property <bool> panel-visible: false;
+    in-out property <bool> panel-is-new: false;
+    in-out property <string> panel-host-id: "";
+    in-out property <string> panel-host-label: "";
+    in-out property <string> panel-host-host: "";
+    in-out property <int> panel-host-port: 22;
+    in-out property <string> panel-host-username: "";
+    in-out property <string> panel-host-kind: "ssh";
+    in-out property <string> panel-host-group-id: "";
+    in-out property <string> panel-host-tags: ""; // dipisah koma
+    in-out property <string> panel-host-status: "";
+
+    // Buka slide-over dalam mode "New Host": reset semua field
+    // `panel-host-*` ke kosong/default (BUKAN baca vault — memang
+    // belum ada apa-apa buat host yang belum dibuat) lalu tampilkan.
+    // Dipanggil dari tombol "+ New host" DAN kartu "Add New Host" di
+    // grid — satu fungsi biar dua tempat itu tidak duplikasi logic.
+    public function open-create-panel() {
+        panel-host-id = "";
+        panel-host-label = "";
+        panel-host-host = "";
+        panel-host-port = 22;
+        panel-host-username = "";
+        panel-host-kind = "ssh";
+        panel-host-group-id = "";
+        panel-host-tags = "";
+        panel-host-status = "";
+        panel-is-new = true;
+        panel-visible = true;
+    }
+
+    // Notifikasi terakhir (mis. "gagal connect", "host key berubah") —
+    // ditampilkan sebagai toast kecil di app-window.slint. Rust yang
+    // ngisi, Slint yang nampilin & auto-clear setelah beberapa detik.
+    in-out property <string> notice-message: "";
+    in-out property <bool> notice-is-error: true;
+
+    callback group-opened(string /* group id */);
+    callback host-connect-requested(string /* host id */);
+    callback host-delete-requested(string /* host id */);
+    callback group-delete-requested(string /* group id */);
+    // Tombol "Simpan" waktu `panel-is-new`. Sukses -> Rust isi ulang
+    // panel dengan data yang BARU tersimpan & set `panel-is-new =
+    // false` (slide-over "berubah jadi" mode edit host itu, tidak
+    // ketutup) — lihat `on_create_host_requested` di state.rs.
+    callback create-host-requested(NewHostForm);
+    // Tombol "Connect" waktu `panel-is-new` — TIDAK ada data tersimpan
+    // buat di-connect, jadi ini simpan host-nya DULU baru langsung
+    // connect (beda dari `host-connect-requested` yang selalu pakai
+    // data yang SUDAH ada di vault).
+    callback host-connect-new-requested(NewHostForm);
+    callback create-group-requested(string /* name */, string /* subtitle */);
+    // Klik kartu host (bukan connect langsung lagi) -> Rust baca
+    // profil lengkap dari vault, isi `panel-host-*`, lalu
+    // `panel-visible = true`.
+    callback host-selected(string /* host id */);
+    // Tombol "Simpan" di panel. `NewHostForm.password` boleh kosong —
+    // artinya password TIDAK diubah (lihat state.rs). Connect TIDAK
+    // lewat callback ini — tombol Connect manggil
+    // `host-connect-requested` langsung, pakai data yang SUDAH
+    // tersimpan (bukan input yang belum di-save).
+    callback host-save-requested(string /* host id */, NewHostForm);
+    // Tombol "Duplicate" di panel — deep copy (password ikut disalin
+    // ke credential_id baru, bukan berbagi referensi).
+    callback host-duplicate-requested(string /* host id */);
+
+    // Import host dari file config aplikasi lain (SecureCRT, lihat
+    // `terminus_core::import::securecrt`). Tombol "Import" di toolbar
+    // manggil ini TANPA argumen — Rust sendiri yang buka dialog native
+    // "Open File" (`rfd`), baca, parse, tulis ke vault. Password TIDAK
+    // pernah ikut ter-import (dienkripsi proprietary di file asalnya,
+    // tidak bisa/boleh kita bongkar) — host hasil import butuh
+    // password diisi manual lewat panel sebelum bisa connect.
+    in-out property <bool> importing: false;
+    callback import-xml-requested();
+}
+
+// Data + aksi buat halaman SFTP — DUA MODE: (1) "chooser" (belum
+// connect, `connected: false`) yang MURNI reuse data host `HostsModel`
+// (List/Groups/drill-down, SAMA persis alur halaman Hosts, atas
+// permintaan eksplisit user "atur halaman SFTP generic dari halaman
+// host") + form Manual; (2) two-pane browser (`connected: true`) yang
+// SUDAH beneran nge-list direktori lokal (`std::fs`) & remote (SFTP
+// asli lewat `terminus-sftp-engine`) — lihat `crates/app/src/
+// state.rs::wire_sftp_callbacks`. v1 SENGAJA cuma satu sesi SFTP aktif
+// sekaligus (bukan banyak tab kayak terminal) — connect -> browse ->
+// disconnect balik ke chooser, linear.
+export global SftpModel {
+    in-out property <bool> connected: false;
+    in-out property <bool> connecting: false;
+    in-out property <string> connect-error: "";
+
+    // Chooser SEKARANG SELALU langsung nampilin host list/group
+    // (atas permintaan eksplisit user — dulu ketutup di balik toggle
+    // "Host"/"Manual"). Manual connect (host ad-hoc, tidak pernah
+    // disimpan ke vault) pindah jadi MODAL terpisah (bukan slide-over
+    // lagi, atas permintaan eksplisit user juga — "tidak bagus sama
+    // sekali"), dibuka lewat tombol "+ Manual" di toolbar.
+    in-out property <bool> manual-modal-open: false;
+    in-out property <string> manual-host: "";
+    // String (bukan `int`) SENGAJA — `DialogField` (dipakai buat
+    // isiannya) cuma punya callback `edited(string)`, parse ke angka
+    // dilakukan Rust waktu connect (lihat `on_sftp_connect_manual_
+    // requested`), bukan di sisi Slint.
+    in-out property <string> manual-port: "22";
+    in-out property <string> manual-username: "";
+    in-out property <string> manual-password: "";
+
+    // Browser (SESUDAH connect) — diisi Rust dari data ASLI.
+    in-out property <string> remote-host-label: "";
+    in-out property <string> local-path: "";
+    in-out property <string> remote-path: "";
+    in-out property <[FileEntry]> local-entries: [];
+    in-out property <[FileEntry]> remote-entries: [];
+
+    // Klik dua kali host tersimpan (List/Groups, lewat `HostGrid` yang
+    // di-reuse dari `page-hosts.slint`) -> connect SFTP ke situ.
+    callback sftp-connect-requested(string /* host id */);
+    // Tombol "Connect" mode Manual — baca `manual-*` langsung
+    // (bukan lewat argumen callback, cuma 4 field lepas, tidak perlu
+    // struct `NewHostForm`-style buat ini).
+    callback sftp-connect-manual-requested();
+    callback sftp-disconnect-requested();
+    // Shortcut Ctrl+R (lihat `page-sftp.slint`) — refresh DUA panel
+    // sekaligus di path yang lagi ditampilkan.
+    callback sftp-refresh-requested();
+    // Klik dua kali folder di panel (lewat `FileRow`/`FilePane`) ->
+    // navigasi masuk. `".."` (baris semu, disisipkan Rust di elemen
+    // PERTAMA daftar waktu tidak lagi di root) -> naik satu level.
+    callback sftp-local-navigate-requested(string /* nama folder */);
+    callback sftp-remote-navigate-requested(string /* nama folder */);
+    // Ketik langsung di kotak path (lihat `FilePane` di page-sftp.slint)
+    // lalu Enter -> lompat LANGSUNG ke path ABSOLUT itu (bukan relatif
+    // kayak `sftp-*-navigate-requested`, yang cuma buat masuk/keluar
+    // SATU level lewat klik dua kali folder) — atas permintaan
+    // eksplisit user, path bar-nya harus bisa diketik/diganti manual.
+    callback sftp-local-path-set-requested(string /* path absolut */);
+    callback sftp-remote-path-set-requested(string /* path absolut */);
+
+    // Transfer file — DUA CARA sekarang:
+    // (1) Drag & drop beneran antar panel (Slint 1.17 SUNGGUH
+    //     mendukungnya via `DragArea`/`DropArea` + `data-transfer` —
+    //     koreksi dari klaim SEBELUMNYA di sesi ini yang salah bilang
+    //     ini tidak bisa dibangun pakai API publik; ternyata `slint::
+    //     DataTransfer` MEMANG public di crate `slint` 1.17.x, cuma
+    //     dulu salah cari lokasi re-export-nya. `data-transfer`
+    //     OPAQUE di sisi Slint — konstruksi/baca isinya WAJIB lewat
+    //     callback `pure` yang diimplementasi Rust, makanya dua
+    //     callback di bawah ini). Payload-nya string SEDERHANA
+    //     ditandai asalnya, "local:<nama>" atau "remote:<nama>" (lihat
+    //     `FilePane` di page-sftp.slint) — biar `sftp-file-dropped-
+    //     requested` di Rust tahu arah transfer yang BENAR (upload
+    //     kalau asalnya "local" & dijatuhkan di panel remote, download
+    //     kalau sebaliknya) TANPA perlu nebak dari posisi drop doang,
+    //     dan bisa nolak drop SEARAH (local -> local sendiri).
+    // (2) Klik pilih file + tombol "Copy →"/"← Copy" (fallback yang
+    //     sudah ada dari sebelumnya) — TETAP dipertahankan sebagai
+    //     cara alternatif, bukan digantikan.
+    pure callback sftp-make-transfer(string) -> data-transfer;
+    pure callback sftp-read-transfer(data-transfer) -> string;
+    // `dest`: "local" | "remote" (panel TEMPAT file dijatuhkan).
+    // `payload`: string dari `sftp-read-transfer`, format "asal:nama".
+    callback sftp-file-dropped-requested(string /* dest */, string /* payload */);
+
+    in-out property <bool> transferring: false;
+    in-out property <string> transfer-error: "";
+    callback sftp-copy-to-remote-requested(string /* nama file lokal */);
+    callback sftp-copy-to-local-requested(string /* nama file remote */);
+
+    // Menu "select option" ala Termius (klik kanan file = Rename/
+    // Delete/Close, klik kanan area kosong = New Folder/Refresh/Show
+    // Hidden Files/Select All/Close — lihat `ContextMenuArea` di
+    // `page-sftp.slint`). Banyak callback di bawah pakai parameter
+    // `pane` ("local" | "remote") DAHULUAN dari 2 versi
+    // terpisah — satu handler Rust per aksi, tinggal cabang di
+    // `pane`, bukan 2x logic yang sama.
+    callback sftp-toggle-check-requested(string /* pane */, string /* nama */);
+    callback sftp-select-all-requested(string /* pane */);
+    // Bulk — beroperasi ke SEMUA nama yang lagi dicentang di panel itu
+    // (lewat klik satu-satu ATAU Select All).
+    callback sftp-delete-selected-requested(string /* pane */);
+    // Satu file SAJA — dipakai menu klik-kanan PER BARIS ("Delete" di
+    // situ), BUKAN lewat set centang (biar tidak ke-toggle salah kalau
+    // baris itu KEBETULAN sudah/belum tercentang — predictable: selalu
+    // hapus PERSIS baris yang di-klik-kanan, apa pun status centangnya).
+    callback sftp-delete-one-requested(string /* pane */, string /* nama */);
+    in-out property <bool> local-show-hidden: false;
+    in-out property <bool> remote-show-hidden: false;
+    callback sftp-show-hidden-toggled(string /* pane */);
+
+    // Range-select ala file manager (Shift+klik / Shift+Panah) — GANTI
+    // (bukan tambah) seleksi panel itu jadi SEMUA file di antara
+    // `anchor` (baris terakhir yang diklik biasa, tanpa Shift) dan
+    // `target` (baris yang di-Shift-klik / posisi kursor sesudah
+    // Shift+Panah), INKLUSIF kedua ujung. Dikirim NAMA (bukan index) —
+    // Rust me-list ulang direktori itu (sama teknik dengan Select All)
+    // buat dapat urutan KANONIK, jadi tidak perlu Slint kirim/kelola
+    // array besar sendiri.
+    callback sftp-select-range-requested(string /* pane */, string /* nama anchor */, string /* nama target */);
+    // Klik di area KOSONG panel (bukan di baris mana pun) -> hapus
+    // seleksi panel itu. Lihat `drop-area`/background `TouchArea` di
+    // `FilePane`, page-sftp.slint.
+    callback sftp-clear-selection-requested(string /* pane */);
+
+    // Rename & New Folder butuh input teks -> MODAL kecil (pola sama
+    // `SftpManualDialog`), state-nya di sini biar satu modal dipakai
+    // ulang buat panel manapun yang minta.
+    in-out property <bool> rename-modal-open: false;
+    in-out property <string> rename-pane: "local";
+    in-out property <string> rename-old-name: "";
+    in-out property <string> rename-new-name: "";
+    callback sftp-rename-requested();
+
+    in-out property <bool> new-folder-modal-open: false;
+    in-out property <string> new-folder-pane: "local";
+    in-out property <string> new-folder-name: "";
+    callback sftp-new-folder-requested();
+}
+
+// Satu "run" horizontal di dalam satu baris terminal: rentetan karakter
+// yang warnanya (fg/bg/bold) SAMA, digabung jadi satu `Text` daripada
+// satu elemen per karakter — grid 100x32 = 3200 sel per snapshot, kalau
+// tiap sel jadi elemen Slint sendiri bisa berat; padahal output terminal
+// tipikal cuma punya beberapa "run" warna per baris (prompt hijau, teks
+// putih, dst), jadi jumlah elemen riil jauh lebih kecil.
+export struct TermRun {
+    text: string,
+    fg: color,
+    bg: color,
+    bold: bool,
+}
+export struct TermRow {
+    runs: [TermRun],
+}
+
+// Satu tab terminal SSH yang lagi terbuka (satu host connect = satu
+// tab, MIRIP browser — bukan halaman "Console" di sidebar, itu punya
+// arti beda: koneksi serial/console ke perangkat ala minicom, belum
+// diimplementasi, lihat `ui/pages/page-console.slint`).
+export struct TerminalTab {
+    id: string,
+    label: string,
+    address: string,
+}
+
+// Data + aksi buat tab-tab terminal SSH interaktif beneran (bukan
+// mock). Diisi dari `terminus-ssh-engine` (byte mentah channel shell)
+// yang di-parse `terminus-term-emulator` (VTE/xterm) jadi grid warna,
+// dikonversi ke `TermRow`/`TermRun` di `crates/app/src/console.rs`.
+// Dirender di `ui/pages/page-terminal.slint` + tab bar di
+// `ui/components/terminal-tabs-bar.slint`.
+export global TerminalTabsModel {
+    // Semua tab yang lagi terbuka (= semua sesi SSH yang lagi
+    // connect). Nutup tab = disconnect sesi itu — BEDA dari cuma
+    // pindah tampilan (`active-tab-id`), sesi lain yang tidak
+    // ditampilkan tetap hidup di background.
+    in-out property <[TerminalTab]> tabs: [];
+    in-out property <string> active-tab-id: ""; // "" = tidak ada tab yang lagi ditampilkan
+    // Label/address tab aktif, di-set Rust bareng `active-tab-id`
+    // (lihat `switch_to_tab` di state.rs) — disediakan langsung di sini
+    // karena Slint tidak punya for-loop imperatif buat "cari di array"
+    // di dalam property binding, cuma repeater deklaratif.
+    in-out property <string> active-tab-label: "";
+    in-out property <string> active-tab-address: "";
+    in-out property <[TermRow]> rows: []; // isi grid tab yang lagi AKTIF/ditampilkan aja
+
+    // Teks/kontrol byte yang harus dikirim apa adanya ke stdin sesi
+    // aktif (Rust yang tentukan urutan byte-nya — lihat `TerminalView`
+    // di `ui/components/terminal-view.slint` buat pemetaan tombol
+    // khusus ke escape sequence). TIDAK ada local echo di sisi Slint —
+    // echo datang dari server lewat PTY, persis terminal sungguhan.
+    callback pty-input-requested(string);
+    // Klik satu tab di tab bar -> pindah tampilan ke situ (sesi lain
+    // TETAP hidup, tidak diputus).
+    callback tab-selected(string);
+    // Klik "×" di satu tab -> putus sesi itu beneran (bukan cuma
+    // sembunyiin tampilan).
+    callback tab-close-requested(string);
+
+    // Pengaturan terminal (font + color theme) — SENGAJA TIDAK
+    // ditampilkan permanen kayak referensi Termius yang ditunjukkan
+    // user, cuma nongol lewat tombol ⚙ di halaman Terminal
+    // (`ui/pages/page-terminal.slint`), makanya ada `settings-open`
+    // buat toggle panelnya, terpisah dari `panel-visible` milik
+    // HostsModel (beda konteks). Berlaku GLOBAL ke semua tab (bukan
+    // per-host) — paling umum buat aplikasi terminal.
+    in-out property <bool> settings-open: false;
+    // Diisi Rust SEKALI waktu startup (scan font monospace terinstall
+    // di sistem lewat `fontdb`, lihat `main.rs`) — daftar nama tema
+    // bawaan (`terminus_term_emulator::palette::built_in_themes()`)
+    // TIDAK berubah selama app jalan, dua-duanya read-only dari sisi
+    // Slint.
+    in-out property <[string]> available-fonts: [];
+    in-out property <[string]> available-themes: [];
+    // Swatch preview per tema (index SEJAJAR sama `available-themes`)
+    // — dua warna ASLI dari `Palette` masing-masing tema (background +
+    // satu warna ANSI representatif), dipakai `ThemeOption` di
+    // `terminal-settings.slint` buat mini-preview kotak warna, diisi
+    // Rust sekali waktu startup bareng `available-themes`.
+    in-out property <[color]> theme-swatch-bg: [];
+    in-out property <[color]> theme-swatch-accent: [];
+    // Font murni tampilan (Slint `font-family` di `TerminalRowView`,
+    // lihat `terminal-view.slint`) — TIDAK perlu roundtrip Rust ganti
+    // font, langsung reaktif begitu properti ini diset dari UI
+    // pemilih font. Beda dari tema: tema MEMPENGARUHI resolusi warna
+    // di `terminus-term-emulator` (Rust), jadi butuh callback biar
+    // konten yang SUDAH ada juga ikut di-render ulang.
+    in-out property <string> terminal-font-family: "monospace";
+    // Ukuran font terminal, dalam px — sama kayak font-family, MURNI
+    // tampilan (tidak perlu roundtrip Rust, langsung reaktif).
+    in-out property <int> terminal-font-size: 13;
+    in-out property <string> terminal-theme-name: "Terminus Dark";
+    // Warna BACKGROUND asli tema yang lagi aktif (dari `Palette
+    // .background`) — dulu TIDAK ada, `TerminalView`/wrapper-nya pakai
+    // token statis (`Tokens.surface-container-lowest`) yang TIDAK
+    // ikut berubah waktu ganti tema, jadi cuma background di BALIK
+    // teks (per-sel, dari `grid_to_plain_rows`) yang kelihatan ganti
+    // warna — laporan user: "background theme yang berubah itu
+    // background teks, bukan background terminal". Diisi Rust
+    // (`wire_callbacks` waktu startup + `on_terminal_theme_changed`
+    // waktu ganti tema).
+    in-out property <color> terminal-bg-color: #060e20;
+    callback terminal-theme-changed(string /* nama tema, lihat built_in_themes() */);
+
+    // Kontrol jendela CUSTOM — atas permintaan eksplisit user (gambar
+    // referensi: satu window bar berisi toggle sidebar + tab + kontrol
+    // minimize/maximize/close, TANPA title bar asli OS di atasnya lagi).
+    // `AppWindow` di-set `no-frame: true` (lihat app-window.slint),
+    // makanya SEMUANYA — drag buat pindah jendela, minimize, maximize,
+    // close — harus diimplementasi manual dari sini, biasanya bawaan
+    // OS. Ditaruh di global ini (bukan langsung di root `AppWindow`)
+    // supaya `TerminalTabBar` (window bar) bisa manggil LANGSUNG tanpa
+    // bubbling lewat app-window.slint.
+    //
+    // CATATAN PENTING: `slint::Window::set_position` (dipakai buat
+    // drag) TIDAK didukung di semua windowing system — Wayland
+    // (default banyak distro Linux modern) MEMBLOKIR aplikasi client
+    // mengatur posisi absolut jendelanya sendiri (batasan protokol,
+    // bukan bug kita) — di situ drag jadi no-op diam-diam. Minimize/
+    // maximize/close TETAP jalan di Wayland (lewat xdg-shell), cuma
+    // drag-to-move yang berisiko tidak berfungsi tergantung compositor.
+    callback window-drag-requested(length /* dx */, length /* dy */);
+    callback window-minimize-requested();
+    callback window-maximize-toggle-requested();
+    callback window-close-requested();
+    // Diisi Rust tiap kali maximize toggle beneran terjadi, biar ikon
+    // tombol (▢ vs ❐) sinkron sama state jendela yang SEBENARNYA
+    // (bukan diasumsikan dari sisi Slint doang).
+    in-out property <bool> window-maximized: false;
+}
+
+// Halaman Console (`ui/pages/page-console.slint`) — koneksi SERIAL ala
+// `minicom`/PuTTY mode "Serial", BUKAN tab SSH (`TerminalTabsModel` di
+// atas). Cross-platform lewat `terminus-serial-engine` (`tokio-
+// serial`): nama port beda-beda per OS ("COM3" di Windows,
+// "/dev/ttyUSB0" di Linux, "/dev/cu.usbserial-*" di macOS) — Slint
+// tidak perlu tahu bedanya, cukup tampilkan `available-ports` (label
+// siap-tampil) apa adanya.
+//
+// SENGAJA cuma SATU sesi aktif dalam satu waktu (beda dari
+// `TerminalTabsModel` yang banyak tab sekaligus) — port serial fisik
+// memang eksklusif, tidak ada gunanya pura-pura multi-sesi (pola sama
+// dengan `SftpModel`, satu browser linear, bukan tab).
+export global ConsoleModel {
+    // Label siap-tampil per port terdeteksi (isi `ComboBox` "Port") —
+    // path ASLI (mis. "/dev/ttyUSB0") TIDAK dikirim ke Slint sama
+    // sekali, cukup disimpan Rust sendiri (`AppState.console_ports`)
+    // sejajar index sama array ini; `console-connect-requested` cukup
+    // baca `selected-port-index` balik, Rust yang cari path aslinya.
+    in-out property <[string]> available-ports: [];
+    in-out property <int> selected-port-index: -1;
+    // String (bukan `int`) — konsisten sama pola `SftpModel.manual-
+    // port`, isi `ComboBox` preset (9600/19200/.../115200), diparse
+    // Rust waktu connect. Default 9600 = standar kabel console Cisco.
+    in-out property <string> baud-rate: "9600";
+    callback console-refresh-ports-requested();
+
+    in-out property <bool> connected: false;
+    in-out property <bool> connecting: false;
+    in-out property <string> connect-error: "";
+    // Label port yang LAGI konek (buat header, diisi Rust waktu
+    // connect sukses) — beda dari `available-ports[selected-port-
+    // index]` yang bisa berubah/hilang dari daftar begitu di-refresh
+    // ulang selagi sesi masih jalan.
+    in-out property <string> device-label: "";
+    in-out property <string> baud-label: ""; // "9600 8-N-1", diisi Rust waktu connect sukses
+    callback console-connect-requested();
+    callback console-disconnect-requested();
+
+    // Isi grid terminal — MURNI reuse `TermRun`/`TermRow` yang sama
+    // dipakai `TerminalTabsModel.rows` (lihat `ConsoleView` di
+    // `ui/components/console-view.slint`, reuse `TerminalRowView` yang
+    // sama juga) — satu-satunya beda cuma DARI MANA byte-nya datang
+    // (port serial, bukan channel SSH).
+    in-out property <[TermRow]> rows: [];
+    // Sama pola `TerminalTabsModel.pty-input-requested` — TIDAK ada
+    // local echo di sisi Slint, echo datang balik dari device lewat
+    // port serial (kalau device-nya echo — sebagian CLI Cisco memang
+    // echo sendiri).
+    callback console-input-requested(string);
+}
+
+// Layar "Connecting" — pengganti FULL area konten (NavRail + halaman,
+// lihat `app-window.slint`, window bar TETAP kelihatan) selama proses
+// connect berlangsung, dipakai SATU KOMPONEN yang SAMA oleh SEMUA alur
+// connect (SSH lewat panel Host Details, SFTP, Console/serial) — biar
+// pengalamannya SERAGAM (bukan tiga gaya loading beda-beda: dulu SSH
+// cuma badge status di kartu host, SFTP teks "Menghubungkan..." di
+// tombol, Console juga teks di tombol). Bukan modal/dialog (tidak ada
+// scrim) — benar-benar "pindah ke halaman baru" sesuai permintaan
+// eksplisit user.
+export global ConnectingModel {
+    in-out property <bool> visible: false;
+    in-out property <string> label: "";     // nama host, mis. "MESEM-SERVER"
+    in-out property <string> subtitle: ""; // "SSH 103.86.116.222:1522" dst
+    // Huruf pertama `label`, UPPERCASE, dihitung Rust (`profile.label
+    // .chars().next()`) — bukan diakalin dari sisi Slint (mis.
+    // `label.to-uppercase()` lalu di-`elide`/`clip` biar KELIHATAN
+    // cuma 1 huruf) karena Slint tidak punya fungsi ekspresi ambil
+    // substring/karakter tunggal sebuah string.
+    in-out property <string> avatar-letter: "?";
+    // Batal SUNGGUHAN menghentikan proses connect di background
+    // (`tokio::task::AbortHandle::abort()`, lihat `track_connect_task`
+    // di state.rs) — BUKAN cuma menyembunyikan overlay ini, supaya
+    // tidak ada sesi yang "kebuka sendiri" belakangan sesudah user
+    // sudah membatalkan & pindah ke halaman lain.
+    callback cancel-requested();
+}
+
+// State unlock/create vault. Terpisah dari HostsModel karena logically
+// beda lapisan (auth ke vault vs data di dalamnya) dan supaya
+// app-window.slint bisa gate seluruh window di baliknya dengan gampang:
+// `if !VaultModel.is-unlocked : VaultDialog {}`.
+export global VaultModel {
+    in-out property <bool> is-first-run: true;
+    in-out property <bool> is-unlocked: false;
+    in-out property <string> error-message: "";
+    // Derive key Argon2id SENGAJA lambat (bagian dari desain keamanannya
+    // — bikin brute-force mahal), jadi ini bukan operasi "instan" kayak
+    // baca/tulis SQLite biasa. Rust jalankan di thread terpisah
+    // (`tokio::task::spawn_blocking`, lihat `state.rs`) supaya UI tidak
+    // freeze, dan `busy` ini yang jadi sinyal buat tombol Unlock/Buat
+    // nunjukin state loading selama itu.
+    in-out property <bool> busy: false;
+
+    callback create-requested(string /* master password */);
+    callback unlock-requested(string /* master password */);
+}

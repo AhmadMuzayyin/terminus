@@ -1,0 +1,924 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { FileRow, FileEntry } from "../components/cards.slint";
+import { DialogField, DialogButton, DialogScrim } from "../components/dialogs.slint";
+import { SftpModel, HostsModel } from "../models.slint";
+import { HostGrid, GroupGrid, ModeToggle } from "./page-hosts.slint";
+
+// Pesan kosong dipakai di chooser (List/Groups/isi-grup) waktu grid
+// yang lagi ditampilkan tidak punya item — lihat pemakaiannya di
+// `PageSftp` di bawah. Selalu jadi anak `VerticalLayout` (chooser),
+// makanya SENGAJA tidak diposisikan manual `x`/`y` (layout yang atur
+// itu) — cukup `horizontal-alignment: center` biar teksnya sendiri
+// center di dalam lebar penuh yang diberikan layout.
+component EmptyHostsNotice inherits Text {
+    color: Tokens.outline;
+    font-family: Tokens.font-body;
+    font-size: 13px;
+    horizontal-alignment: center;
+    wrap: word-wrap;
+}
+
+// Satu panel file browser (kiri = Local, kanan = Remote) — SEKARANG
+// beneran nge-list direktori nyata (lokal lewat `std::fs`, remote
+// lewat SFTP asli), bukan data dummy lagi. Klik dua kali folder ->
+// `navigate-requested`, ditangkep `PageSftp` di bawah dan diteruskan
+// ke Rust (`SftpModel.sftp-*-navigate-requested`).
+component FilePane inherits Rectangle {
+    in property <string> pane-title: "";
+    in property <string> path: "";
+    in property <[FileEntry]> entries: [];
+    in property <bool> remote: false;
+    // "local" | "remote" — dikirim apa adanya ke callback berparameter
+    // `pane` di `SftpModel` (Rust satu handler buat dua panel, tinggal
+    // cabang di situ, bukan dobel logic).
+    property <string> pane-key: root.remote ? "remote" : "local";
+    callback navigate-requested(string /* nama folder, ".." = naik */);
+    // Enter di path bar -> lompat ke path ABSOLUT yang diketik.
+    callback path-submitted(string);
+    // WAJIB ada di level ROOT komponen ini (bukan nested di dalam
+    // `VerticalLayout`/`Rectangle` tempat `path-input` sendiri
+    // dideklarasikan) — `changed <nama>` cuma bisa "lihat" property
+    // yang dideklarasikan di scope YANG SAMA. Lihat komentar panjang
+    // di `path-input` (di bawah) soal KENAPA ini perlu: binding
+    // deklaratif `text: root.path;` PUTUS begitu user pernah ngetik
+    // manual, jadi ini yang maksa resinkron + lepas fokus tiap
+    // `root.path` beneran berubah (submit sendiri ATAU klik dua kali
+    // folder) — laporan user "path mengikuti path yang di buka" +
+    // "fokus input dihilangkan".
+    changed path => {
+        path-input.text = root.path;
+        path-input.clear-focus();
+    }
+
+    // State seleksi ala file manager (Shift+klik / Shift+Panah,
+    // Ctrl+A, klik-luar-hapus-seleksi — permintaan eksplisit user).
+    // `anchor-index`: baris terakhir yang diklik BIASA (tanpa Shift) —
+    // titik awal range. `cursor-index`: posisi "kursor" seleksi
+    // sekarang, digeser Shift+Panah atau disamakan ke baris yang
+    // di-Shift-klik. `-1` = belum ada anchor sama sekali di panel ini.
+    property <int> anchor-index: -1;
+    property <int> cursor-index: -1;
+    // Dilacak dari `key-pressed`/`key-released` FocusScope di bawah —
+    // BUKAN dari event mouse (`PointerEvent` versi Slint yang dipakai
+    // di sini tidak terbukti expose field modifier lewat API publik,
+    // sudah dicoba beberapa cara cari dokumentasinya). Pola ini
+    // SENGAJA reuse mekanisme yang SUDAH terbukti jalan di halaman ini
+    // (Ctrl+R) & halaman Hosts (Ctrl+S): baca `event.modifiers.*` di
+    // `key-pressed` sebuah `FocusScope`.
+    property <bool> shift-held: false;
+
+    // FocusScope KHUSUS panel ini (beda dari `key-catcher` di
+    // `PageSftp` yang cuma nangkep Ctrl+R global) — WAJIB dapat fokus
+    // dulu baru bisa "lihat" tombol Shift/Ctrl+A/Panah ditekan, makanya
+    // tiap baris diklik manggil `select-focus.focus()` (lihat `clicked`
+    // di `FileRow` di bawah).
+    select-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        key-pressed(event) => {
+            if event.modifiers.shift {
+                root.shift-held = true;
+            }
+            if event.modifiers.control && event.text == "a" {
+                SftpModel.sftp-select-all-requested(root.pane-key);
+                return accept;
+            }
+            if event.modifiers.shift && root.anchor-index >= 0 && root.entries.length > 0 {
+                if event.text == Key.DownArrow {
+                    root.cursor-index = Math.min(root.cursor-index + 1, root.entries.length - 1);
+                    SftpModel.sftp-select-range-requested(root.pane-key, root.entries[root.anchor-index].name, root.entries[root.cursor-index].name);
+                    return accept;
+                }
+                if event.text == Key.UpArrow {
+                    root.cursor-index = Math.max(root.cursor-index - 1, 0);
+                    SftpModel.sftp-select-range-requested(root.pane-key, root.entries[root.anchor-index].name, root.entries[root.cursor-index].name);
+                    return accept;
+                }
+            }
+            reject
+        }
+        key-released(event) => {
+            if !event.modifiers.shift {
+                root.shift-held = false;
+            }
+            reject
+        }
+    }
+
+    border-radius: Tokens.radius-lg;
+    background: Tokens.surface-container;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+    clip: true;
+
+    VerticalLayout {
+        padding: Tokens.gutter-md;
+        spacing: Tokens.stack-gap;
+
+        HorizontalLayout {
+            spacing: 6px;
+            if root.remote : Rectangle {
+                width: 10px;
+                height: 10px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 5px;
+                background: Tokens.success;
+            }
+            Text {
+                text: root.pane-title;
+                color: Tokens.on-surface;
+                font-family: Tokens.font-body;
+                font-size: Tokens.text-body-md;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            // Tombol "⋮" — trigger KELIHATAN buat menu select option
+            // (New Folder/Refresh/Show Hidden Files/Select All/Close),
+            // BUKAN gantiin klik-kanan (itu tetap ada, lewat
+            // `pane-menu` di bawah) — TAMBAHAN, dua-duanya manggil
+            // `pane-menu.show(...)` yang SAMA. Klik-kanan sendirian
+            // dilaporkan user tidak ketemu (mungkin kurang jelas, atau
+            // memang tidak nge-trigger di window frameless — tombol
+            // ini jamin ada cara PASTI kelihatan & PASTI jalan, tidak
+            // gantung ke deteksi klik-kanan native).
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Tokens.radius-default;
+                background: pane-menu-touch.pressed ? Tokens.surface-container-high.darker(10%) : pane-menu-touch.has-hover ? Tokens.surface-container-high : transparent;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    text: "⋮";
+                    color: Tokens.on-surface-variant;
+                    font-size: 16px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                pane-menu-touch := TouchArea { clicked => { pane-menu.show({ x: 0px, y: self.height }); } }
+            }
+        }
+
+        // Path bar BISA DIKETIK LANGSUNG (bukan cuma teks statis lagi,
+        // atas permintaan eksplisit user) — Enter -> lompat ke path
+        // itu. `text: root.path;` cuma binding AWAL — begitu user
+        // ngetik sekali, Slint PUTUS binding deklaratif itu (properti
+        // yang pernah ditulis imperatif tidak lagi "ngikutin" ekspresi
+        // reaktifnya), makanya `changed path` di bawah WAJIB ada buat
+        // maksa `path-input.text` balik sinkron tiap `root.path`
+        // beneran berubah (entah dari submit path INI sendiri, ATAU
+        // dari klik dua kali folder di baris manapun) — tanpa itu,
+        // path bar bakal "macet" nunjukin path lama abis sekali diedit
+        // (laporan user: "path mengikuti path yang di buka"). Fokus
+        // juga dilepas (`clear-focus()`) di titik yang SAMA — user
+        // minta itu SEKALIAN pas path-nya beneran pindah.
+        Rectangle {
+            height: 30px;
+            border-radius: Tokens.radius-default;
+            background: Tokens.surface-container-high;
+            border-width: 1px;
+            border-color: path-input.has-focus ? Tokens.primary : transparent;
+            animate border-color { duration: Tokens.transition-fast; }
+            path-input := TextInput {
+                text: root.path;
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-mono;
+                font-size: 12px;
+                vertical-alignment: center;
+                single-line: true;
+                x: 8px;
+                width: parent.width - 16px;
+                height: 100%;
+                accepted => { root.path-submitted(self.text); }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            Text { text: "NAME"; color: Tokens.outline; font-family: Tokens.font-mono; font-size: 10px; horizontal-stretch: 1; }
+            Text { text: "SIZE"; color: Tokens.outline; font-family: Tokens.font-mono; font-size: 10px; width: 70px; }
+            Text { text: "MODIFIED"; color: Tokens.outline; font-family: Tokens.font-mono; font-size: 10px; width: 90px; }
+        }
+
+        Rectangle { height: 1px; background: Tokens.outline-variant; }
+
+        // Drop TARGET buat drag & drop dari panel SEBERANG (lihat
+        // komentar panjang di `SftpModel.sftp-make-transfer`,
+        // models.slint). `has-drag` dipakai buat highlight visual
+        // waktu drag valid lagi hover di atas panel ini. SEKALIGUS
+        // "select option" area kosong (klik-kanan DI LUAR baris mana
+        // pun) — `ContextMenuArea` bawaan Slint (native, nangkep
+        // klik-kanan/tombol Menu/long-press Android otomatis, TIDAK
+        // perlu hand-roll deteksi klik-kanan sendiri) buat New Folder/
+        // Refresh/Show Hidden Files/Select All/Close, ala Termius.
+        // Menu PER BARIS (Rename/Delete) di dalam `for` di bawah
+        // dideklarasikan LEBIH DALAM, jadi klik-kanan TEPAT di satu
+        // baris "menang" nunjukin menu ITU, bukan punya area kosong.
+        // `vertical-stretch: 1` WAJIB — `ContextMenuArea` ("non-visual",
+        // tidak render piksel sendiri) SEBAGAI ANAK LANGSUNG
+        // `VerticalLayout` di atas TIDAK otomatis dapat sisa ruang
+        // vertikal tanpa ini (beda dari `Rectangle` polos yang
+        // biasanya default stretch — elemen non-visual kayak ini
+        // ternyata TIDAK), bikin kontennya (drop-area + daftar baris)
+        // ke-collapse jadi tinggi seadanya lalu "kedorong" ke bawah
+        // panel — persis laporan user "tampilan... acak acakan"
+        // (jarak kosong gede di atas daftar file) DAN "select
+        // option[nya] gak ada" (area klik-kanan yang kena cuma potongan
+        // kecil di bawah, bukan seluruh panel yang KELIHATANNYA kosong
+        // di atasnya).
+        pane-menu := ContextMenuArea {
+            vertical-stretch: 1;
+            Menu {
+                MenuItem {
+                    title: "New Folder";
+                    activated => {
+                        SftpModel.new-folder-pane = root.pane-key;
+                        SftpModel.new-folder-name = "";
+                        SftpModel.transfer-error = "";
+                        SftpModel.new-folder-modal-open = true;
+                    }
+                }
+                MenuItem {
+                    title: "Refresh";
+                    activated => { SftpModel.sftp-refresh-requested(); }
+                }
+                MenuItem {
+                    title: "Show Hidden Files";
+                    checkable: true;
+                    checked: root.remote ? SftpModel.remote-show-hidden : SftpModel.local-show-hidden;
+                    activated => {
+                        if root.remote {
+                            SftpModel.remote-show-hidden = !SftpModel.remote-show-hidden;
+                        } else {
+                            SftpModel.local-show-hidden = !SftpModel.local-show-hidden;
+                        }
+                        SftpModel.sftp-show-hidden-toggled(root.pane-key);
+                    }
+                }
+                MenuItem {
+                    title: "Select All";
+                    activated => { SftpModel.sftp-select-all-requested(root.pane-key); }
+                }
+            }
+
+            drop-area := DropArea {
+                can-drop(event) => DragAction.copy;
+                dropped(event) => {
+                    SftpModel.sftp-file-dropped-requested(
+                        root.pane-key,
+                        SftpModel.sftp-read-transfer(event.data));
+                    DragAction.copy
+                }
+
+                Rectangle {
+                    border-width: drop-area.has-drag ? 2px : 0px;
+                    border-color: Tokens.primary;
+                    border-radius: Tokens.radius-default;
+                    background: drop-area.has-drag ? Tokens.primary-container.with-alpha(15%) : transparent;
+                    animate background, border-width { duration: Tokens.transition-fast; }
+
+                    // Klik di area KOSONG (bukan di baris file mana
+                    // pun) -> hapus seleksi panel ini — permintaan
+                    // eksplisit user. Dideklarasikan SEBELUM
+                    // `ScrollView` di bawah (z-order: baris file, yang
+                    // datang belakangan, "menang" duluan kalau memang
+                    // diklik TEPAT di barisnya; klik di luar semua
+                    // baris jatuh ke `TouchArea` ini).
+                    clear-touch := TouchArea {
+                        clicked => {
+                            select-focus.focus();
+                            root.anchor-index = -1;
+                            root.cursor-index = -1;
+                            SftpModel.sftp-clear-selection-requested(root.pane-key);
+                        }
+                    }
+
+                    ScrollView {
+                        VerticalLayout {
+                            for f[i] in root.entries : DragArea {
+                                // Cuma FILE yang bisa di-drag (folder tetap
+                                // murni navigasi lewat klik dua kali) —
+                                // `enabled: false` bikin `DragArea` tidak
+                                // pernah mulai drag SAMA SEKALI, TouchArea
+                                // di dalam `FileRow` tetap jalan normal.
+                                height: 34px;
+                                enabled: !f.is-dir;
+                                allow-copy: true;
+                                data: SftpModel.sftp-make-transfer((root.remote ? "remote:" : "local:") + f.name);
+
+                                // Menu PER BARIS — Rename/Delete/Close, ala
+                                // Termius. DUA cara buka: klik-kanan DI
+                                // BARIS ini, ATAU tombol "⋮" yang KELIHATAN
+                                // (sama alasan dengan `pane-menu` di atas —
+                                // klik-kanan sendirian dilaporkan user tidak
+                                // ketemu, tombol ini jamin ada cara PASTI).
+                                row-menu := ContextMenuArea {
+                                    Menu {
+                                        MenuItem {
+                                            title: "Rename";
+                                            enabled: !f.is-dir;
+                                            activated => {
+                                                SftpModel.rename-pane = root.pane-key;
+                                                SftpModel.rename-old-name = f.name;
+                                                SftpModel.rename-new-name = f.name;
+                                                SftpModel.transfer-error = "";
+                                                SftpModel.rename-modal-open = true;
+                                            }
+                                        }
+                                        MenuItem {
+                                            title: "Delete";
+                                            enabled: !f.is-dir;
+                                            activated => { SftpModel.sftp-delete-one-requested(root.pane-key, f.name); }
+                                        }
+                                    }
+
+                                    FileRow {
+                                        entry: f;
+                                        selected: f.checked;
+                                        clicked => {
+                                            select-focus.focus();
+                                            if !f.is-dir {
+                                                if root.shift-held && root.anchor-index >= 0 {
+                                                    // Shift+klik -> range-select dari anchor
+                                                    // sampai baris ini, anchor TETAP (biar
+                                                    // shift-klik berikutnya masih ngitung
+                                                    // dari titik awal yang sama).
+                                                    root.cursor-index = i;
+                                                    SftpModel.sftp-select-range-requested(root.pane-key, root.entries[root.anchor-index].name, f.name);
+                                                } else {
+                                                    // Klik biasa -> anchor baru + toggle
+                                                    // satu baris ini (perilaku lama tetap
+                                                    // dipertahankan, jadi klik biasa masih
+                                                    // bisa nyentang beberapa file lepas).
+                                                    root.anchor-index = i;
+                                                    root.cursor-index = i;
+                                                    SftpModel.sftp-toggle-check-requested(root.pane-key, f.name);
+                                                }
+                                            }
+                                        }
+                                        double-clicked => {
+                                            if f.is-dir {
+                                                root.navigate-requested(f.name);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        x: parent.width - 26px;
+                                        y: (34px - self.height) / 2;
+                                        width: 22px;
+                                        height: 22px;
+                                        border-radius: Tokens.radius-sm;
+                                        background: row-menu-touch.pressed ? Tokens.surface-container-high.darker(10%) : row-menu-touch.has-hover ? Tokens.surface-container-high : transparent;
+                                        animate background { duration: Tokens.transition-fast; }
+                                        Text {
+                                            text: "⋮";
+                                            color: Tokens.on-surface-variant;
+                                            font-size: 14px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: 100%;
+                                            height: 100%;
+                                        }
+                                        row-menu-touch := TouchArea { clicked => { row-menu.show({ x: 0px, y: 22px }); } }
+                                    }
+                                }
+                            }
+                            if root.entries.length == 0 : Text {
+                                text: "(kosong)";
+                                color: Tokens.outline;
+                                font-family: Tokens.font-mono;
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Form Manual Connect — MODAL (BUKAN slide-over lagi — atas permintaan
+// eksplisit user: "itu tidak bagus sama sekali... untuk koneksi manual
+// ganti dengan tombol manual yang ada ikon plus nya menampilkan modal
+// saja, tidak perlu slideover"), pola SAMA dengan `NewGroupDialog`/
+// `VaultDialog` (`DialogScrim` + kartu di tengah). `DialogScrim`
+// SENGAJA TIDAK tutup waktu diklik di luar (lihat komentar di
+// dialogs.slint) — form-nya bisa keisi separuh, jangan sampai hilang
+// gara-gara ke-klik luar tanpa sengaja, harus lewat tombol Batal/×
+// eksplisit, sama kayak dialog-dialog lain di app ini.
+component SftpManualDialog inherits DialogScrim {
+    // `height` WAJIB eksplisit (`content.preferred-height`) — tanpa
+    // ini `card` (posisinya diatur manual `x`/`y`, jadi TIDAK dikelola
+    // layout apa pun) default MEMENUHI tinggi `DialogScrim` (satu
+    // window penuh) alih-alih menyusut ke ukuran form-nya, persis bug
+    // yang sama ditemukan & diverifikasi (`slint-viewer --screenshot`)
+    // di `form-card`, `page-console.slint` — akar masalah laporan user
+    // "ukuran modalnya sesuai kebutuhan form input nya saja".
+    card := Rectangle {
+        width: 360px;
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        content := VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                Text {
+                    text: "Manual Connect";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-md;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: close-touch.pressed ? Tokens.surface-container-high.darker(10%) : close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    close-touch := TouchArea { clicked => { SftpModel.manual-modal-open = false; } }
+                }
+            }
+
+            DialogField {
+                label-text: "Host";
+                placeholder: "203.0.113.10";
+                initial-value: SftpModel.manual-host;
+                auto-focus: true;
+                edited(text) => { SftpModel.manual-host = text; }
+            }
+            DialogField {
+                label-text: "Port";
+                placeholder: "22";
+                initial-value: SftpModel.manual-port;
+                edited(text) => { SftpModel.manual-port = text; }
+            }
+            DialogField {
+                label-text: "Username";
+                placeholder: "root";
+                initial-value: SftpModel.manual-username;
+                edited(text) => { SftpModel.manual-username = text; }
+            }
+            DialogField {
+                label-text: "Password";
+                is-password: true;
+                initial-value: SftpModel.manual-password;
+                edited(text) => { SftpModel.manual-password = text; }
+                accepted => { SftpModel.sftp-connect-manual-requested(); }
+            }
+
+            if SftpModel.connect-error != "" : Text {
+                text: SftpModel.connect-error;
+                color: Tokens.error;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !SftpModel.connecting;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.manual-modal-open = false; }
+                }
+                DialogButton {
+                    label-text: SftpModel.connecting ? "Menghubungkan..." : "Connect";
+                    filled: true;
+                    enabled: !SftpModel.connecting;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.sftp-connect-manual-requested(); }
+                }
+            }
+        }
+    }
+}
+
+// Modal Rename — satu `DialogField` (nama baru), dipakai dari menu
+// klik-kanan PER BARIS (`ContextMenuArea` di `FilePane`). Pola sama
+// dengan `SftpManualDialog` di atas.
+component SftpRenameDialog inherits DialogScrim {
+    // Lihat komentar panjang di `SftpManualDialog.card` (atas) — bug &
+    // fix `height: content.preferred-height` yang sama.
+    card := Rectangle {
+        width: 340px;
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        content := VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                Text {
+                    text: "Rename";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-md;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: rename-close-touch.pressed ? Tokens.surface-container-high.darker(10%) : rename-close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    rename-close-touch := TouchArea { clicked => { SftpModel.rename-modal-open = false; } }
+                }
+            }
+
+            DialogField {
+                label-text: "Nama baru";
+                initial-value: SftpModel.rename-old-name;
+                auto-focus: true;
+                edited(text) => { SftpModel.rename-new-name = text; }
+                accepted => { SftpModel.sftp-rename-requested(); }
+            }
+
+            if SftpModel.transfer-error != "" : Text {
+                text: SftpModel.transfer-error;
+                color: Tokens.error;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !SftpModel.transferring;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.rename-modal-open = false; }
+                }
+                DialogButton {
+                    label-text: SftpModel.transferring ? "Menyimpan..." : "Rename";
+                    filled: true;
+                    enabled: !SftpModel.transferring;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.sftp-rename-requested(); }
+                }
+            }
+        }
+    }
+}
+
+// Modal New Folder — sama pola.
+component SftpNewFolderDialog inherits DialogScrim {
+    // Lihat komentar panjang di `SftpManualDialog.card` — bug & fix
+    // `height: content.preferred-height` yang sama.
+    card := Rectangle {
+        width: 340px;
+        height: content.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        content := VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                Text {
+                    text: "New Folder";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-md;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: nf-close-touch.pressed ? Tokens.surface-container-high.darker(10%) : nf-close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    nf-close-touch := TouchArea { clicked => { SftpModel.new-folder-modal-open = false; } }
+                }
+            }
+
+            DialogField {
+                label-text: "Nama folder";
+                placeholder: "folder-baru";
+                initial-value: "";
+                auto-focus: true;
+                edited(text) => { SftpModel.new-folder-name = text; }
+                accepted => { SftpModel.sftp-new-folder-requested(); }
+            }
+
+            if SftpModel.transfer-error != "" : Text {
+                text: SftpModel.transfer-error;
+                color: Tokens.error;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !SftpModel.transferring;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.new-folder-modal-open = false; }
+                }
+                DialogButton {
+                    label-text: SftpModel.transferring ? "Membuat..." : "Buat";
+                    filled: true;
+                    enabled: !SftpModel.transferring;
+                    horizontal-stretch: 1;
+                    clicked => { SftpModel.sftp-new-folder-requested(); }
+                }
+            }
+        }
+    }
+}
+
+// Halaman SFTP — DUA TAHAP (atas permintaan eksplisit user):
+// 1. Chooser: pilih host TERSIMPAN (List/Groups, REUSE PERSIS
+//    komponen dari halaman Hosts — `HostGrid`/`GroupGrid`/
+//    `ModeToggle`, di-export dari `page-hosts.slint`) atau isi host
+//    Manual, KLIK DUA KALI buat connect. TIDAK langsung nampilin dua
+//    panel local/remote kayak sebelumnya.
+// 2. Sesudah connect (`SftpModel.connected`): two-pane browser beneran
+//    (local kiri, remote kanan) — TANPA tombol panah di tengah lagi
+//    (upload/download nanti lewat drag & drop antar panel, belum
+//    diimplementasi di putaran ini).
+export component PageSftp inherits Rectangle {
+    background: Tokens.surface;
+    // `clip: true` biar `manual-panel` yang lagi "disembunyikan"
+    // (digeser ke luar tepi kanan lewat `x`) tidak nongol bikin
+    // scrollbar horizontal — sama alasan dengan `PageHosts`.
+    clip: true;
+
+    // Shortcut Ctrl+R -> refresh dua panel (gantiin tombol ↺ yang
+    // dihapus). Pola sama persis dengan halaman Hosts (Ctrl+S).
+    key-catcher := FocusScope {
+        width: 0px;
+        height: 0px;
+        init => { key-catcher.focus(); }
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text == "r") {
+                SftpModel.sftp-refresh-requested();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Chooser SEKARANG LANGSUNG nampilin host list/group (atas
+    // permintaan eksplisit user) — tidak ada lagi toggle "Host"/
+    // "Manual" yang jadi gerbang. Manual connect pindah jadi tombol
+    // "+ Manual" (buka `SftpManualDialog`, MODAL — bukan slide-over).
+    if !SftpModel.connected : VerticalLayout {
+        padding: Tokens.container-padding;
+        spacing: Tokens.gutter-md;
+
+        HorizontalLayout {
+            height: 32px;
+            spacing: Tokens.inline-gap;
+
+            if HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" : Rectangle {
+                width: 28px;
+                height: 28px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 14px;
+                background: back-touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    text: "←";
+                    color: Tokens.on-surface;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                back-touch := TouchArea { clicked => { HostsModel.selected-group-id = ""; } }
+            }
+            if HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" : Text {
+                text: HostsModel.selected-group-name;
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-sm;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Rectangle {
+                width: manual-btn-text.preferred-width + 30px;
+                height: 32px;
+                border-radius: Tokens.radius-default;
+                border-width: 1px;
+                border-color: Tokens.outline-variant;
+                background: manual-btn-touch.pressed ? Tokens.surface-container-high.darker(10%) : manual-btn-touch.has-hover ? Tokens.surface-container-high : transparent;
+                animate background { duration: Tokens.transition-fast; }
+                manual-btn-text := Text {
+                    text: "+ Manual";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                manual-btn-touch := TouchArea { clicked => { SftpModel.manual-modal-open = true; } }
+            }
+
+            ModeToggle {
+                mode: HostsModel.view-mode;
+                mode-changed(m) => {
+                    HostsModel.view-mode = m;
+                    HostsModel.selected-group-id = "";
+                }
+            }
+        }
+
+        if SftpModel.connecting : Text {
+            text: "Menghubungkan lewat SFTP...";
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-mono;
+            font-size: 12px;
+        }
+        if SftpModel.connect-error != "" && !SftpModel.manual-modal-open : Text {
+            text: SftpModel.connect-error;
+            color: Tokens.error;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        // Pesan kosong SALING EKSKLUSIF dengan grid-nya (bukan sibling
+        // yang dua-duanya kerender bareng) — HostGrid/GroupGrid, MESKI
+        // isinya nol kartu, tetap ikut kena default stretch vertikal
+        // `VerticalLayout` (ScrollView di dalamnya), yang bikin pesan
+        // di bawahnya (kalau dua-duanya sama-sama kerender) malah
+        // "terdorong" nempel ke tepi PALING BAWAH halaman, bukan
+        // nongol di posisi wajar tempat grid itu seharusnya ada —
+        // sudah dibuktikan lewat `slint-viewer --screenshot` sebelum
+        // fix ini (SEBELUMNYA area ini diam blank total, sama sekali
+        // tanpa pesan apa pun — laporan user).
+        if HostsModel.view-mode == "list" && HostsModel.ungrouped-hosts.length > 0 : HostGrid {
+            items: HostsModel.ungrouped-hosts;
+            show-add-card: false;
+            host-clicked(id) => { }
+            host-double-clicked(id) => { SftpModel.sftp-connect-requested(id); }
+        }
+        if HostsModel.view-mode == "list" && HostsModel.ungrouped-hosts.length == 0 : EmptyHostsNotice {
+            text: "Belum ada host tersimpan. Tambahkan host dulu di halaman Hosts, atau pakai \"+ Manual\" di atas.";
+        }
+        if HostsModel.view-mode == "groups" && HostsModel.selected-group-id == "" && HostsModel.groups.length > 0 : GroupGrid {
+            items: HostsModel.groups;
+            group-clicked(id) => {
+                HostsModel.selected-group-id = id;
+                HostsModel.group-opened(id);
+            }
+        }
+        if HostsModel.view-mode == "groups" && HostsModel.selected-group-id == "" && HostsModel.groups.length == 0 : EmptyHostsNotice {
+            text: "Belum ada grup host tersimpan. Buat grup dulu di halaman Hosts, atau pakai \"+ Manual\" di atas.";
+        }
+        if HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" && HostsModel.active-group-hosts.length > 0 : HostGrid {
+            items: HostsModel.active-group-hosts;
+            show-add-card: false;
+            host-clicked(id) => { }
+            host-double-clicked(id) => { SftpModel.sftp-connect-requested(id); }
+        }
+        if HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" && HostsModel.active-group-hosts.length == 0 : EmptyHostsNotice {
+            text: "Grup ini belum punya host.";
+        }
+    }
+
+    if SftpModel.manual-modal-open : SftpManualDialog { }
+
+    if SftpModel.connected : VerticalLayout {
+        padding: Tokens.container-padding;
+        spacing: Tokens.gutter-md;
+
+        HorizontalLayout {
+            height: 28px;
+            spacing: Tokens.inline-gap;
+            Rectangle {
+                width: disconnect-text.preferred-width + 24px;
+                height: 28px;
+                border-radius: Tokens.radius-default;
+                background: disconnect-touch.pressed ? Tokens.error-container.darker(20%) : disconnect-touch.has-hover ? Tokens.error-container : transparent;
+                border-width: 1px;
+                border-color: Tokens.outline-variant;
+                animate background { duration: Tokens.transition-fast; }
+                disconnect-text := Text {
+                    text: "← Disconnect";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                disconnect-touch := TouchArea { clicked => { SftpModel.sftp-disconnect-requested(); } }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        // Panel Local (kiri) + Remote (kanan) LANGSUNG bersebelahan —
+        // panah "→"/"←" DIHAPUS (atas permintaan eksplisit user, drag
+        // & drop antar panel sudah beneran jalan, lihat `DragArea`/
+        // `DropArea` di `FilePane` — tidak perlu lagi tombol terpisah).
+        // Transfer sekarang MURNI lewat drag & drop, ATAU (per-file)
+        // lewat klik-kanan -> "Copy to..." kalau nanti ditambah ke menu
+        // select option.
+        HorizontalLayout {
+            spacing: Tokens.gutter-md;
+            vertical-stretch: 1;
+
+            FilePane {
+                pane-title: "Local";
+                path: SftpModel.local-path;
+                entries: SftpModel.local-entries;
+                horizontal-stretch: 1;
+                navigate-requested(name) => { SftpModel.sftp-local-navigate-requested(name); }
+                path-submitted(p) => { SftpModel.sftp-local-path-set-requested(p); }
+            }
+
+            FilePane {
+                pane-title: SftpModel.remote-host-label;
+                path: SftpModel.remote-path;
+                entries: SftpModel.remote-entries;
+                remote: true;
+                horizontal-stretch: 1;
+                navigate-requested(name) => { SftpModel.sftp-remote-navigate-requested(name); }
+                path-submitted(p) => { SftpModel.sftp-remote-path-set-requested(p); }
+            }
+        }
+
+        if SftpModel.transferring || SftpModel.transfer-error != "" : Text {
+            text: SftpModel.transferring ? "Menyalin..." : SftpModel.transfer-error;
+            color: SftpModel.transferring ? Tokens.on-surface-variant : Tokens.error;
+            font-family: Tokens.font-mono;
+            font-size: 12px;
+        }
+    }
+
+    if SftpModel.rename-modal-open : SftpRenameDialog { }
+    if SftpModel.new-folder-modal-open : SftpNewFolderDialog { }
+}

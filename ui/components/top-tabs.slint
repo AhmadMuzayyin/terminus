@@ -1,0 +1,113 @@
+import { Tokens } from "../tokens.slint";
+import { HostsModel } from "../models.slint";
+
+// Kotak pencarian custom. Sengaja pakai `TextInput` mentah (bukan
+// widget `LineEdit` dari std-widgets) karena LineEdit membawa chrome
+// bawaan style "fluent" (background terang + border sendiri) yang
+// tidak bisa di-override dan malah "bocor" keluar dari container gelap
+// kita — lihat catatan di README bagian troubleshooting.
+//
+// Nyambung ke `HostsModel.search-query`/`search-requested` — Rust
+// yang nyari (lihat `on_search_requested` di state.rs) soalnya perlu
+// baca SEMUA host dari vault (bukan cuma yang lagi ditampilkan di
+// List/Groups), bukan sesuatu yang Slint bisa lakukan sendiri.
+export component SearchField inherits Rectangle {
+    in property <string> placeholder: "";
+
+    // Dipanggil dari luar (lewat `TerminalTabBar.focus-search()`,
+    // diteruskan lagi dari `HostsModel.focus-search-requested` yang
+    // ditembak shortcut Ctrl+S di halaman Hosts — lihat komentar
+    // panjang di `page-hosts.slint`).
+    public function focus-search() {
+        input.focus();
+    }
+
+    border-radius: Tokens.radius-default;
+    background: Tokens.surface-container;
+    border-width: 1px;
+    border-color: input.has-focus ? Tokens.primary : Tokens.outline-variant;
+    animate border-color { duration: Tokens.transition-fast; }
+
+    input := TextInput {
+        x: 10px;
+        width: parent.width - 20px - (HostsModel.search-query != "" ? 20px : 0px);
+        height: 100%;
+        vertical-alignment: center;
+        color: Tokens.on-surface;
+        font-family: Tokens.font-mono;
+        font-size: 12px;
+        single-line: true;
+        edited => {
+            HostsModel.search-query = input.text;
+            HostsModel.search-requested(input.text);
+        }
+    }
+
+    if input.text == "" : Text {
+        x: 10px;
+        width: parent.width - 20px;
+        height: 100%;
+        text: root.placeholder;
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-mono;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    // Clear pencarian — reset teks lokal DAN model, biar dua-duanya
+    // sinkron (kalau cuma salah satu, box kelihatan kosong tapi
+    // pencarian masih aktif, atau sebaliknya).
+    if input.text != "" : Rectangle {
+        x: parent.width - self.width - 6px;
+        width: 18px;
+        height: 18px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 9px;
+        background: clear-touch.pressed ? Tokens.surface-container-high.darker(10%) : clear-touch.has-hover ? Tokens.surface-container-high : transparent;
+        Text {
+            text: "×";
+            color: Tokens.on-surface-variant;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+        clear-touch := TouchArea {
+            clicked => {
+                input.text = "";
+                HostsModel.search-query = "";
+                HostsModel.search-requested("");
+            }
+        }
+    }
+}
+
+// Top bar SEKARANG murni satu kotak pencarian full-width — TANPA teks
+// judul halaman lagi (dihapus atas permintaan eksplisit user, lihat
+// referensi Termius yang ditunjukkan: search bar penuh, tidak ada nama
+// halaman di kiri). `title` masih diterima (dipanggil dari
+// app-window.slint) tapi TIDAK dipakai di sini lagi — dibiarkan
+// terpasang di caller supaya tidak perlu ubah app-window.slint juga,
+// murni properti mati sekarang.
+export component TopBar inherits Rectangle {
+    in property <string> title: "";
+    // Disembunyikan waktu halaman Terminal aktif (atas permintaan
+    // user) — pencarian host tidak relevan di sana, dan halaman
+    // Terminal sudah punya header/tab-nya sendiri.
+    in property <bool> show-search: true;
+
+    height: 56px;
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+
+    if root.show-search : SearchField {
+        x: Tokens.gutter-md;
+        width: parent.width - 2 * Tokens.gutter-md;
+        height: 34px;
+        y: (parent.height - self.height) / 2;
+        placeholder: "Find a host or ssh user@host";
+    }
+}

@@ -1,0 +1,68 @@
+import { Tokens } from "../tokens.slint";
+import { TerminalTabsModel } from "../models.slint";
+import { TerminalView } from "../components/terminal-view.slint";
+import { TerminalSettingsPanel } from "../components/terminal-settings.slint";
+
+// Halaman "virtual" (bukan item sidebar — dituju lewat `current-page ==
+// 6`, di-set dari Rust waktu connect SSH sukses, atau dari klik tab di
+// `TerminalTabBar`) yang nampilin sesi terminal SSH yang lagi aktif.
+// Nutup tab (disconnect) dilakukan lewat tombol "×" di tab bar, bukan
+// dari sini — lihat `ui/components/terminal-tabs-bar.slint`.
+//
+// TIDAK ADA header sendiri lagi di sini (label/address host DIHAPUS —
+// sudah kelihatan di tab chip window bar; tombol pengaturan ⚙ PINDAH
+// ke window bar juga) — atas permintaan eksplisit user, halaman ini
+// sekarang MURNI area terminal, penuh dari atas ke bawah.
+export component PageTerminal inherits Rectangle {
+    background: Tokens.surface;
+    // Slide-over Terminal Settings mengambang DI ATAS konten (pola
+    // sama dengan `HostSlideOver`, lihat komentar panjang di situ) —
+    // makanya root-nya `Rectangle` polos + `clip: true`, bukan
+    // `HorizontalLayout` yang ikut menyusutkan lebar terminal.
+    clip: true;
+
+    Rectangle {
+        x: Tokens.container-padding;
+        y: Tokens.container-padding;
+        width: parent.width - 2 * Tokens.container-padding;
+        height: parent.height - 2 * Tokens.container-padding;
+        border-radius: Tokens.radius-lg;
+        background: TerminalTabsModel.terminal-bg-color;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+        clip: true;
+        TerminalView { }
+    }
+
+    // Backdrop klik-di-luar-buat-tutup — berlaku SAMA di SEMUA
+    // slide-over di aplikasi (atas permintaan eksplisit user: "ini
+    // berlaku pada semua slideover di semua halaman"), pola identik
+    // dengan punya `HostSlideOver` di `page-hosts.slint`: HANYA
+    // diinstansiasi waktu panel lagi kebuka, dideklarasikan SEBELUM
+    // panel-nya sendiri (z-order di BAWAH panel, jadi klik DI ATAS
+    // panel tidak ikut ke-backdrop).
+    if TerminalTabsModel.settings-open : TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { TerminalTabsModel.settings-open = false; }
+    }
+
+    // `states`/`transitions` (bukan `animate x{}` polos) — sama alasan
+    // persis dengan `HostSlideOver` di `page-hosts.slint`, lihat
+    // komentar panjang di sana: cegah animasi liar waktu `parent.width`
+    // berubah gara-gara sidebar di-toggle, BUKAN `settings-open` yang
+    // beneran berubah.
+    settings-panel := TerminalSettingsPanel {
+        height: 100%;
+        states [
+            open when TerminalTabsModel.settings-open : {
+                x: parent.width - self.width;
+                in { animate x { duration: Tokens.transition-normal; easing: ease-out; } }
+            }
+            closed when !TerminalTabsModel.settings-open : {
+                x: parent.width;
+                in { animate x { duration: Tokens.transition-normal; easing: ease-out; } }
+            }
+        ]
+    }
+}

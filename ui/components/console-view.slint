@@ -1,0 +1,60 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { ConsoleModel, TerminalTabsModel } from "../models.slint";
+import { TerminalRowView } from "./terminal-view.slint";
+
+// Area terminal interaktif buat sesi Console (serial) — pola SAMA
+// PERSIS dengan `TerminalView` (`terminal-view.slint`, tab SSH),
+// termasuk pemetaan tombol khusus (Enter/Backspace/panah/Ctrl+huruf)
+// jadi byte control yang benar dan TIDAK ada local echo. Duplikasi
+// SENGAJA dipertahankan terpisah dari `TerminalView` (bukan diparam-
+// eterisasi satu komponen buat dua-duanya) — beda global yang dituju
+// (`ConsoleModel` vs `TerminalTabsModel`) bikin parameterisasi Slint
+// (tidak bisa oper "global" sebagai argumen) lebih ribet daripada
+// manfaatnya, padahal isinya cuma ~40 baris. `TerminalRowView` (murni
+// presentational, render SATU baris) tetap di-REUSE apa adanya dari
+// `terminal-view.slint`, cuma bagian yang beda (keyboard mapping +
+// global mana yang dibaca) yang dobel.
+export component ConsoleView inherits Rectangle {
+    background: TerminalTabsModel.terminal-bg-color;
+
+    focus-scope := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text != "") {
+                if (event.text == "c") { ConsoleModel.console-input-requested("\u{3}"); return accept; }
+                if (event.text == "d") { ConsoleModel.console-input-requested("\u{4}"); return accept; }
+                if (event.text == "z") { ConsoleModel.console-input-requested("\u{1a}"); return accept; }
+                if (event.text == "l") { ConsoleModel.console-input-requested("\u{c}"); return accept; }
+                if (event.text == "a") { ConsoleModel.console-input-requested("\u{1}"); return accept; }
+                if (event.text == "e") { ConsoleModel.console-input-requested("\u{5}"); return accept; }
+                if (event.text == "u") { ConsoleModel.console-input-requested("\u{15}"); return accept; }
+                if (event.text == "w") { ConsoleModel.console-input-requested("\u{17}"); return accept; }
+                if (event.text == "r") { ConsoleModel.console-input-requested("\u{12}"); return accept; }
+            }
+            if (event.text == Key.Return) { ConsoleModel.console-input-requested("\u{d}"); return accept; }
+            if (event.text == Key.Backspace) { ConsoleModel.console-input-requested("\u{7f}"); return accept; }
+            if (event.text == Key.Tab) { ConsoleModel.console-input-requested("\u{9}"); return accept; }
+            if (event.text == Key.Escape) { ConsoleModel.console-input-requested("\u{1b}"); return accept; }
+            if (event.text == Key.UpArrow) { ConsoleModel.console-input-requested("\u{1b}[A"); return accept; }
+            if (event.text == Key.DownArrow) { ConsoleModel.console-input-requested("\u{1b}[B"); return accept; }
+            if (event.text == Key.RightArrow) { ConsoleModel.console-input-requested("\u{1b}[C"); return accept; }
+            if (event.text == Key.LeftArrow) { ConsoleModel.console-input-requested("\u{1b}[D"); return accept; }
+            if (event.text == Key.Delete) { ConsoleModel.console-input-requested("\u{1b}[3~"); return accept; }
+            if (event.text == Key.Home) { ConsoleModel.console-input-requested("\u{1b}[H"); return accept; }
+            if (event.text == Key.End) { ConsoleModel.console-input-requested("\u{1b}[F"); return accept; }
+            ConsoleModel.console-input-requested(event.text);
+            accept
+        }
+
+        init => { focus-scope.focus(); }
+        TouchArea { clicked => { focus-scope.focus(); } }
+
+        ScrollView {
+            VerticalLayout {
+                padding: Tokens.gutter-md;
+                alignment: start;
+                for r in ConsoleModel.rows : TerminalRowView { term-row: r; }
+            }
+        }
+    }
+}

@@ -1,0 +1,9 @@
+[package]
+name = "terminus-term-emulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+alacritty_terminal.workspace = true
+thiserror.workspace = true

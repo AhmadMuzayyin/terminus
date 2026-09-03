@@ -1,0 +1,20 @@
+[package]
+name = "terminus-ssh-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+terminus-core.workspace = true
+russh.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# `terminus-vault` cuma dipakai test integrasi (tests/end_to_end.rs)
+# buat nyimpen kredensial terenkripsi persis kayak alur beneran —
+# TIDAK dipakai runtime crate ini (tetap tidak depend ke vault, sesuai
+# docs/architecture.md).
+[dev-dependencies]
+terminus-vault.workspace = true
+uuid.workspace = true

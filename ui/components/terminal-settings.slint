@@ -1,0 +1,348 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { TerminalTabsModel } from "../models.slint";
+
+// Satu baris pilihan tema — beda dari font (lihat `FontOption` di
+// bawah), tema punya swatch kecil (preview warna asli tema-nya, DUA
+// warna beneran dari `Palette`, bukan hiasan) di kiri label.
+component ThemeOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <color> swatch-bg;
+    in property <color> swatch-accent;
+    callback clicked <=> touch.clicked;
+
+    height: 40px;
+    border-radius: Tokens.radius-default;
+    background: touch.pressed ? Tokens.primary-container.darker(20%)
+        : root.selected ? Tokens.primary-container
+        : (touch.has-hover ? Tokens.surface-container-high : transparent);
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+
+        // Swatch: kotak kecil pakai background asli tema + 2 bar
+        // pendek pakai warna ANSI hijau/kuning tema itu, ala mini
+        // preview "baris kode" (lihat referensi Termius yang
+        // ditunjukkan user) — SEMUA warna asli dari `Palette`
+        // (`crates/term-emulator/src/palette.rs`), bukan warna acak.
+        Rectangle {
+            width: 34px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: root.swatch-bg;
+            clip: true;
+            VerticalLayout {
+                padding: 5px;
+                spacing: 3px;
+                alignment: center;
+                Rectangle { height: 2px; width: 20px; background: root.swatch-accent; }
+                Rectangle { height: 2px; width: 14px; background: root.swatch-accent.with-alpha(60%); }
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Tokens.on-primary : Tokens.on-surface;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+            font-weight: root.selected ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+    touch := TouchArea { }
+}
+
+// Satu baris pilihan font — dipakai di dalam accordion `FontPicker`
+// di bawah (list panjang, SENGAJA cuma nongol waktu accordion-nya
+// dibuka — lihat komentar di sana).
+component FontOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked <=> touch.clicked;
+
+    height: 32px;
+    border-radius: Tokens.radius-default;
+    background: touch.pressed ? Tokens.primary-container.darker(20%)
+        : root.selected ? Tokens.primary-container
+        : (touch.has-hover ? Tokens.surface-container-high : transparent);
+
+    Text {
+        x: 10px;
+        text: root.label;
+        color: root.selected ? Tokens.on-primary : Tokens.on-surface;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        font-weight: root.selected ? 600 : 400;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+        width: parent.width - 20px;
+        height: 100%;
+        overflow: elide;
+    }
+    touch := TouchArea { }
+}
+
+// Picker font gaya "select"/accordion (BUKAN list panjang yang selalu
+// terbuka kayak sebelumnya — laporan user: mau kayak referensi
+// Termius, kotak tertutup nunjukin nilai TERPILIH + chevron, baru
+// buka daftarnya waktu diklik) — nutup lagi otomatis begitu satu font
+// dipilih, biar tidak makan tempat vertikal terus-terusan.
+component FontPicker inherits Rectangle {
+    property <bool> expanded: false;
+    // WAJIB `vertical-stretch: 0` — tanpa ini, `Rectangle` polos tanpa
+    // `height` eksplisit (kayak ini, tinggi kontennya DINAMIS: 38px
+    // tertutup, lebih tinggi waktu `expanded`) SECARA DEFAULT ikut
+    // rebutan sisa ruang vertikal di dalam `VerticalLayout` panel induk
+    // (lihat `TerminalSettingsPanel` di bawah) — itu SEBABNYA muncul
+    // jarak kosong raksasa & ambigu antara section Font/Color Theme
+    // yang dilaporkan user ("berjarak gak jelas, tidak responsive"):
+    // panel-nya setinggi jendela penuh, jauh lebih tinggi dari konten
+    // asli, jadi Rectangle ini (dan elemen serupa TANPA height
+    // eksplisit) "menyerap" sisa tinggi itu. `vertical-stretch: 0`
+    // maksa dia pakai tinggi ALAMI kontennya saja.
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Rectangle {
+            height: 38px;
+            border-radius: Tokens.radius-default;
+            border-width: 1px;
+            border-color: Tokens.outline-variant;
+            background: head-touch.pressed ? Tokens.surface-container-high.darker(10%) : head-touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+            animate background { duration: Tokens.transition-fast; }
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: TerminalTabsModel.terminal-font-family;
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.expanded ? "▾" : "▸";
+                    color: Tokens.on-surface-variant;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                }
+            }
+            head-touch := TouchArea { clicked => { root.expanded = !root.expanded; } }
+        }
+
+        if root.expanded : Rectangle {
+            border-radius: Tokens.radius-default;
+            border-width: 1px;
+            border-color: Tokens.outline-variant;
+            background: Tokens.surface-container;
+            height: list.preferred-height + 8px;
+            clip: true;
+
+            list := VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+                // Font MURNI tampilan (lihat komentar `terminal-font-
+                // family` di models.slint) — pilih langsung set
+                // property, tidak perlu callback ke Rust. Nutup
+                // accordion lagi begitu satu dipilih.
+                for f in TerminalTabsModel.available-fonts : FontOption {
+                    label: f;
+                    selected: f == TerminalTabsModel.terminal-font-family;
+                    clicked => {
+                        TerminalTabsModel.terminal-font-family = f;
+                        root.expanded = false;
+                    }
+                }
+                if TerminalTabsModel.available-fonts.length == 0 : Text {
+                    text: "Tidak ada font monospace terdeteksi di sistem.";
+                    color: Tokens.outline;
+                    font-family: Tokens.font-body;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+// Stepper -/nilai/+ buat ukuran font terminal (px). Dibatasi 8..32 —
+// di luar rentang itu teks kekecilan/kegedean tidak berguna.
+component FontSizeStepper inherits HorizontalLayout {
+    spacing: 8px;
+
+    Text {
+        text: "Text Size";
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+
+    Rectangle {
+        width: 96px;
+        height: 30px;
+        border-radius: Tokens.radius-default;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+        background: Tokens.surface-container;
+
+        HorizontalLayout {
+            Rectangle {
+                width: 30px;
+                background: minus-touch.pressed ? Tokens.surface-container-high.darker(10%) : minus-touch.has-hover ? Tokens.surface-container-high : transparent;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    text: "−";
+                    color: Tokens.on-surface;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                minus-touch := TouchArea {
+                    clicked => {
+                        TerminalTabsModel.terminal-font-size = Math.max(8, TerminalTabsModel.terminal-font-size - 1);
+                    }
+                }
+            }
+            Text {
+                text: TerminalTabsModel.terminal-font-size;
+                color: Tokens.on-surface;
+                font-family: Tokens.font-mono;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Rectangle {
+                width: 30px;
+                background: plus-touch.pressed ? Tokens.surface-container-high.darker(10%) : plus-touch.has-hover ? Tokens.surface-container-high : transparent;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    text: "+";
+                    color: Tokens.on-surface;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                plus-touch := TouchArea {
+                    clicked => {
+                        TerminalTabsModel.terminal-font-size = Math.min(32, TerminalTabsModel.terminal-font-size + 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Panel pengaturan terminal (font + color theme) — SENGAJA tidak
+// permanen kayak referensi Termius yang ditunjukkan user, cuma nongol
+// waktu tombol ⚙ di `page-terminal.slint` diklik
+// (`TerminalTabsModel.settings-open`). Sama gaya overlay-mengambang
+// dengan `HostSlideOver` (lihat komentar panjang di situ soal kenapa
+// bukan elemen layout biasa) — `x` diset di titik instansiasi.
+export component TerminalSettingsPanel inherits Rectangle {
+    width: 300px;
+    background: Tokens.surface-container-low;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #000000.with-alpha(35%);
+    drop-shadow-offset-x: -2px;
+    clip: true;
+
+    ScrollView {
+        VerticalLayout {
+            padding: 20px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                Text {
+                    text: "Terminal Settings";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-sm;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: close-touch.pressed ? Tokens.surface-container-high.darker(10%) : close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    close-touch := TouchArea { clicked => { TerminalTabsModel.settings-open = false; } }
+                }
+            }
+
+            Rectangle { height: 1px; background: Tokens.outline-variant; }
+
+            Text {
+                text: "Font";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            FontPicker { }
+            FontSizeStepper { }
+
+            // Pemisah section Font/Color Theme — SENGAJA lebih tebal +
+            // padding vertikal jelas (bukan cuma `Rectangle{height:4px}`
+            // kosong kayak sebelumnya, laporan user: "kurang jelas
+            // masih ambigu") supaya dua section beneran kelihatan
+            // terpisah, bukan nyambung jadi satu daftar panjang.
+            Rectangle { height: 10px; }
+            Rectangle { height: 1px; background: Tokens.outline-variant; }
+            Rectangle { height: 10px; }
+
+            Text {
+                text: "Color Theme";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            // Tema MEMPENGARUHI resolusi warna di term-emulator (Rust)
+            // — beda dari font, butuh callback biar konten yang SUDAH
+            // ada juga ikut di-render ulang pakai tema baru, bukan
+            // cuma tampilan berikutnya. Swatch (`theme-swatch-bg`/
+            // `-accent`, index SEJAJAR sama `available-themes`) diisi
+            // Rust dari `Palette` asli tiap tema — lihat `wire_
+            // callbacks` di state.rs.
+            for t[i] in TerminalTabsModel.available-themes : ThemeOption {
+                label: t;
+                selected: t == TerminalTabsModel.terminal-theme-name;
+                swatch-bg: TerminalTabsModel.theme-swatch-bg[i];
+                swatch-accent: TerminalTabsModel.theme-swatch-accent[i];
+                clicked => {
+                    TerminalTabsModel.terminal-theme-name = t;
+                    TerminalTabsModel.terminal-theme-changed(t);
+                }
+            }
+        }
+    }
+}

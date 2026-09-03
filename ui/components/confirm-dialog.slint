@@ -1,0 +1,197 @@
+import { Tokens } from "../tokens.slint";
+import { HostsModel } from "../models.slint";
+import { DialogScrim, DialogButton } from "./dialogs.slint";
+
+// Konfirmasi hapus host — lihat komentar panjang di `HostsModel
+// .confirm-delete-*` (models.slint) buat alur lengkapnya. Dipasang di
+// app-window.slint: `if HostsModel.confirm-delete-open : ConfirmDeleteHostDialog {}`.
+export component ConfirmDeleteHostDialog inherits DialogScrim {
+    card := Rectangle {
+        width: 360px;
+        height: 210px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: "Hapus host?";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: "\"" + HostsModel.confirm-delete-host-label
+                    + "\" beserta password tersimpannya akan dihapus permanen dari vault. Tindakan ini tidak bisa dibatalkan.";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !HostsModel.deleting-host;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.confirm-delete-open = false; }
+                }
+                DialogButton {
+                    label-text: HostsModel.deleting-host ? "Menghapus..." : "Hapus";
+                    filled: true;
+                    danger: true;
+                    enabled: !HostsModel.deleting-host;
+                    horizontal-stretch: 1;
+                    // Dialog SENGAJA tidak langsung ditutup di sini —
+                    // Rust yang nutup (`confirm-delete-open = false`)
+                    // setelah beneran selesai, lihat `on_host_delete_
+                    // requested` di state.rs.
+                    clicked => { HostsModel.host-delete-requested(HostsModel.confirm-delete-host-id); }
+                }
+            }
+        }
+    }
+}
+
+// Konfirmasi hapus GRUP — `delete_group` di vault sekarang CASCADE
+// (host DI DALAMNYA ikut kehapus, bukan cuma diungrouped kayak
+// sebelumnya, lihat komentar `VaultStore::delete_group`), makanya
+// dialognya SENGAJA nyebut jumlah host yang bakal ikut kehapus
+// (`confirm-delete-group-host-count`, diisi Slint langsung dari
+// `GroupItem.total-count` waktu tombol delete kartu grup diklik —
+// lihat `GroupGrid` di `page-hosts.slint`) biar user sadar ini bukan
+// cuma "hapus folder kosong".
+export component ConfirmDeleteGroupDialog inherits DialogScrim {
+    card := Rectangle {
+        width: 360px;
+        height: 210px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: "Hapus grup?";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: "\"" + HostsModel.confirm-delete-group-label + "\" akan dihapus"
+                    + (HostsModel.confirm-delete-group-host-count > 0
+                        ? " BESERTA " + HostsModel.confirm-delete-group-host-count + " host di dalamnya (beserta password tersimpannya)"
+                        : "")
+                    + " secara permanen dari vault. Tindakan ini tidak bisa dibatalkan.";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !HostsModel.deleting-group;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.confirm-delete-group-open = false; }
+                }
+                DialogButton {
+                    label-text: HostsModel.deleting-group ? "Menghapus..." : "Hapus";
+                    filled: true;
+                    danger: true;
+                    enabled: !HostsModel.deleting-group;
+                    horizontal-stretch: 1;
+                    // Sama pola dengan hapus host: Rust yang nutup
+                    // dialognya setelah beneran selesai, lihat
+                    // `on_group_delete_requested` di state.rs.
+                    clicked => { HostsModel.group-delete-requested(HostsModel.confirm-delete-group-id); }
+                }
+            }
+        }
+    }
+}
+
+// Konfirmasi bulk delete — SATU dialog dipakai buat host MAUPUN grup
+// (`confirm-bulk-delete-kind` yang bedain kalimat & callback mana yang
+// ditembak), lihat komentar panjang `HostsModel.confirm-bulk-delete-*`
+// di models.slint buat alur lengkapnya.
+export component ConfirmBulkDeleteDialog inherits DialogScrim {
+    card := Rectangle {
+        width: 360px;
+        height: 210px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: HostsModel.confirm-bulk-delete-kind == "group" ? "Hapus grup terpilih?" : "Hapus host terpilih?";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: HostsModel.confirm-bulk-delete-kind == "group"
+                    ? (HostsModel.selected-group-count + " grup BESERTA semua host di dalamnya akan dihapus permanen dari vault. Tindakan ini tidak bisa dibatalkan.")
+                    : (HostsModel.selected-host-count + " host beserta password tersimpannya akan dihapus permanen dari vault. Tindakan ini tidak bisa dibatalkan.");
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !HostsModel.deleting-bulk;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.confirm-bulk-delete-open = false; }
+                }
+                DialogButton {
+                    label-text: HostsModel.deleting-bulk ? "Menghapus..." : "Hapus";
+                    filled: true;
+                    danger: true;
+                    enabled: !HostsModel.deleting-bulk;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        if HostsModel.confirm-bulk-delete-kind == "group" {
+                            HostsModel.bulk-delete-groups-requested();
+                        } else {
+                            HostsModel.bulk-delete-hosts-requested();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

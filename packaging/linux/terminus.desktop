@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Terminus
+GenericName=SSH/SFTP/Console Manager
+Comment=SSH, SFTP, dan console (serial) manager native lintas platform
+Exec=terminus
+Icon=terminus
+Terminal=false
+Categories=Network;RemoteAccess;System;
+StartupNotify=true

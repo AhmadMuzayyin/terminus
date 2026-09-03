@@ -1,0 +1,21 @@
+/target/
+
+# Sample/real config export dipakai buat testing fitur Import XML
+# (lihat crates/core/src/import/securecrt.rs) — isinya hostname/IP
+# infrastruktur ASLI, jangan pernah ke-commit.
+/config.xml
+
+# Vault lokal (kredensial terenkripsi) — jangan pernah ke-commit,
+# meskipun isinya terenkripsi.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+.DS_Store
+build
+
+# Tool packaging pihak ketiga (linuxdeploy/appimagetool) yang
+# didownload otomatis oleh `packaging/linux/build-appimage.sh` —
+# binary besar, bukan bagian source proyek, jangan ikut ke-commit.
+/packaging/linux/tools/

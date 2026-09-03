@@ -1,0 +1,415 @@
+import { ComboBox, SpinBox, ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { HostsModel, VaultModel, NewHostForm } from "../models.slint";
+
+// Scrim gelap transparan menutupi seluruh window di belakang kartu
+// dialog. Sengaja TIDAK menutup dialog waktu diklik — biar user tidak
+// kehilangan isian form tanpa sengaja; harus lewat tombol Batal/Cancel
+// eksplisit.
+export component DialogScrim inherits Rectangle {
+    background: #000000.with-alpha(55%);
+}
+
+// Satu field label + text input, dipakai berulang di dialog-dialog di
+// bawah MAUPUN di `host-panel.slint` (makanya `export`). `value` (out)
+// dibaca parent waktu tombol submit diklik. Field password dapat
+// tombol 👁 kecil buat sementara menampilkan plaintext-nya.
+export component DialogField inherits Rectangle {
+    in property <string> label-text: "";
+    in property <string> placeholder: "";
+    in property <bool> is-password: false;
+    in property <string> initial-value: "";
+    out property <string> value: input.text;
+    property <bool> revealed: false;
+    // Auto-focus SENGAJA `false` by default (bukan tiap `DialogField`
+    // auto-focus dirinya sendiri) — dialog dengan BANYAK field
+    // (`NewHostDialog`, `HostSlideOver`) bakal rebutan fokus (yang
+    // dideklarasikan TERAKHIR menang) kalau semua auto-focus. Cuma
+    // field yang eksplisit di-set `true` dari caller (mis. password
+    // field `VaultDialog`) yang beneran fokus otomatis.
+    in property <bool> auto-focus: false;
+    init => {
+        if root.auto-focus {
+            input.focus();
+        }
+    }
+    // Enter di field ini -> caller yang putuskan mau ngapain (biasanya
+    // submit form-nya langsung, mis. `VaultDialog` buat Unlock/Buat
+    // tanpa perlu klik tombol). Dilewatkan apa adanya dari `TextInput`
+    // bawaan Slint (`accepted` cuma nembak waktu `single-line: true`).
+    callback accepted <=> input.accepted;
+    // Dipancarkan tiap ketukan (bukan cuma waktu submit) — dipakai
+    // form yang butuh nilai field-nya TERUS sinkron ke property lain
+    // sambil ngetik (mis. `SftpModel.manual-*` di page-sftp.slint).
+    callback edited(string);
+
+    height: 56px;
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: root.label-text;
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+        }
+        Rectangle {
+            height: 34px;
+            border-radius: Tokens.radius-default;
+            background: Tokens.surface-container;
+            border-width: 1px;
+            border-color: input.has-focus ? Tokens.primary : Tokens.outline-variant;
+            animate border-color { duration: Tokens.transition-fast; }
+
+            input := TextInput {
+                x: 8px;
+                width: parent.width - (root.is-password ? 32px : 16px);
+                height: 100%;
+                vertical-alignment: center;
+                color: Tokens.on-surface;
+                font-family: Tokens.font-mono;
+                font-size: 13px;
+                single-line: true;
+                text: root.initial-value;
+                input-type: root.is-password && !root.revealed ? password : text;
+                edited => { root.edited(self.text); }
+            }
+            if input.text == "" : Text {
+                x: 8px;
+                width: parent.width - (root.is-password ? 32px : 16px);
+                height: 100%;
+                text: root.placeholder;
+                color: Tokens.outline;
+                font-family: Tokens.font-mono;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            if root.is-password : Rectangle {
+                x: parent.width - self.width - 4px;
+                width: 26px;
+                height: 26px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Tokens.radius-sm;
+                background: eye-touch.pressed ? Tokens.surface-container-high.darker(10%) : eye-touch.has-hover ? Tokens.surface-container-high : transparent;
+                Text {
+                    text: root.revealed ? "🙈" : "👁";
+                    font-size: 15px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                eye-touch := TouchArea { clicked => { root.revealed = !root.revealed; } }
+            }
+        }
+    }
+}
+
+export component DialogButton inherits Rectangle {
+    in property <string> label-text: "";
+    in property <bool> filled: false;
+    // Merah/danger — dipakai buat aksi destruktif (mis. konfirmasi
+    // hapus host), supaya visually beda dari tombol "Simpan" biasa.
+    in property <bool> danger: false;
+    // Loading state pakai ini: `enabled: false` + `label-text` diganti
+    // caller jadi "Menyimpan..."/dst. Disable di sini (bukan cuma di
+    // caller) supaya klik ganda waktu operasi masih jalan beneran
+    // diabaikan, bukan cuma dicegah secara visual.
+    in property <bool> enabled: true;
+    callback clicked <=> touch.clicked;
+
+    height: 36px;
+    border-radius: Tokens.radius-default;
+    // Efek klik (`touch.pressed`) SENGAJA tanpa `animate background`
+    // (lihat catatan di bawah soal itu bikin background hilang di
+    // render pertama waktu lebar datang dari stretch layout) — feedback
+    // klik-nya instan/tidak fade, tapi tetap kelihatan (warna lebih
+    // gelap sekilas pas ditekan), cukup buat "efek klik".
+    background: touch.pressed ? (root.danger && root.filled ? Tokens.error-container.darker(20%)
+            : root.filled ? Tokens.primary-container.darker(20%)
+            : Tokens.surface-container-high.darker(10%))
+        : root.danger && root.filled ? Tokens.error-container
+        : root.filled ? Tokens.primary-container
+        : (touch.has-hover ? Tokens.surface-container-high : transparent);
+    border-width: root.filled ? 0px : 1px;
+    border-color: Tokens.outline-variant;
+    opacity: root.enabled ? 1.0 : 0.5;
+    // Catatan: sengaja TIDAK pakai `animate background` di sini — waktu
+    // dicoba, kombinasi animate + lebar yang datang dari stretch layout
+    // (bukan width eksplisit) bikin render pertama background-nya tidak
+    // muncul (transparan) baik di slint-viewer maupun kemungkinan besar
+    // juga di app beneran. Fade halus tidak penting-penting amat untuk
+    // tombol dialog, jadi dilepas saja daripada debug lebih lanjut.
+
+    Text {
+        text: root.label-text;
+        color: root.danger && root.filled ? Tokens.on-error-container
+            : root.filled ? Tokens.on-primary
+            : Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+    touch := TouchArea { enabled: root.enabled; }
+}
+
+// Catatan: x/y centering SENGAJA tidak dideklarasikan di sini —
+// sebuah komponen tidak bisa mengacu ke `parent` di binding elemen
+// root-nya sendiri (parent-nya baru diketahui Slint di titik
+// instansiasi). Tiap dialog di bawah men-set `x`/`y` sendiri waktu
+// menginstansiasi `DialogCard { ... }`.
+component DialogCard inherits Rectangle {
+    width: 380px;
+    border-radius: Tokens.radius-xl;
+    background: Tokens.surface-container-low;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+}
+
+// Dialog set/unlock master password vault — gate seluruh window
+// selama `!VaultModel.is-unlocked` (lihat app-window.slint). Judul &
+// tombol berubah sesuai `VaultModel.is-first-run`.
+export component VaultDialog inherits DialogScrim {
+    // Beda dari dialog lain yang inherit `DialogScrim` (scrim gelap
+    // transparan menutupi KONTEN DI BELAKANGnya) — dialog ini SELALU
+    // jadi satu-satunya konten yang dirender selama `!is-unlocked`
+    // (lihat app-window.slint: `if !VaultModel.is-unlocked :
+    // VaultDialog{}`, tidak ada apa pun di belakangnya buat "diredupkan"
+    // scrim), jadi background-nya di-override jadi OPAQUE — gradasi
+    // radial buatan (atas permintaan user "tambahkan background
+    // image": tidak ada asset foto asli yang dikasih/tersedia di repo
+    // ini buat dipakai, jadi dekorasi gradient+lingkaran blur ini
+    // gantinya) + beberapa lingkaran blur lembut warna primary/success
+    // biar tidak polos hitam rata.
+    background: Tokens.surface;
+    Rectangle {
+        background: @radial-gradient(circle, Tokens.surface-container-low 0%, Tokens.surface-container-lowest 70%);
+    }
+    Rectangle {
+        x: parent.width * 0.15;
+        y: parent.height * 0.12;
+        width: 420px;
+        height: 420px;
+        border-radius: 210px;
+        background: Tokens.primary.with-alpha(10%);
+    }
+    Rectangle {
+        x: parent.width * 0.62;
+        y: parent.height * 0.55;
+        width: 320px;
+        height: 320px;
+        border-radius: 160px;
+        background: Tokens.success.with-alpha(8%);
+    }
+
+    // Dipanggil dari tombol Buat&Unlock/Unlock MAUPUN dari Enter di
+    // field password (`password-field.accepted`, lihat di bawah) —
+    // satu tempat biar dua pemicu itu tidak duplikasi logic.
+    function submit() {
+        if !VaultModel.busy {
+            if VaultModel.is-first-run {
+                VaultModel.create-requested(password-field.value);
+            } else {
+                VaultModel.unlock-requested(password-field.value);
+            }
+        }
+    }
+
+    card := DialogCard {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        height: 260px;
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: VaultModel.is-first-run ? "Buat Master Password" : "Unlock Vault";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: VaultModel.is-first-run
+                    ? "Password ini dipakai buat enkripsi semua kredensial host. Tidak bisa dipulihkan kalau lupa."
+                    : "Masukkan master password buat buka vault kredensial kamu.";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            password-field := DialogField {
+                label-text: "Master Password";
+                placeholder: "••••••••";
+                is-password: true;
+                auto-focus: true;
+                accepted => { root.submit(); }
+            }
+
+            if VaultModel.error-message != "" : Text {
+                text: VaultModel.error-message;
+                color: Tokens.error;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                DialogButton {
+                    // Derive key Argon2id SENGAJA lambat (lihat komentar
+                    // `VaultModel.busy` di models.slint) — beda dari
+                    // dialog lain, ini genuinely butuh beberapa ratus ms
+                    // sampai detik, jadi state loading di sini paling
+                    // kelihatan gunanya.
+                    label-text: VaultModel.busy ? "Memproses..." : (VaultModel.is-first-run ? "Buat & Unlock" : "Unlock");
+                    filled: true;
+                    enabled: !VaultModel.busy;
+                    horizontal-stretch: 1;
+                    clicked => { root.submit(); }
+                }
+            }
+        }
+    }
+}
+
+// Baris chip pemilih grup, dipakai host-panel.slint (slide-over host).
+// Chip, bukan dropdown, karena Slint tidak punya cara "map" array
+// struct jadi array string buat ComboBox.model — chip di-render
+// langsung dari `HostsModel.groups`.
+//
+// Gaya kotak (radius-default, border tipis) SENGAJA disamakan dengan
+// `DialogField` di atas (bukan pill radius-full) — chip pill kecil yang
+// sendirian di bawah field-field kotak penuh-lebar kelihatan "nyempil"
+// & tidak proporsional dibanding elemen lain di form yang sama.
+//
+// SENGAJA `Rectangle` + posisi manual (BUKAN `HorizontalLayout` biasa
+// lagi) — dulu satu baris tanpa wrap, begitu jumlah grup banyak (mis.
+// hasil Import XML: "ROUTER / BAROKAH", "SERVER / BOSTI", dst — bisa
+// 7+ grup dengan nama panjang), total lebarnya jauh melebihi lebar
+// slide-over (380px) dan TIDAK ADA yang wrap ke baris berikutnya —
+// akibatnya seluruh isi slide-over ikut melebar & kepotong di tepi
+// jendela (lihat laporan bug "tidak responsive"). Chip sekarang LEBAR
+// TETAP (`chip-w`, teks kepanjangan dipotong "…") disusun dalam grid
+// yang wrap otomatis — pola sama dengan `HostGrid`/`GroupGrid` di
+// `page-hosts.slint`, cuma dipakai buat chip kecil di sini.
+export component GroupChipPicker inherits Rectangle {
+    in-out property <string> selected-id: "";
+
+    property <length> chip-w: 108px;
+    property <length> chip-h: 32px;
+    property <length> gap: 6px;
+    // +1 buat chip "Tanpa grup" yang selalu ada di index 0, sebelum
+    // grup-grup dari `HostsModel.groups`.
+    property <int> total: HostsModel.groups.length + 1;
+    property <float> cols: Math.max(1, Math.floor((self.width / 1px + gap / 1px) / (chip-w / 1px + gap / 1px)));
+    height: Math.ceil(total / cols) * (chip-h + gap) - gap;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: chip-w;
+        height: chip-h;
+        border-radius: Tokens.radius-default;
+        border-width: 1px;
+        border-color: root.selected-id == "" ? Tokens.primary : Tokens.outline-variant;
+        background: chip0-touch.pressed ? Tokens.primary-container.darker(20%)
+            : root.selected-id == "" ? Tokens.primary-container
+            : chip0-touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+        Text {
+            text: "Tanpa grup";
+            color: root.selected-id == "" ? Tokens.on-primary : Tokens.on-surface-variant;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+            width: 100%;
+            height: 100%;
+        }
+        chip0-touch := TouchArea { clicked => { root.selected-id = ""; } }
+    }
+    for g[i] in HostsModel.groups : Rectangle {
+        property <int> idx: i + 1; // +1 karena "Tanpa grup" nempatin index 0
+        x: (root.idx-of-col(idx)) * (chip-w + gap);
+        y: Math.floor(idx / root.cols) * (chip-h + gap);
+        width: chip-w;
+        height: chip-h;
+        border-radius: Tokens.radius-default;
+        border-width: 1px;
+        border-color: root.selected-id == g.id ? Tokens.primary : Tokens.outline-variant;
+        background: chip-touch.pressed ? Tokens.primary-container.darker(20%)
+            : root.selected-id == g.id ? Tokens.primary-container
+            : chip-touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+        Text {
+            text: g.name;
+            color: root.selected-id == g.id ? Tokens.on-primary : Tokens.on-surface-variant;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+            width: 100%;
+            height: 100%;
+        }
+        chip-touch := TouchArea { clicked => { root.selected-id = g.id; } }
+    }
+
+    // Kolom index-`idx` di grid wrap (0-based) — dipisah jadi function
+    // biar tidak ditulis ulang buat `x` MAUPUN dipakai `y` di atas.
+    pure function idx-of-col(idx: int) -> int {
+        idx - Math.floor(idx / root.cols) * root.cols
+    }
+}
+
+// Dialog "New Group" — sederhana, cuma nama + subtitle opsional.
+// (Dialog "New Host" DIHAPUS — nambah host sekarang lewat slide-over
+// yang SAMA dengan edit host, lihat `ui/components/host-panel.slint`.)
+export component NewGroupDialog inherits DialogScrim {
+    card := DialogCard {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        height: 260px;
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: "New Group";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+
+            name-field := DialogField { label-text: "Nama Grup"; placeholder: "mis. Production"; }
+            subtitle-field := DialogField { label-text: "Subtitle (opsional)"; placeholder: "mis. us-east-1"; }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !HostsModel.creating-group;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.show-new-group-dialog = false; }
+                }
+                DialogButton {
+                    label-text: HostsModel.creating-group ? "Menyimpan..." : "Simpan";
+                    filled: true;
+                    enabled: !HostsModel.creating-group;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        HostsModel.create-group-requested(name-field.value, subtitle-field.value);
+                    }
+                }
+            }
+        }
+    }
+}

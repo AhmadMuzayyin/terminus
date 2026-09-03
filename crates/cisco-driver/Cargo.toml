@@ -1,0 +1,12 @@
+[package]
+name = "terminus-cisco-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+terminus-core.workspace = true
+terminus-ssh-engine.workspace = true
+terminus-term-emulator.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

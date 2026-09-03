@@ -1,0 +1,158 @@
+// Komposisi UI utama. Palet warna/tipografi/spacing ada di `tokens.slint`
+// (diambil dari refrensi GUI/nexus_terminal/DESIGN.md), komponen
+// sidebar+top bar di `components/`, dan tiap "layar" di `pages/`.
+// Navigasi HANYA lewat sidebar kiri (NavRail) — tidak ada tab lagi di
+// top bar. Data halaman Hosts sekarang di-drive Rust lewat
+// `HostsModel`/`VaultModel` (lihat `ui/models.slint`) — SFTP/Console
+// masih dummy (belum di-wire, di luar scope putaran ini). Sesi SSH
+// interaktif PUNYA tempatnya sendiri (tab, bukan halaman "Console" —
+// itu buat koneksi serial/console ala minicom): `TerminalTabBar` di
+// bawah ini + `PageTerminal` (current-page == 6, virtual, bukan item
+// sidebar) — lihat `ui/pages/page-terminal.slint`.
+import { Tokens } from "./tokens.slint";
+import { NavRail } from "./components/nav-rail.slint";
+import { PageHosts } from "./pages/page-hosts.slint";
+import { PageSftp } from "./pages/page-sftp.slint";
+import { PageConsole } from "./pages/page-console.slint";
+import { PageTerminal } from "./pages/page-terminal.slint";
+import { TerminalTabBar } from "./components/terminal-tabs-bar.slint";
+import { VaultDialog, NewGroupDialog } from "./components/dialogs.slint";
+import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog } from "./components/confirm-dialog.slint";
+import { ConnectingView } from "./components/connecting-view.slint";
+import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel } from "./models.slint";
+// Re-export eksplisit: `import` doang cuma bikin visible LOKAL di file
+// ini, Rust codegen (`slint::include_modules!()`) cuma expose global
+// yang benar-benar di-`export` dari file root (app-window.slint) ini —
+// makanya butuh baris `export` terpisah, bukan cuma `import`.
+export { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel }
+
+export component AppWindow inherits Window {
+    title: "Terminus";
+    background: Tokens.surface;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    min-width: 900px;
+    min-height: 600px;
+    // Title bar ASLI OS DIHAPUS (atas permintaan eksplisit user) —
+    // gantinya window bar custom di `TerminalTabBar` (☰ + tab + drag
+    // region + minimize/maximize/close buatan sendiri). Lihat catatan
+    // panjang `window-*-requested` di models.slint soal implikasinya
+    // (terutama: drag-to-move bisa no-op di Wayland).
+    no-frame: true;
+
+    // Sidebar cuma 3 item: 0 Hosts, 1 SFTP, 2 Console — Keychain/Port
+    // Forwarding/Logs SENGAJA dihapus (UI & tidak pernah ada backend-nya
+    // juga) atas permintaan eksplisit user. Nilai 6 (Terminal) SENGAJA
+    // bukan item sidebar — cuma dituju dari Rust (waktu connect SSH
+    // sukses) atau klik tab di `TerminalTabBar`, lihat
+    // `crates/app/src/state.rs::switch_to_tab`. `in-out` supaya bisa
+    // di-drive dari Rust.
+    in-out property <int> current-page: 0;
+    // Toggle sidebar (NavRail) dari tombol ☰ di window bar
+    // (`TerminalTabBar`, lihat komentar di sana) — atas permintaan
+    // eksplisit user.
+    in-out property <bool> sidebar-collapsed: false;
+
+    property <string> page-title: root.current-page == 0 ? "Hosts"
+        : root.current-page == 1 ? "SFTP"
+        : root.current-page == 2 ? "Console"
+        : "Terminal";
+
+    // SELALU diinstansiasi (bukan `if VaultModel.is-unlocked : ...`
+    // lagi) + `visible:` sebagai gantinya — `window-bar` di dalamnya
+    // butuh bisa dipanggil lewat id dari `focus-search()` (public
+    // function root, dipanggil Rust buat shortcut Ctrl+S) yang
+    // TIDAK BISA menjangkau id di dalam blok `if` (lihat catatan
+    // sama persis di `terminal-tabs-bar.slint` soal `search-field`).
+    // Sebelum unlock, VaultDialog nutup semuanya sebagai overlay di
+    // atas (lihat di bawah) jadi tidak kelihatan meski `visible:false`
+    // bukan `if` — cuma beda "tidak digambar" vs "tidak pernah ada",
+    // tidak ada dampak visual/fungsional lain.
+    VerticalLayout {
+        visible: VaultModel.is-unlocked;
+        // Window bar — SELALU di paling atas jendela, DI LUAR/DI ATAS
+        // NavRail+halaman (bukan lagi di dalam kolom kanan) supaya
+        // tombol togglenya bisa nyembunyiin NavRail tanpa ikut
+        // kesembunyi sendiri. Isinya: tombol toggle sidebar + daftar
+        // tab SSH yang lagi terbuka (lihat komentar panjang di
+        // `TerminalTabBar`).
+        window-bar := TerminalTabBar {
+            sidebar-collapsed: root.sidebar-collapsed;
+            show-search: root.current-page != 6;
+            show-settings-gear: root.current-page == 6;
+            toggle-sidebar-requested => { root.sidebar-collapsed = !root.sidebar-collapsed; }
+        }
+
+        // Layar "Connecting" GANTIKAN seluruh area ini (NavRail +
+        // halaman) selama proses connect — window bar (di atas) TETAP
+        // kelihatan (minimize/maximize/close tetap jalan), makanya
+        // ditaruh di sini (bukan overlay/scrim menutupi semuanya) —
+        // benar-benar "pindah ke halaman baru", persis permintaan
+        // eksplisit user, dipakai SATU komponen yang sama oleh SEMUA
+        // alur connect (SSH/SFTP/Console, lihat `ConnectingModel` di
+        // models.slint).
+        if ConnectingModel.visible : ConnectingView { }
+        if !ConnectingModel.visible : HorizontalLayout {
+            if !root.sidebar-collapsed : NavRail {
+                current-page: root.current-page;
+                page-selected(i) => { root.current-page = i; }
+            }
+
+            VerticalLayout {
+                if root.current-page == 0 : PageHosts { }
+                if root.current-page == 1 : PageSftp { }
+                if root.current-page == 2 : PageConsole { }
+                if root.current-page == 6 : PageTerminal { }
+            }
+        }
+    }
+
+    // Shortcut Ctrl+S (halaman Hosts) — auto-fokus kotak pencarian.
+    // `HostsModel.focus-search-requested` (callback GLOBAL, ditembak
+    // dari `key-pressed` di `page-hosts.slint`) TIDAK BISA di-handle
+    // langsung dari Slint di sini (`Global.callback => {...}` bukan
+    // sintaks yang valid buat "nyantol" ke callback global dari luar
+    // deklarasinya) — makanya diteruskan lewat Rust
+    // (`wire_hosts_callbacks` di state.rs), yang manggil fungsi
+    // `public function` di bawah ini (SATU-SATUNYA cara Rust nyentuh
+    // instance `window-bar` yang nested — Rust cuma bisa akses
+    // property/callback/function yang dideklarasikan di komponen ROOT
+    // atau global, lihat catatan yang sama di models.slint).
+    public function focus-search() {
+        window-bar.focus-search();
+    }
+
+    if !VaultModel.is-unlocked : VaultDialog { }
+
+    if VaultModel.is-unlocked && HostsModel.show-new-group-dialog : NewGroupDialog { }
+    if VaultModel.is-unlocked && HostsModel.confirm-delete-open : ConfirmDeleteHostDialog { }
+    if VaultModel.is-unlocked && HostsModel.confirm-delete-group-open : ConfirmDeleteGroupDialog { }
+    if VaultModel.is-unlocked && HostsModel.confirm-bulk-delete-open : ConfirmBulkDeleteDialog { }
+
+    // Toast notifikasi kecil (mis. "gagal connect", "host key
+    // berubah") — Rust ngisi `HostsModel.notice-message`, hilang
+    // sendiri lewat timer sederhana berbasis animasi opacity + klik
+    // buat tutup manual.
+    if HostsModel.notice-message != "" : Rectangle {
+        y: parent.height - self.height - 24px;
+        x: (parent.width - self.width) / 2;
+        width: notice-text.preferred-width + 48px;
+        height: 44px;
+        border-radius: Tokens.radius-default;
+        background: HostsModel.notice-is-error ? Tokens.error-container : Tokens.success-container;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #000000.with-alpha(35%);
+
+        notice-text := Text {
+            text: HostsModel.notice-message;
+            color: HostsModel.notice-is-error ? Tokens.on-error-container : Tokens.on-success-container;
+            font-family: Tokens.font-body;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+        TouchArea { clicked => { HostsModel.notice-message = ""; } }
+    }
+}

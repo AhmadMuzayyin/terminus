@@ -1,0 +1,119 @@
+import { Tokens } from "../tokens.slint";
+import { DialogButton } from "./dialogs.slint";
+import { ConnectingModel } from "../models.slint";
+
+// Titik-titik loading ("● ● ●" bergantian terang-redup) — indikator
+// animasi indeterminate PALING sederhana & PALING kecil resikonya buat
+// dibangun murni deklaratif di Slint: cuma butuh `Timer` (elemen
+// built-in standar) gonta-ganti properti `int` biasa tiap N ms, TANPA
+// trigonometri (`Math.sin`/`cos`, belum pernah dibuktikan ada di API
+// publik versi Slint yang dipakai di sini) ATAU conic-gradient (belum
+// tentu didukung `background:`). `animate opacity` di tiap titik yang
+// bikin transisi terang-redupnya smooth, bukan "loncat" tiba-tiba.
+component LoadingDots inherits HorizontalLayout {
+    spacing: 8px;
+    property <int> phase: 0;
+
+    Timer {
+        interval: 350ms;
+        running: ConnectingModel.visible;
+        triggered => {
+            root.phase = root.phase + 1;
+            if root.phase >= 3 {
+                root.phase = 0;
+            }
+        }
+    }
+
+    for i in 3 : Rectangle {
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: Tokens.primary;
+        opacity: i == root.phase ? 1.0 : 0.3;
+        animate opacity { duration: Tokens.transition-normal; easing: ease-in-out; }
+    }
+}
+
+// Layar penuh "Connecting" — lihat komentar panjang `ConnectingModel`
+// di models.slint soal kenapa SATU komponen ini dipakai ulang oleh
+// SEMUA alur connect (SSH/SFTP/Console). Semua elemen yang perlu
+// "center" SENGAJA masing-masing dibungkus `HorizontalLayout {
+// alignment: center; ... }` sendiri-sendiri (bukan geometri manual
+// `x: (parent.width - self.width) / 2` di dalam layout) — anak
+// langsung sebuah layout, x/y-nya DIKELOLA layout itu sendiri, binding
+// manual di situ diabaikan (pelajaran dari bug nyata yang sama di
+// `EmptyHostsNotice`, `page-sftp.slint`).
+export component ConnectingView inherits Rectangle {
+    background: Tokens.surface;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Tokens.gutter-md;
+
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 56px;
+                height: 56px;
+                border-radius: Tokens.radius-lg;
+                background: Tokens.primary-container;
+                Text {
+                    text: ConnectingModel.avatar-letter;
+                    color: Tokens.on-primary;
+                    font-family: Tokens.font-headline;
+                    font-size: 22px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+        }
+
+        Text {
+            text: ConnectingModel.label;
+            color: Tokens.on-surface;
+            font-family: Tokens.font-headline;
+            font-size: Tokens.text-headline-sm;
+            font-weight: 700;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: ConnectingModel.subtitle;
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-mono;
+            font-size: 12px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle { height: Tokens.gutter-md; }
+
+        HorizontalLayout {
+            alignment: center;
+            LoadingDots { }
+        }
+
+        Text {
+            text: "Menghubungkan...";
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+
+        Rectangle { height: Tokens.gutter-md; }
+
+        HorizontalLayout {
+            alignment: center;
+            DialogButton {
+                label-text: "Batal";
+                width: 120px;
+                clicked => { ConnectingModel.cancel-requested(); }
+            }
+        }
+    }
+}

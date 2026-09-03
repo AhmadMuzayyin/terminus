@@ -1,0 +1,556 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { HostCard, HostItem, GroupCard, GroupItem } from "../components/cards.slint";
+import { HostsModel } from "../models.slint";
+import { HostSlideOver } from "../components/host-panel.slint";
+
+// Toolbar button kecil dipakai di header halaman (New host/Group/Terminal/Serial/Connect).
+component ToolbarButton inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> filled: false;
+    in property <bool> enabled: true;
+    callback clicked <=> touch.clicked;
+
+    width: text.preferred-width + 28px;
+    height: 36px;
+    border-radius: Tokens.radius-default;
+    background: touch.pressed ? (root.filled ? Tokens.primary-container.darker(20%) : Tokens.surface-container-high.darker(10%))
+        : root.filled ? Tokens.primary-container
+        : (touch.has-hover ? Tokens.surface-container-high : transparent);
+    border-width: root.filled ? 0px : 1px;
+    border-color: Tokens.outline-variant;
+    opacity: root.enabled ? 1.0 : 0.4;
+    animate background { duration: Tokens.transition-fast; }
+
+    text := Text {
+        text: root.label;
+        color: root.filled ? Tokens.on-primary : Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 13px;
+        font-weight: root.filled ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+    }
+}
+
+// Segmented control List/Groups — mode #1 vs mode #2 dari nav "Hosts".
+export component ModeToggle inherits Rectangle {
+    in property <string> mode: "list"; // "list" | "groups"
+    callback mode-changed(string);
+
+    width: 160px;
+    height: 32px;
+    border-radius: Tokens.radius-default;
+    background: Tokens.surface-container-high;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+
+        Rectangle {
+            border-radius: Tokens.radius-sm;
+            background: list-touch.pressed ? Tokens.primary-container.darker(20%) : root.mode == "list" ? Tokens.primary-container : transparent;
+            Text {
+                text: "List";
+                color: root.mode == "list" ? Tokens.on-primary : Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            list-touch := TouchArea { clicked => { root.mode-changed("list"); } }
+        }
+        Rectangle {
+            border-radius: Tokens.radius-sm;
+            background: groups-touch.pressed ? Tokens.primary-container.darker(20%) : root.mode == "groups" ? Tokens.primary-container : transparent;
+            Text {
+                text: "Groups";
+                color: root.mode == "groups" ? Tokens.on-primary : Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            groups-touch := TouchArea { clicked => { root.mode-changed("groups"); } }
+        }
+    }
+}
+
+// Grid kartu host yang bisa dipakai ulang: mode List (semua host tanpa
+// grup) MAUPUN isi satu grup waktu drill-down — datanya beda, tapi tata
+// letaknya sama, jadi ditarik ke satu komponen. Klik kartu = SELECT
+// (buka slide-over detail di kanan); DOUBLE-klik = connect LANGSUNG
+// pakai data tersimpan (lihat `HostSlideOver`).
+export component HostGrid inherits Rectangle {
+    in property <[HostItem]> items: [];
+    in property <bool> show-add-card: true;
+    callback add-clicked();
+    callback host-clicked(string);
+    callback host-double-clicked(string);
+
+    property <length> card-w: 260px;
+    property <length> card-h: 96px; // sinkron sama HostCard.height (cards.slint) — IP disembunyikan, kartu jadi lebih pendek
+    property <length> gap: Tokens.gutter-md;
+    // Toggle lokal murni tampilan (bukan sumber kebenaran state seleksi
+    // — itu tetap di Rust lewat `HashSet`, lihat komentar `HostsModel
+    // .select-all-hosts-requested`) — klik SEKALI select semua item
+    // yang lagi TAMPIL di grid ini, klik lagi deselect semua.
+    property <bool> all-selected: false;
+
+    VerticalLayout {
+        spacing: 6px;
+
+        if root.items.length > 0 : HorizontalLayout {
+            height: 24px;
+            spacing: 6px;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: root.all-selected ? Tokens.primary : Tokens.surface-container-high;
+                border-width: 1px;
+                border-color: root.all-selected ? Tokens.primary : Tokens.outline-variant;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    visible: root.all-selected;
+                    text: "✓";
+                    color: Tokens.on-primary;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                sel-all-touch := TouchArea {
+                    clicked => {
+                        root.all-selected = !root.all-selected;
+                        HostsModel.select-all-hosts-requested(root.all-selected, root.items);
+                    }
+                }
+            }
+            Text {
+                text: "Select All";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+    scroll := ScrollView {
+        vertical-stretch: 1;
+        viewport-width: scroll.width;
+        viewport-height: grid.height;
+
+        grid := Rectangle {
+            width: scroll.width;
+            property <float> cols: Math.max(1, Math.floor((scroll.width / 1px + gap / 1px) / (card-w / 1px + gap / 1px)));
+            property <int> extra: root.show-add-card ? 1 : 0;
+            height: Math.ceil((root.items.length + grid.extra) / grid.cols) * (card-h + gap);
+
+            for h[i] in root.items : HostCard {
+                item: h;
+                selected: HostsModel.panel-visible && HostsModel.panel-host-id == h.id;
+                x: (i - Math.floor(i / grid.cols) * grid.cols) * (card-w + gap);
+                y: Math.floor(i / grid.cols) * (card-h + gap);
+                connect-clicked => { root.host-clicked(h.id); }
+                double-clicked => { root.host-double-clicked(h.id); }
+                checkbox-toggled => { HostsModel.host-selection-toggled(h.id); }
+                // Langsung isi & buka dialog konfirmasi di sini (bukan
+                // bubble lewat callback lalu cari ulang label-nya) —
+                // `h` di titik ini SUDAH punya `.label`, gampang.
+                // Sama persis alur "Remove" di slide-over, lihat
+                // komentar `HostsModel.confirm-delete-*` di models.slint.
+                delete-clicked => {
+                    HostsModel.confirm-delete-host-id = h.id;
+                    HostsModel.confirm-delete-host-label = h.label;
+                    HostsModel.confirm-delete-open = true;
+                }
+            }
+
+            if root.show-add-card : Rectangle {
+                width: card-w;
+                height: card-h;
+                x: (root.items.length - Math.floor(root.items.length / grid.cols) * grid.cols) * (card-w + gap);
+                y: Math.floor(root.items.length / grid.cols) * (card-h + gap);
+                border-radius: Tokens.radius-lg;
+                border-width: 1px;
+                border-color: Tokens.outline;
+                background: add-touch.pressed ? Tokens.surface-container-high.darker(10%) : add-touch.has-hover ? Tokens.surface-container-high : transparent;
+                animate background { duration: Tokens.transition-fast; }
+
+                add-touch := TouchArea { clicked => { root.add-clicked(); } }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Text {
+                        text: "+";
+                        color: Tokens.on-surface-variant;
+                        font-size: 22px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Add New Host";
+                        color: Tokens.on-surface-variant;
+                        font-family: Tokens.font-body;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+    }
+}
+
+// Grid kartu grup — dipakai waktu mode Groups & belum drill-down.
+export component GroupGrid inherits Rectangle {
+    in property <[GroupItem]> items: [];
+    callback group-clicked(string);
+
+    property <length> card-w: 260px;
+    property <length> card-h: 148px;
+    property <length> gap: Tokens.gutter-md;
+    property <bool> all-selected: false;
+
+    VerticalLayout {
+        spacing: 6px;
+
+        if root.items.length > 0 : HorizontalLayout {
+            height: 24px;
+            spacing: 6px;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: root.all-selected ? Tokens.primary : Tokens.surface-container-high;
+                border-width: 1px;
+                border-color: root.all-selected ? Tokens.primary : Tokens.outline-variant;
+                animate background { duration: Tokens.transition-fast; }
+                Text {
+                    visible: root.all-selected;
+                    text: "✓";
+                    color: Tokens.on-primary;
+                    font-size: 12px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                sel-all-touch := TouchArea {
+                    clicked => {
+                        root.all-selected = !root.all-selected;
+                        HostsModel.select-all-groups-requested(root.all-selected, root.items);
+                    }
+                }
+            }
+            Text {
+                text: "Select All";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+    scroll := ScrollView {
+        vertical-stretch: 1;
+        viewport-width: scroll.width;
+        viewport-height: grid.height;
+
+        grid := Rectangle {
+            width: scroll.width;
+            property <float> cols: Math.max(1, Math.floor((scroll.width / 1px + gap / 1px) / (card-w / 1px + gap / 1px)));
+            height: Math.ceil(root.items.length / grid.cols) * (card-h + gap);
+
+            for g[i] in root.items : GroupCard {
+                item: g;
+                x: (i - Math.floor(i / grid.cols) * grid.cols) * (card-w + gap);
+                y: Math.floor(i / grid.cols) * (card-h + gap);
+                clicked => { root.group-clicked(g.id); }
+                // Langsung isi & buka dialog konfirmasi di sini (`g`
+                // SUDAH punya `.name`/`.total-count` di titik ini) —
+                // sama pola dengan delete host di `HostGrid` di atas.
+                // `delete_group` di vault sekarang CASCADE (host di
+                // dalamnya ikut kehapus, lihat komentar `confirm-
+                // delete-group-*` di models.slint), makanya dialognya
+                // WAJIB nyebut jumlah host yang bakal ikut kehapus.
+                delete-clicked => {
+                    HostsModel.confirm-delete-group-id = g.id;
+                    HostsModel.confirm-delete-group-label = g.name;
+                    HostsModel.confirm-delete-group-host-count = g.total-count;
+                    HostsModel.confirm-delete-group-open = true;
+                }
+                checkbox-toggled => { HostsModel.group-selection-toggled(g.id); }
+            }
+        }
+    }
+    }
+}
+
+// Halaman "Hosts" — satu-satunya nav item yang menggabungkan dua mode:
+// List (host tanpa grup) dan Groups (host di dalam grup, drill-down per
+// grup), PLUS panel "Host Details" permanen di kanan (pola Termius,
+// lihat `host-panel.slint`) yang muncul waktu satu host dipilih. Semua
+// datanya dibaca dari `HostsModel` (lihat `ui/models.slint`) yang
+// di-drive Rust dari `terminus-vault` — TIDAK ADA array dummy di sini.
+//
+// INVARIAN PENTING (dijaga di sisi Rust/vault, bukan di sini): satu
+// host HANYA BOLEH ada di `HostsModel.ungrouped-hosts` ATAU di dalam
+// tepat satu grup — TIDAK PERNAH dua-duanya. Lihat
+// `crates/vault/src/store.rs` (`list_ungrouped_profiles` pakai
+// `WHERE group_id IS NULL`).
+export component PageHosts inherits Rectangle {
+    background: Tokens.surface;
+    // Slide-over mengambang DI ATAS konten (lihat komentar panjang di
+    // `host-panel.slint`) — makanya root-nya `Rectangle` polos (bukan
+    // `HorizontalLayout` yang tadinya ikut menyusutkan lebar toolbar+
+    // grid buat kasih tempat ke panel, sampai kepotong di layar wajar).
+    // `clip: true` biar panel yang lagi "disembunyikan" (digeser ke
+    // luar tepi kanan lewat `x`) tidak nongol bikin scrollbar horizontal.
+    clip: true;
+
+    // Shortcut Ctrl+S -> fokus kotak pencarian (window bar, lihat
+    // `HostsModel.focus-search-requested`) — atas permintaan
+    // eksplisit user. `FocusScope` tanpa ukuran (murni penangkap
+    // keyboard, tidak ada elemen visual), ambil fokus SEKALI waktu
+    // halaman ini pertama dirender (pola sama dengan `TerminalView`)
+    // supaya key-pressed langsung aktif tanpa perlu klik dulu — klik
+    // ke input manapun (mis. kotak pencarian sendiri) tetap normal
+    // MEREBUT fokus balik, tidak terkunci di sini.
+    key-catcher := FocusScope {
+        width: 0px;
+        height: 0px;
+        init => { key-catcher.focus(); }
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text == "s") {
+                HostsModel.focus-search-requested();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    VerticalLayout {
+        padding: Tokens.container-padding;
+        spacing: Tokens.gutter-md;
+
+        HorizontalLayout {
+            height: 36px;
+            spacing: Tokens.inline-gap;
+
+            ToolbarButton {
+                label: "+ New host";
+                filled: true;
+                clicked => { HostsModel.open-create-panel(); }
+            }
+            ToolbarButton {
+                label: "+ New Group";
+                clicked => { HostsModel.show-new-group-dialog = true; }
+            }
+            ToolbarButton {
+                label: HostsModel.importing ? "Importing..." : "Import";
+                enabled: !HostsModel.importing;
+                clicked => { HostsModel.import-xml-requested(); }
+            }
+            ToolbarButton { label: "Serial"; }
+            // Bulk delete — cuma nongol waktu ada checkbox yang
+            // dicentang (lihat komentar `HostsModel.host-selection-
+            // toggled`/`group-selection-toggled` di models.slint).
+            // Host & grup punya tombolnya SENDIRI-SENDIRI (bukan satu
+            // tombol gabungan) karena keduanya independen (checkbox
+            // host tetap ke-track meski lagi di tampilan Groups, mis.
+            // habis drill-down).
+            if HostsModel.selected-host-count > 0 : ToolbarButton {
+                label: "Hapus Host Terpilih (" + HostsModel.selected-host-count + ")";
+                clicked => {
+                    HostsModel.confirm-bulk-delete-kind = "host";
+                    HostsModel.confirm-bulk-delete-open = true;
+                }
+            }
+            if HostsModel.selected-group-count > 0 && HostsModel.view-mode == "groups" && HostsModel.selected-group-id == "" : ToolbarButton {
+                label: "Hapus Grup Terpilih (" + HostsModel.selected-group-count + ")";
+                clicked => {
+                    HostsModel.confirm-bulk-delete-kind = "group";
+                    HostsModel.confirm-bulk-delete-open = true;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            ModeToggle {
+                mode: HostsModel.view-mode;
+                mode-changed(m) => {
+                    HostsModel.view-mode = m;
+                    HostsModel.selected-group-id = "";
+                }
+            }
+        }
+
+            // Pencarian aktif -> ambil alih seluruh area konten,
+            // TERLEPAS dari List/Groups (lihat komentar `search-query`
+            // di models.slint). Header-nya nunjukin jumlah hasil biar
+            // user tahu pencariannya beneran jalan, bukan diem freeze.
+            if HostsModel.search-query != "" : Text {
+                text: "Hasil pencarian \"" + HostsModel.search-query + "\" (" + HostsModel.search-results.length + ")";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "list" : Text {
+                text: "Hosts";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "groups" && HostsModel.selected-group-id == "" : Text {
+                text: "Host Groups";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" : HorizontalLayout {
+                height: 28px;
+                spacing: Tokens.inline-gap;
+
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: back-touch.pressed ? Tokens.surface-container-high.darker(10%) : back-touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "←";
+                        color: Tokens.on-surface;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    back-touch := TouchArea { clicked => { HostsModel.selected-group-id = ""; } }
+                }
+                Text {
+                    text: HostsModel.selected-group-name;
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-md;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            if HostsModel.search-query != "" && HostsModel.search-results.length == 0 : Text {
+                text: "Tidak ada host yang cocok dengan \"" + HostsModel.search-query + "\".";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 13px;
+            }
+            if HostsModel.search-query != "" && HostsModel.search-results.length > 0 : HostGrid {
+                items: HostsModel.search-results;
+                show-add-card: false;
+                host-clicked(id) => { HostsModel.host-selected(id); }
+                host-double-clicked(id) => { HostsModel.host-connect-requested(id); }
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "list" : HostGrid {
+                items: HostsModel.ungrouped-hosts;
+                add-clicked => { HostsModel.open-create-panel(); }
+                host-clicked(id) => { HostsModel.host-selected(id); }
+                host-double-clicked(id) => { HostsModel.host-connect-requested(id); }
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "groups" && HostsModel.selected-group-id == "" : GroupGrid {
+                items: HostsModel.groups;
+                group-clicked(id) => {
+                    HostsModel.selected-group-id = id;
+                    HostsModel.group-opened(id);
+                }
+            }
+
+            if HostsModel.search-query == "" && HostsModel.view-mode == "groups" && HostsModel.selected-group-id != "" : HostGrid {
+                items: HostsModel.active-group-hosts;
+                add-clicked => { HostsModel.open-create-panel(); }
+                host-clicked(id) => { HostsModel.host-selected(id); }
+                host-double-clicked(id) => { HostsModel.host-connect-requested(id); }
+            }
+    }
+
+    // Backdrop klik-di-luar-buat-tutup — HANYA diinstansiasi waktu
+    // panel lagi kebuka (`if panel-visible`, BUKAN selalu ada kayak
+    // `slideover` di bawah — kalau selalu ada walau transparan, dia
+    // bakal ikut nutupi & nangkep klik yang seharusnya buat toolbar/
+    // grid di belakangnya waktu panel lagi TERTUTUP). Dideklarasikan
+    // SEBELUM `slideover` supaya z-order-nya di BAWAH panel sendiri
+    // (jadi klik di ATAS panel tidak ikut ke-backdrop, cuma klik di
+    // LUAR-nya yang nutup) — atas permintaan eksplisit user.
+    if HostsModel.panel-visible : TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            HostsModel.panel-visible = false;
+            HostsModel.panel-host-id = "";
+        }
+    }
+
+    // Slide-over — SELALU diinstansiasi (bukan `if panel-visible : ...`
+    // lagi) supaya `x` bisa dianimasikan geser masuk/keluar dari tepi
+    // kanan; waktu `!panel-visible` posisinya digeser ke `parent.width`
+    // (persis di luar tepi kanan, `clip:true` di root PageHosts yang
+    // sembunyiin). `x` SENGAJA diset di titik instansiasi ini (bukan di
+    // dalam `HostSlideOver` sendiri) — komponen tidak bisa mengacu ke
+    // `parent` di binding elemen root-nya sendiri, lihat catatan yang
+    // sama di `dialogs.slint::DialogCard`.
+    // `x` SENGAJA lewat `states`/`transitions` (bukan `animate x {}`
+    // polos lagi) — dengan `animate x` polos, SETIAP perubahan `x`
+    // dianimasikan, TERMASUK waktu `parent.width` berubah karena alasan
+    // LAIN (mis. sidebar di-toggle tutup/buka lewat tombol ☰ di window
+    // bar, lihat `app-window.slint`) padahal `panel-visible` TIDAK
+    // berubah — panel yang harusnya diam di luar layar jadi ikut
+    // "geser" dari posisi lama ke posisi baru (dua-duanya off-screen,
+    // TAPI proses geser itu sendiri kelihatan sekilas nembus tepi
+    // `clip:true` PageHosts sebelum nyampe posisi akhir), keliatan
+    // persis kayak "slideover muncul lalu langsung ketutup lagi" —
+    // laporan bug user. `states`/`transitions` Slint HANYA menganimasi
+    // waktu STATE-nya sendiri berubah (`panel-visible` beneran
+    // toggle), bukan tiap kali nilai `x` di dalam state yang SAMA
+    // recompute — jadi resize sidebar sekarang snap instan, tanpa
+    // animasi liar.
+    slideover := HostSlideOver {
+        height: 100%;
+        states [
+            open when HostsModel.panel-visible : {
+                x: parent.width - self.width;
+                in { animate x { duration: Tokens.transition-normal; easing: ease-out; } }
+            }
+            closed when !HostsModel.panel-visible : {
+                x: parent.width;
+                in { animate x { duration: Tokens.transition-normal; easing: ease-out; } }
+            }
+        ]
+    }
+}

@@ -1,0 +1,91 @@
+// Design tokens — satu-satunya sumber kebenaran untuk warna, tipografi,
+// spacing dan radius di seluruh UI. Nilainya diambil langsung dari
+// `refrensi GUI/nexus_terminal/DESIGN.md` (palet "Deep Navy & Slate").
+//
+// Semua komponen/page HARUS mengambil warna/ukuran dari sini, bukan
+// nulis hex/px literal sendiri-sendiri — supaya kalau tema berubah
+// nanti (mis. tambah light mode), cukup ubah di satu tempat.
+export global Tokens {
+    // --- Warna: surface (dari gelap ke terang) ---
+    out property <color> surface-container-lowest: #060e20;
+    out property <color> surface: #0b1326;
+    out property <color> surface-container-low: #131b2e;
+    out property <color> surface-container: #171f33;
+    out property <color> surface-container-high: #222a3d;
+    out property <color> surface-container-highest: #2d3449;
+    out property <color> surface-bright: #31394d;
+
+    // --- Warna: teks & outline ---
+    out property <color> on-surface: #dae2fd;
+    out property <color> on-surface-variant: #c2c6d6;
+    out property <color> outline: #8c909f;
+    out property <color> outline-variant: #424754;
+
+    // --- Warna: primary (Electric Blue — aksi utama, fokus, tab aktif) ---
+    out property <color> primary: #adc6ff;
+    out property <color> on-primary: #002e6a;
+    out property <color> primary-container: #4d8eff;
+    out property <color> on-primary-container: #00285d;
+
+    // --- Warna: secondary / success (Emerald — status online, konfirmasi) ---
+    out property <color> success: #4edea3;
+    out property <color> on-success: #003824;
+    out property <color> success-container: #00a572;
+    out property <color> on-success-container: #00311f;
+
+    // --- Warna: tertiary / warning (Amber — connecting, perhatian) ---
+    out property <color> warning: #ffb95f;
+    out property <color> on-warning: #472a00;
+    out property <color> warning-container: #ca8100;
+
+    // --- Warna: error (Rose — offline/failed, aksi destruktif) ---
+    out property <color> error: #ffb4ab;
+    out property <color> on-error: #690005;
+    out property <color> error-container: #93000a;
+    out property <color> on-error-container: #ffdad6;
+
+    // --- Tipografi ---
+    // Font-family dirujuk by-name; kalau belum terinstall di sistem,
+    // Slint otomatis fallback ke font default tanpa error. Lihat
+    // README.md bagian "Font (opsional)" untuk cara install biar
+    // renderingnya pas seperti referensi.
+    out property <string> font-headline: "Hanken Grotesk";
+    out property <string> font-body: "Inter";
+    out property <string> font-mono: "JetBrains Mono";
+
+    out property <length> text-headline-lg: 32px;
+    out property <length> text-headline-md: 24px;
+    out property <length> text-headline-sm: 20px;
+    out property <length> text-body-lg: 16px;
+    out property <length> text-body-md: 14px;
+    out property <length> text-label-mono: 13px;
+    out property <length> text-terminal: 14px;
+
+    // --- Spacing (basis 8px) ---
+    out property <length> sidebar-width: 260px;
+    out property <length> gutter-md: 16px;
+    out property <length> container-padding: 32px;
+    out property <length> stack-gap: 12px;
+    out property <length> inline-gap: 8px;
+
+    // --- Radius ---
+    out property <length> radius-sm: 2px;
+    out property <length> radius-default: 4px;
+    out property <length> radius-md: 6px;
+    out property <length> radius-lg: 8px;
+    out property <length> radius-xl: 12px;
+    out property <length> radius-full: 9999px;
+
+    // --- Transisi (durasi SERAGAM buat semua `animate` di seluruh
+    //     UI) — sebelumnya tiap komponen nulis `duration: Tokens.transition-fast;`
+    //     sendiri-sendiri (35+ tempat berbeda), sekarang semua ambil
+    //     dari sini biar konsisten & gampang di-tune sekali tempat
+    //     kalau mau diubah nanti. `-fast` buat micro-interaction (hover/
+    //     press tombol, checkbox), `-normal` buat perubahan tampilan
+    //     yang lebih terasa (buka/tutup panel, fade overlay), `-slow`
+    //     buat transisi antar-layar penuh (mis. masuk/keluar layar
+    //     "Connecting").
+    out property <duration> transition-fast: 100ms;
+    out property <duration> transition-normal: 180ms;
+    out property <duration> transition-slow: 280ms;
+}

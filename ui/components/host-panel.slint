@@ -1,0 +1,227 @@
+import { ScrollView, ComboBox, SpinBox } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { HostsModel, NewHostForm } from "../models.slint";
+import { DialogField, DialogButton, GroupChipPicker } from "./dialogs.slint";
+import { StatusDot } from "./status-dot.slint";
+
+// Slide-over "Host Details" dari kanan — pola Termius, TAPI beneran
+// mengambang DI ATAS grid (overlay, lewat `drop-shadow` + posisi `x`
+// yang diset di titik instansiasi, lihat `page-hosts.slint`), BUKAN
+// lagi elemen `HorizontalLayout` yang ikut menyusutkan lebar grid di
+// sebelahnya. Sebelumnya panel ini elemen layout biasa yang MEMAKSA
+// toolbar+grid menyempit buat kasih tempat 340px — di jendela ukuran
+// wajar (mis. 1280px, dikurangi sidebar 260px) itu bikin toolbar
+// (6 tombol + toggle List/Groups) kehabisan tempat & kepotong di tepi
+// kanan. Jadi overlay (mengambang, tidak ikut alokasi lebar layout).
+//
+// SATU komponen buat DUA mode (lihat `HostsModel.panel-is-new`): buat
+// host baru (field kosong, tanpa Duplicate/Remove) ATAU edit host yang
+// sudah ada (field ke-prefill dari vault). Field-nya di-prefill dari
+// `HostsModel.panel-host-*` — Rust yang isi waktu edit (`on_host_
+// selected`), Slint sendiri yang reset waktu buat baru (`HostsModel
+// .open-create-panel()`); panel ini sendiri tidak pernah baca vault
+// langsung.
+//
+// "Simpan" beda dari "Connect": Simpan nulis field ke vault; Connect
+// (mode edit) SELALU pakai data yang SUDAH tersimpan (bukan input yang
+// belum di-save) — kalau field diubah tapi belum Simpan, Connect masih
+// pakai data lama (penyederhanaan yang disengaja dibanding auto-save-
+// on-blur ala Termius). Mode BARU beda: tidak ada data tersimpan sama
+// sekali, jadi Connect di situ simpan dulu baru connect
+// (`host-connect-new-requested`) — satu klik, bukan dua tahap.
+//
+// Keterbatasan yang diketahui (belum diperbaiki, di luar scope
+// putaran ini): kalau user ngetik di satu field TANPA Simpan lalu
+// pindah pilih host lain, field yang sempat diketik itu tidak ke-reset
+// ulang otomatis (binding `initial-value` ke-"putus" begitu user
+// mengetik) — perlu pola `for _ in [key] : ...` buat force-recreate
+// per host kalau mau dibenerin.
+export component HostSlideOver inherits Rectangle {
+    width: 380px;
+    background: Tokens.surface-container-low;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #000000.with-alpha(35%);
+    drop-shadow-offset-x: -2px;
+    // Backstop pertahanan kedua: kalaupun ada elemen di dalam yang
+    // ternyata masih lebih lebar dari 380px (mis. field ke depan
+    // dengan konten sangat panjang), TERKUNG di dalam batas panel ini
+    // (rounded corner tetap kelihatan rapi) — TIDAK bocor ke luar
+    // sampai kepotong di tepi jendela seperti bug sebelumnya.
+    clip: true;
+
+    property <string> selected-group-id: HostsModel.panel-host-group-id;
+
+    property <NewHostForm> current-form: {
+        label: label-field.value,
+        host: host-field.value,
+        port: port-spin.value,
+        username: username-field.value,
+        password: password-field.value,
+        kind: kind-combo.current-value == "Cisco IOS" ? "cisco_ios" : "ssh",
+        group-id: root.selected-group-id,
+        tags: tags-field.value,
+    };
+
+    ScrollView {
+        VerticalLayout {
+            padding: 20px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                spacing: 8px;
+                if !HostsModel.panel-is-new : StatusDot {
+                    status: HostsModel.panel-host-status;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: HostsModel.panel-is-new ? "New Host" : "Host Details";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-sm;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: close-touch.pressed ? Tokens.surface-container-high.darker(10%) : close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    animate background { duration: Tokens.transition-fast; }
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    // Nutup panel murni UI state, tidak perlu roundtrip Rust.
+                    close-touch := TouchArea {
+                        clicked => {
+                            HostsModel.panel-visible = false;
+                            HostsModel.panel-host-id = "";
+                        }
+                    }
+                }
+            }
+
+            if !HostsModel.panel-is-new : HorizontalLayout {
+                spacing: 6px;
+                DialogButton {
+                    label-text: HostsModel.panel-busy ? "..." : "Duplicate";
+                    enabled: !HostsModel.panel-busy;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.host-duplicate-requested(HostsModel.panel-host-id); }
+                }
+                DialogButton {
+                    label-text: "Remove";
+                    enabled: !HostsModel.panel-busy;
+                    horizontal-stretch: 1;
+                    // Remove TIDAK langsung hapus — cuma buka dialog
+                    // konfirmasi (state ini murni Slint, belum panggil
+                    // Rust sama sekali). Lihat `ui/components/confirm-
+                    // dialog.slint` + komentar `HostsModel.confirm-
+                    // delete-*` di models.slint.
+                    clicked => {
+                        HostsModel.confirm-delete-host-id = HostsModel.panel-host-id;
+                        HostsModel.confirm-delete-host-label = HostsModel.panel-host-label;
+                        HostsModel.confirm-delete-open = true;
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Tokens.outline-variant; }
+
+            label-field := DialogField {
+                label-text: "Label";
+                placeholder: "mis. prod-web-01";
+                initial-value: HostsModel.panel-host-label;
+            }
+            host-field := DialogField {
+                label-text: "Host / IP";
+                placeholder: "mis. 192.168.1.10";
+                initial-value: HostsModel.panel-host-host;
+            }
+            port-spin := SpinBox { minimum: 1; maximum: 65535; value: HostsModel.panel-host-port; }
+            username-field := DialogField {
+                label-text: "Username";
+                placeholder: "mis. root";
+                initial-value: HostsModel.panel-host-username;
+            }
+            password-field := DialogField {
+                label-text: "Password";
+                placeholder: HostsModel.panel-is-new ? "••••••••" : "(kosongkan supaya tidak diubah)";
+                is-password: true;
+            }
+            tags-field := DialogField {
+                label-text: "Tags";
+                placeholder: "mis. production, database";
+                initial-value: HostsModel.panel-host-tags;
+            }
+
+            Text {
+                text: "Jenis koneksi";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+            }
+            kind-combo := ComboBox {
+                model: ["SSH", "Cisco IOS"];
+                current-value: HostsModel.panel-host-kind == "cisco_ios" ? "Cisco IOS" : "SSH";
+            }
+
+            Text {
+                text: "Grup";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+            }
+            GroupChipPicker { selected-id <=> root.selected-group-id; }
+
+            Rectangle { height: 4px; }
+
+            HorizontalLayout {
+                DialogButton {
+                    label-text: HostsModel.panel-busy ? "Menyimpan..." : "Simpan";
+                    enabled: !HostsModel.panel-busy;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        if HostsModel.panel-is-new {
+                            HostsModel.create-host-requested(root.current-form);
+                        } else {
+                            HostsModel.host-save-requested(HostsModel.panel-host-id, root.current-form);
+                        }
+                    }
+                }
+            }
+
+            if !HostsModel.panel-is-new : Text {
+                text: "Connect pakai data yang sudah tersimpan — Simpan dulu kalau ada perubahan.";
+                color: Tokens.outline;
+                font-family: Tokens.font-body;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                DialogButton {
+                    label-text: HostsModel.panel-busy ? "..." : "Connect";
+                    filled: true;
+                    enabled: !HostsModel.panel-busy;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        if HostsModel.panel-is-new {
+                            HostsModel.host-connect-new-requested(root.current-form);
+                        } else {
+                            HostsModel.host-connect-requested(HostsModel.panel-host-id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

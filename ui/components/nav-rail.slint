@@ -1,0 +1,181 @@
+import { Tokens } from "../tokens.slint";
+import { IconServer, IconFolder, IconTerminal, IconBook } from "./icons.slint";
+
+// Ikon nav — LINE ICON monokrom (`Path` di `icons.slint`), GANTI emoji
+// berwarna (🖥/📁/⌨/📖) sebelumnya atas permintaan eksplisit user
+// ("ganti dengan icon line", "warnanya kurang jelas" — emoji punya
+// warna sendiri yang tidak ikut tema). `icon-kind` string SEDERHANA
+// (bukan lewat parameter tipe komponen — Slint tidak punya itu) yang
+// nentuin `Path` mana yang dirender.
+component NavBadge inherits Rectangle {
+    in property <string> icon-kind: "server"; // "server" | "folder" | "terminal" | "book"
+    in property <bool> active: false;
+
+    width: 28px;
+    height: 28px;
+
+    property <color> icon-color: root.active ? Tokens.on-success-container : Tokens.on-surface-variant;
+
+    if root.icon-kind == "server" : IconServer { color: root.icon-color; }
+    if root.icon-kind == "folder" : IconFolder { color: root.icon-color; }
+    if root.icon-kind == "terminal" : IconTerminal { color: root.icon-color; }
+    if root.icon-kind == "book" : IconBook { color: root.icon-color; }
+}
+
+// Satu baris nav: badge + label, highlight hijau saat aktif (meniru
+// state "Hosts" aktif di refrensi GUI/hosts_dashboard/screen.png).
+component NavItem inherits Rectangle {
+    in property <string> icon-kind: "server";
+    in property <string> label: "";
+    in property <bool> active: false;
+    callback clicked <=> touch.clicked;
+
+    height: 40px;
+    border-radius: Tokens.radius-default;
+    background: touch.pressed ? Tokens.success.darker(15%)
+        : root.active ? Tokens.success
+        : touch.has-hover ? Tokens.surface-container-high
+        : transparent;
+
+    animate background { duration: Tokens.transition-fast; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: Tokens.inline-gap;
+        alignment: start;
+
+        NavBadge {
+            icon-kind: root.icon-kind;
+            active: root.active;
+            y: (parent.height - self.height) / 2;
+        }
+
+        Text {
+            text: root.label;
+            color: root.active ? Tokens.on-success-container : Tokens.on-surface-variant;
+            font-family: Tokens.font-body;
+            font-size: Tokens.text-body-md;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea { }
+}
+
+// Sidebar kiri penuh: brand row, daftar nav utama (state aktif
+// dikontrol dari luar lewat `current-page`), footer Settings/Docs.
+// `page-selected(int)` dipancarkan saat salah satu item nav utama
+// diklik — index-nya sinkron dengan `current-tab` di AppWindow.
+export component NavRail inherits Rectangle {
+    in property <int> current-page: 0;
+    callback page-selected(int);
+
+    width: Tokens.sidebar-width;
+    background: Tokens.surface-container-lowest;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+
+    VerticalLayout {
+        padding: Tokens.gutter-md;
+        spacing: 4px;
+
+        // --- Brand row ---
+        HorizontalLayout {
+            spacing: Tokens.inline-gap;
+            height: 44px;
+
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: Tokens.radius-lg;
+                background: Tokens.primary-container;
+                Text {
+                    text: "T";
+                    color: Tokens.on-primary;
+                    font-family: Tokens.font-headline;
+                    font-size: 16px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "Terminus";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-sm;
+                    font-weight: 700;
+                }
+                // Bukan "Pro Account" lagi (atas permintaan user) —
+                // slogan "aneh" ini SENGAJA jadi antonim Termius (yang
+                // fitur-fitur pentingnya di balik langganan "Pro"):
+                // "Terminal" (aplikasi ini) + "Akhir Biaya Langganan"
+                // (terminus = stasiun akhir kereta) — DARI SITU nama
+                // "Terminus" muncul, bukan cuma kebetulan mirip nama
+                // "Termius".
+                Text {
+                    text: "Terminal Akhir Biaya Langganan";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-mono;
+                    font-size: 10px;
+                    wrap: word-wrap;
+                    width: 100%;
+                }
+            }
+        }
+
+        Rectangle { height: Tokens.stack-gap; }
+
+        NavItem {
+            icon-kind: "server";
+            label: "Hosts";
+            active: root.current-page == 0;
+            clicked => { root.page-selected(0); }
+        }
+        NavItem {
+            icon-kind: "folder";
+            label: "SFTP";
+            active: root.current-page == 1;
+            clicked => { root.page-selected(1); }
+        }
+        NavItem {
+            icon-kind: "terminal";
+            label: "Console";
+            active: root.current-page == 2;
+            clicked => { root.page-selected(2); }
+        }
+        // Keychain/Port Forwarding/Logs SENGAJA dihapus (UI & tidak
+        // pernah ada backend-nya juga — cuma `PagePlaceholder` dummy,
+        // tidak ada handler Rust apa pun buat current-page 3/4/5) atas
+        // permintaan eksplisit user.
+        Rectangle { vertical-stretch: 1; }
+
+        Rectangle {
+            height: 1px;
+            background: Tokens.outline-variant;
+        }
+        Rectangle { height: 4px; }
+
+        // "Settings" SENGAJA dihapus juga (atas permintaan user) —
+        // cuma "Documentation" yang disisakan. Klik-nya nanti buka
+        // halaman web dokumentasi (terminus.github.io) — user SENGAJA
+        // minta itu "belakangan" (belum sekarang), jadi belum ada
+        // callback/URL-opener di sini, murni nav item nongkrong dulu.
+        // `active: false` PERMANEN artinya `icon-color` (lihat
+        // `NavBadge`) selalu pakai `on-surface-variant` — warna abu2
+        // terang yang KONSISTEN, bukan emoji 📖 berwarna cokelat/kuning
+        // bawaan font yang dilaporkan user "kurang jelas".
+        NavItem {
+            icon-kind: "book";
+            label: "Documentation";
+            active: false;
+        }
+    }
+}

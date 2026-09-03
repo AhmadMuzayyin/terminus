@@ -1,0 +1,202 @@
+import { ComboBox } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { DialogButton } from "../components/dialogs.slint";
+import { ConsoleView } from "../components/console-view.slint";
+import { ConsoleModel } from "../models.slint";
+
+// Halaman Console — koneksi SERIAL ala `minicom`/PuTTY mode "Serial"
+// buat kabel console fisik (RS-232/USB-to-serial) ke perangkat
+// Cisco/network gear. BEDA dari sesi SSH (yang punya tempatnya sendiri
+// di tab terminal, lihat `page-terminal.slint`) — di sini SENGAJA
+// cross-platform (Windows/Linux/macOS, lewat `terminus-serial-
+// engine`), BUKAN cuma `/dev/ttyUSB0` ala Linux — nama port yang
+// tampil di dropdown "Port" otomatis benar buat OS yang lagi jalan
+// (lihat komentar panjang di `terminus-serial-engine`).
+//
+// Dua tahap, pola SAMA dengan `PageSftp`: chooser (pilih port yang
+// TERDETEKSI + baud rate, klik Connect) -> sesudah connect, tampilan
+// terminal interaktif penuh (`ConsoleView`, reuse rendering ANSI yang
+// sama dengan tab SSH). SENGAJA TIDAK ada konsep "saved device profile"
+// di v1 ini (beda dari Hosts/SFTP yang tersimpan di vault) — path port
+// serial sering BERGESER antar colok-cabut/reboot (khususnya Windows
+// COM-number, dan Linux ttyUSB-index), jadi pick-dari-daftar-terdeteksi
+// tiap connect justru lebih realistis daripada nyimpen path yang bisa
+// basi — sama seperti `minicom`/PuTTY sendiri, port dipilih tiap sesi.
+export component PageConsole inherits Rectangle {
+    background: Tokens.surface;
+
+    init => { ConsoleModel.console-refresh-ports-requested(); }
+
+    // Card chooser SEKARANG memenuhi seluruh halaman (bukan cuma
+    // 420px ngambang di kiri-atas dengan banyak ruang kosong di
+    // sekitarnya) DAN judul/deskripsi header di atasnya DIHAPUS — atas
+    // permintaan eksplisit user. Form connect-nya sendiri (Port/Baud/
+    // tombol Connect) tetap ukuran wajar, di-CENTER di tengah card
+    // yang sekarang besar itu (bukan ikut melebar) — pola geometri
+    // eksplisit (`x`/`y`/`width` di dalam `Rectangle` polos, bukan
+    // layout) sama persis dengan `SftpManualDialog.card` di
+    // `page-sftp.slint`.
+    if !ConsoleModel.connected : VerticalLayout {
+        padding: Tokens.container-padding;
+
+        Rectangle {
+            border-radius: Tokens.radius-lg;
+            background: Tokens.surface-container;
+            border-width: 1px;
+            border-color: Tokens.outline-variant;
+
+            // `form-card` diposisikan manual `x`/`y` (biar bisa
+            // di-CENTER di tengah card besar yang penuh sehalaman) —
+            // `height` HARUS eksplisit dibind ke `content.preferred-
+            // height`. Sempat diasumsikan `Rectangle` tanpa `height`
+            // eksplisit otomatis "menyusut" mengikuti ukuran satu-
+            // satunya anak layout-nya (seperti pola `SftpManualDialog
+            // .card`) — TERNYATA SALAH, dibuktikan lewat reproduksi
+            // terisolasi (`slint-viewer --screenshot`): tanpa binding
+            // eksplisit ini, `Rectangle` yang posisinya diatur manual
+            // (`x`/`y` di-set) default MEMENUHI tinggi parent-nya
+            // (bukan menyusut ke ukuran konten), yang bikin
+            // `VerticalLayout` di dalamnya kebagian ruang jauh lebih
+            // besar dari kebutuhan lalu men-stretch anak yang punya
+            // `vertical-stretch` implisit (`ComboBox` dari std-widgets)
+            // jadi kotak abu-abu raksasa.
+            form-card := Rectangle {
+                width: 360px;
+                height: content.preferred-height;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+
+                content := VerticalLayout {
+                    spacing: Tokens.stack-gap;
+
+                    HorizontalLayout {
+                    spacing: Tokens.inline-gap;
+                    Text {
+                        text: "Port";
+                        color: Tokens.on-surface-variant;
+                        font-family: Tokens.font-body;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: Tokens.radius-default;
+                        background: refresh-touch.pressed ? Tokens.surface-container-high.darker(10%) : refresh-touch.has-hover ? Tokens.surface-container-high : transparent;
+                        animate background { duration: Tokens.transition-fast; }
+                        Text {
+                            text: "⟳";
+                            color: Tokens.on-surface-variant;
+                            font-size: 15px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        refresh-touch := TouchArea { clicked => { ConsoleModel.console-refresh-ports-requested(); } }
+                    }
+                }
+                if ConsoleModel.available-ports.length == 0 : Text {
+                    text: "Tidak ada port serial terdeteksi — colokkan adaptor USB-to-serial lalu klik ⟳.";
+                    color: Tokens.outline;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                if ConsoleModel.available-ports.length > 0 : ComboBox {
+                    model: ConsoleModel.available-ports;
+                    current-index: ConsoleModel.selected-port-index;
+                    selected(text) => {
+                        ConsoleModel.selected-port-index = self.current-index;
+                    }
+                }
+
+                Text {
+                    text: "Baud Rate";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+                ComboBox {
+                    model: ["9600", "19200", "38400", "57600", "115200"];
+                    current-value: ConsoleModel.baud-rate;
+                    selected(text) => { ConsoleModel.baud-rate = text; }
+                }
+
+                if ConsoleModel.connect-error != "" : Text {
+                    text: ConsoleModel.connect-error;
+                    color: Tokens.error;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                DialogButton {
+                    label-text: ConsoleModel.connecting ? "Menghubungkan..." : "Connect";
+                    filled: true;
+                    enabled: !ConsoleModel.connecting && ConsoleModel.selected-port-index >= 0;
+                    clicked => { ConsoleModel.console-connect-requested(); }
+                }
+                }
+            }
+        }
+    }
+
+    if ConsoleModel.connected : VerticalLayout {
+        padding: Tokens.container-padding;
+        spacing: Tokens.gutter-md;
+
+        HorizontalLayout {
+            height: 28px;
+            spacing: Tokens.inline-gap;
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 5px;
+                background: Tokens.success;
+            }
+            Text {
+                text: ConsoleModel.device-label + " · " + ConsoleModel.baud-label;
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-mono;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: disconnect-text.preferred-width + 24px;
+                height: 28px;
+                border-radius: Tokens.radius-default;
+                background: disconnect-touch.pressed ? Tokens.error-container.darker(20%) : disconnect-touch.has-hover ? Tokens.error-container : transparent;
+                border-width: 1px;
+                border-color: Tokens.outline-variant;
+                animate background { duration: Tokens.transition-fast; }
+                disconnect-text := Text {
+                    text: "⏻  Disconnect";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+                disconnect-touch := TouchArea { clicked => { ConsoleModel.console-disconnect-requested(); } }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Tokens.radius-lg;
+            background: Tokens.surface-container-lowest;
+            border-width: 1px;
+            border-color: Tokens.outline-variant;
+            clip: true;
+            ConsoleView { width: 100%; height: 100%; }
+        }
+    }
+}

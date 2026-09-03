@@ -1,0 +1,369 @@
+==================================================================
+terminus — PENJELASAN SCAFFOLD PROJECT & TAHAP SELANJUTNYA
+==================================================================
+(Nama "terminus" cuma placeholder, ganti sesuka hati)
+
+Dokumen ini menjelaskan:
+1. Apa itu scaffold yang sudah dibuat
+2. Kenapa strukturnya dibikin seperti ini
+3. Penjelasan tiap crate satu per satu
+4. Keputusan teknologi yang diambil dan alasannya
+5. Tahap-tahap selanjutnya yang perlu dikerjakan, berurutan
+
+
+==================================================================
+1. APA ITU SCAFFOLD INI
+==================================================================
+
+Scaffold = kerangka project. Yang sudah dibuat BUKAN aplikasi yang
+jalan, tapi struktur folder + file Cargo.toml + stub kode (fungsi
+kosong berisi todo!() atau komentar TODO) yang sudah:
+
+  - Terorganisir jadi beberapa crate terpisah sesuai tanggung jawab
+    masing-masing (dijelaskan di bagian 3)
+  - Punya dependency yang sudah dipilih dan dipusatkan versinya di
+    satu tempat (workspace root Cargo.toml)
+  - Punya dokumentasi arsitektur (docs/architecture.md) yang
+    menjelaskan alur data end-to-end
+  - Siap untuk diisi logic-nya secara bertahap tanpa perlu
+    restrukturisasi folder lagi di kemudian hari
+
+Tujuan dibikin dalam bentuk scaffold dulu (bukan langsung ngoding
+semuanya sekaligus) adalah supaya:
+
+  - Struktur besar disepakati dulu sebelum investasi waktu nulis
+    logic — kalau ada yang mau diubah, ubahnya sekarang, bukan
+    setelah 5000 baris kode ditulis
+  - Tiap bagian bisa dikerjakan dan ditest terpisah (crate `core`
+    misalnya bisa langsung ditest tanpa perlu koneksi SSH beneran)
+  - Maintenance jangka panjang lebih gampang karena tiap file tahu
+    persis tanggung jawabnya apa
+
+
+==================================================================
+2. KENAPA STRUKTURNYA SEPERTI INI (Cargo Workspace)
+==================================================================
+
+Ini pakai pola "Cargo workspace" — satu folder besar berisi banyak
+crate (= package Rust) kecil yang saling berhubungan, bukan satu
+crate raksasa isinya semua kode.
+
+Analoginya: daripada satu file Excel isinya 20 sheet campur aduk,
+kita bikin 20 file terpisah yang masing-masing punya tugas jelas,
+tapi tetap bisa saling merujuk satu sama lain.
+
+Keuntungan konkret buat project ini:
+
+  - Kalau nanti mau ganti library SSH (misal dari russh ke library
+    lain), yang disentuh cuma isi crate ssh-engine — crate lain
+    (vault, cisco-driver, dst) tidak perlu diubah sama sekali
+    selama "kontrak" (fungsi publik) ssh-engine tetap sama.
+
+  - Compile time lebih cepat pas development. Kalau kamu cuma ubah
+    kode di crate vault, Cargo tidak perlu compile ulang seluruh
+    ssh-engine/term-emulator/dst — cuma vault dan yang bergantung
+    langsung padanya.
+
+  - Testing lebih terisolasi. crate core misalnya bisa ditest tanpa
+    perlu network sama sekali karena dia memang tidak boleh
+    melakukan I/O (lihat bagian 3).
+
+
+==================================================================
+3. PENJELASAN TIAP CRATE
+==================================================================
+
+--------------------------------------------------------------
+crates/core  (nama package: terminus-core)
+--------------------------------------------------------------
+Isi   : Struct data murni — HostProfile, HostGroup, ConnectionKind,
+        AuthMethod, ActiveSession, SessionStatus.
+Aturan: TIDAK BOLEH ada kode yang melakukan network call, baca file,
+        atau apapun yang butuh "dunia luar". Cuma definisi data +
+        validasi sederhana.
+Kenapa terpisah: Ini adalah "bahasa bersama" yang dipakai semua
+        crate lain. ssh-engine butuh tahu bentuk HostProfile,
+        vault juga, UI juga. Kalau logic-nya campur di sini,
+        crate ini jadi berat dan susah ditest cepat.
+Status: Sudah lengkap struct-nya, belum ada logic tambahan
+        (memang belum perlu).
+
+--------------------------------------------------------------
+crates/ssh-engine  (terminus-ssh-engine)
+--------------------------------------------------------------
+Isi   : Wrapper di atas library "russh" (implementasi protokol
+        SSH2 murni Rust, tanpa bergantung ke library C seperti
+        libssh/OpenSSH).
+Tugas : Buka koneksi TCP, handshake SSH, autentikasi (password/
+        private key/agent), buka channel shell interaktif, kirim
+        dan terima byte mentah.
+Yang TIDAK dikerjakan di sini: parsing escape sequence terminal
+        (itu tugas term-emulator), dan TIDAK menyimpan password
+        (itu tugas vault — ssh-engine cuma terima kredensial saat
+        runtime, sekali pakai, tidak pernah menyimpannya sendiri).
+Status: Baru kerangka fungsi (connect(), SshSession) — badan
+        fungsinya masih todo!(). Ini prioritas #1 untuk diisi.
+
+--------------------------------------------------------------
+crates/sftp-engine  (terminus-sftp-engine)
+--------------------------------------------------------------
+Isi   : Wrapper di atas library "russh-sftp".
+Tugas : Browse folder remote, upload, download, rename, hapus file
+        di server lewat protokol SFTP.
+Poin penting: SFTP secara teknis adalah "subsystem" yang jalan DI
+        ATAS koneksi SSH yang sudah ada — bukan koneksi baru dari
+        nol seperti FTP biasa. Makanya crate ini menerima
+        &SshSession yang sudah connect, bukan bikin koneksi sendiri.
+        Artinya satu klik "Connect" ke sebuah host sudah cukup
+        untuk buka tab terminal DAN panel file browser sekaligus.
+Status: Kerangka fungsi ada (open(), list_dir, upload, download),
+        badan fungsi masih todo!().
+
+--------------------------------------------------------------
+crates/term-emulator  (terminus-term-emulator)
+--------------------------------------------------------------
+Isi   : Wrapper di atas library "alacritty_terminal" (parser VTE
+        yang dipakai terminal emulator Alacritty).
+Tugas : Terima byte mentah (yang berisi escape sequence ANSI,
+        kode warna, posisi cursor, dst) dari ssh-engine, ubah jadi
+        struktur data grid karakter (TerminalGrid) yang gampang
+        dirender oleh UI mana pun.
+Kenapa terpisah dari ssh-engine: supaya logic parsing terminal
+        bisa dipakai ulang kalau nanti ada koneksi non-SSH (mis.
+        serial console lewat USB), dan supaya gampang ditest
+        dengan data byte palsu tanpa perlu koneksi network beneran.
+Status: Kerangka TerminalInstance + TerminalGrid sudah ada, belum
+        wired ke alacritty_terminal beneran.
+
+--------------------------------------------------------------
+crates/cisco-driver  (terminus-cisco-driver)
+--------------------------------------------------------------
+Isi   : Logic khusus untuk perilaku CLI Cisco IOS/IOS-XE, yang
+        beda dari shell Linux biasa.
+Tugas : - Auto kirim "terminal length 0" saat connect (supaya
+          output panjang tidak terpotong "--More--")
+        - Deteksi mode CLI saat ini dari pola prompt (Router> =
+          user exec, Router# = privileged, Router(config)# =
+          config mode)
+        - Handle proses "enable" (masuk privileged mode pakai
+          password terpisah dari password SSH awal)
+Status: Fungsi detect_mode() di prompt.rs SUDAH JALAN dan sudah
+        ada unit test-nya (bisa langsung dicoba cargo test).
+        Fungsi lain (bootstrap, enable) masih kerangka.
+
+--------------------------------------------------------------
+crates/vault  (terminus-vault)
+--------------------------------------------------------------
+Isi   : Penyimpanan lokal terenkripsi untuk profil host dan
+        kredensial (password, private key).
+Desain: - Metadata (nama host, IP, port, username, grup, tag)
+          disimpan PLAINTEXT di SQLite — supaya bisa dicari/
+          difilter cepat tanpa perlu unlock vault dulu.
+        - Kredensial rahasia (password, private key) DIENKRIPSI
+          pakai ChaCha20-Poly1305, key enkripsinya diturunkan dari
+          master password user pakai Argon2id (algoritma yang
+          sengaja dibikin lambat/berat supaya tahan brute-force
+          kalau file vault dicuri).
+        - Master password ITU SENDIRI TIDAK PERNAH disimpan di
+          mana pun — yang disimpan cuma hash-nya untuk verifikasi,
+          key enkripsi selalu diturunkan ulang tiap kali unlock.
+Status: Kerangka struct + fungsi ada, semua badan fungsi masih
+        todo!(). Ini bagian yang paling perlu hati-hati saat
+        diimplementasi (baca docs/architecture.md bagian
+        "Keamanan yang perlu diperhatikan").
+
+--------------------------------------------------------------
+crates/app  (terminus-app) — INI BINARY UTAMA
+--------------------------------------------------------------
+Isi   : Program yang benar-benar dijalankan user. Menggabungkan
+        semua crate di atas + UI Slint.
+Tugas : - Render UI (sidebar host, tab terminal, dst) pakai Slint
+        - Terima input user (klik, ketik) dan teruskan ke engine
+          yang sesuai
+        - Jembatan antara UI thread (Slint, harus di main thread)
+          dan tokio runtime (tempat semua kerja network async
+          jalan) — lihat crates/app/src/state.rs
+File ui/app-window.slint berisi skeleton tampilan: sidebar list
+        host di kiri, area kosong di kanan (nanti diisi tab
+        terminal), pakai "native style" Slint supaya otomatis
+        mengikuti tampilan asli OS (macOS-native di Mac, dst).
+Status: main.rs sudah bisa compile & buka window kosong (setelah
+        semua todo!() di crate lain diisi minimal), tapi belum ada
+        wiring logic sama sekali.
+
+
+==================================================================
+4. KEPUTUSAN TEKNOLOGI & ALASANNYA (RINGKASAN)
+==================================================================
+
+  - Bahasa: 100% Rust, tanpa Python/Electron/webview apapun —
+    sesuai requirement "benar-benar native".
+
+  - UI toolkit: Slint — dipilih karena render engine-nya sendiri
+    (bukan binding ke Qt/GTK yang C++/C based), punya native style
+    per OS otomatis, dan lisensi GPLv3 gratis cocok untuk project
+    open source (sesuai keputusan kamu sebelumnya).
+
+  - SSH: russh — implementasi SSH2 pure Rust, bukan binding ke
+    libssh2 (C library) — lebih gampang cross-compile ke Linux dan
+    macOS (termasuk Apple Silicon/ARM) tanpa drama linking library
+    native.
+
+  - SFTP: russh-sftp — reuse koneksi SSH yang sama dari russh,
+    bukan library terpisah yang connect dari nol.
+
+  - Terminal parsing: alacritty_terminal — dipakai apa adanya dari
+    project Alacritty (terminal emulator populer), daripada nulis
+    parser VTE dari nol yang sangat rawan bug (spec ANSI/VT100
+    banyak edge case-nya).
+
+  - Storage: SQLite (via rusqlite) untuk metadata + ChaCha20-
+    Poly1305/Argon2id untuk enkripsi kredensial — kombinasi yang
+    umum dipakai password manager modern, tidak butuh hardware
+    acceleration khusus jadi konsisten performanya di Linux
+    maupun Mac ARM.
+
+
+==================================================================
+5. TAHAP SELANJUTNYA (BERURUTAN)
+==================================================================
+
+Urutan ini disusun supaya di setiap tahap kamu punya sesuatu yang
+BENERAN BISA DICOBA (bukan nunggu semua selesai baru bisa dites).
+
+------------------------------------------------------------
+TAHAP 1 — SSH Engine dasar (fondasi semuanya)
+------------------------------------------------------------
+Target akhir tahap ini: bisa connect ke satu server SSH beneran
+dan kirim/terima perintah, walau masih lewat kode (belum lewat UI).
+
+Yang perlu dikerjakan:
+  1. Isi crates/ssh-engine/src/client.rs — implementasi trait
+     russh::client::Handler. Bagian PALING PENTING di sini adalah
+     host key verification (JANGAN auto-accept semua host key
+     tanpa pengecekan, ini celah keamanan paling umum di SSH
+     client yang dibuat buru-buru).
+  2. Isi crates/ssh-engine/src/session.rs — buka channel shell,
+     implementasi write() dan cara baca output.
+  3. Isi fungsi connect() di lib.rs, hubungkan semuanya.
+  4. Tulis contoh kecil di tests/integration/ yang connect ke
+     server SSH publik atau container Docker lokal (openssh-server)
+     buat verifikasi koneksi beneran jalan.
+
+------------------------------------------------------------
+TAHAP 2 — Terminal emulator + render manual (belum UI)
+------------------------------------------------------------
+Target akhir tahap ini: output SSH mentah bisa diubah jadi grid
+karakter yang terbaca (warna, cursor position benar), dicetak ke
+console dulu (belum ke Slint) buat verifikasi parsing-nya benar.
+
+Yang perlu dikerjakan:
+  1. Wire TerminalInstance::feed() di crates/term-emulator ke
+     alacritty_terminal::Term yang sebenarnya.
+  2. Implementasi TerminalInstance::snapshot() supaya
+     mengembalikan grid yang benar-benar berisi hasil parsing.
+  3. Test manual: connect ke server (pakai hasil Tahap 1), jalankan
+     "ls -la" atau "top", pastikan grid yang dihasilkan cocok
+     dengan apa yang seharusnya tampil di terminal biasa.
+
+------------------------------------------------------------
+TAHAP 3 — Sambungkan ke UI Slint (di sinilah mulai kelihatan wujud)
+------------------------------------------------------------
+Target akhir tahap ini: aplikasi punya SATU jendela dengan SATU
+tab terminal yang bisa dipakai SSH manual (host di-hardcode dulu,
+belum ada sidebar/vault).
+
+Yang perlu dikerjakan:
+  1. Desain komponen .slint untuk canvas terminal (grid karakter
+     di-render pakai Rectangle+Text per cell, atau custom rendering
+     kalau butuh performa lebih — didiskusikan lagi nanti).
+  2. Isi crates/app/src/state.rs — spawn tokio task yang manggil
+     ssh-engine::connect(), lalu setiap ada data baru dari
+     term-emulator, panggil slint::invoke_from_event_loop untuk
+     update tampilan.
+  3. Wire input keyboard dari Slint balik ke SshSession::write().
+  4. Tambahkan resize handling (ubah ukuran window -> resize PTY
+     di server, supaya program seperti vim/top tahu ukuran
+     terminal yang benar).
+
+------------------------------------------------------------
+TAHAP 4 — Vault (simpan profil & kredensial)
+------------------------------------------------------------
+Target akhir tahap ini: user bisa input host+password sekali,
+simpan, lalu connect ulang tanpa ketik ulang — data tersimpan
+aman di disk.
+
+Yang perlu dikerjakan:
+  1. Implementasi crypto.rs (derive_key, encrypt, decrypt) —
+     ini bagian yang paling perlu ekstra teliti, pertimbangkan
+     minta review kode terpisah khusus bagian ini.
+  2. Implementasi store.rs — skema tabel SQLite (profiles, groups,
+     secrets), fungsi CRUD.
+  3. Tambah UI form "New Host" sederhana di Slint.
+  4. Tambah alur "unlock vault" (input master password) saat app
+     pertama kali dibuka.
+
+------------------------------------------------------------
+TAHAP 5 — Sidebar host + multi-tab session
+------------------------------------------------------------
+Target akhir tahap ini: sidebar berisi daftar host dari vault,
+klik host -> buka tab baru, bisa punya beberapa tab aktif
+sekaligus (persis kayak Termius).
+
+Yang perlu dikerjakan:
+  1. Ganti daftar dummy di ui/app-window.slint dengan data asli
+     dari VaultStore::list_profiles().
+  2. Implementasi tab management di state.rs — satu tab = satu
+     ActiveSession + satu TerminalInstance.
+  3. Handle disconnect/reconnect per tab, tampilkan status
+     (Connecting/Connected/Failed) di UI.
+
+------------------------------------------------------------
+TAHAP 6 — SFTP file browser
+------------------------------------------------------------
+Target akhir tahap ini: panel/tab file browser yang bisa
+lihat isi folder remote, upload, download.
+
+Yang perlu dikerjakan:
+  1. Implementasi fungsi-fungsi di crates/sftp-engine (list_dir,
+     upload, download, mkdir, rm, rename).
+  2. Desain komponen UI file browser di Slint (list/tree view +
+     drag-drop kalau memungkinkan).
+  3. Progress indicator untuk transfer file besar.
+
+------------------------------------------------------------
+TAHAP 7 — Cisco driver lengkap
+------------------------------------------------------------
+Target akhir tahap ini: koneksi ke device Cisco otomatis matikan
+paging, bisa masuk privileged mode dari UI, prompt mode
+ditampilkan di tab (indikator visual user lagi di mode apa).
+
+Yang perlu dikerjakan:
+  1. Implementasi CiscoSession::bootstrap() dan enable().
+  2. Hubungkan detect_mode() (sudah jadi dari awal) ke setiap
+     update grid terminal, supaya mode ke-track real-time.
+  3. Tambah tombol/shortcut "Enable" di UI khusus untuk profil
+     bertipe ConnectionKind::CiscoIos.
+
+------------------------------------------------------------
+TAHAP 8 — Polish & packaging
+------------------------------------------------------------
+  1. Setup build release untuk Linux (AppImage atau .deb) dan
+     macOS (.app bundle + notarization kalau mau distribusi luas).
+  2. Icon aplikasi, splash screen, dark/light theme toggle.
+  3. Tambah fitur pelengkap: snippet/script runner, session
+     logging, port forwarding — sesuai kebutuhan yang muncul dari
+     referensi GUI yang kamu punya.
+
+
+==================================================================
+CATATAN PENUTUP
+==================================================================
+
+Setiap tahap di atas sengaja dibuat supaya di akhir tahap itu ada
+"hasil yang bisa dicoba", bukan cuma kode yang belum bisa
+dijalankan. Kalau di tengah jalan ternyata ada bagian yang mau
+diubah pendekatannya (misalnya cara render grid terminal di Slint
+ternyata terlalu lambat dan perlu didekati beda), itu wajar dan
+tidak akan menghancurkan struktur besar — karena tiap crate sudah
+terisolasi tanggung jawabnya masing-masing.

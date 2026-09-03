@@ -1,0 +1,271 @@
+import { Tokens } from "../tokens.slint";
+import { TerminalTabsModel } from "../models.slint";
+import { SearchField } from "./top-tabs.slint";
+
+// Satu tab: label host + tombol "×" buat nutup (disconnect beneran,
+// lihat komentar `tab-close-requested` di models.slint). Klik badan tab
+// (bukan ×) pindah tampilan ke situ TANPA disconnect.
+component TabChip inherits Rectangle {
+    in property <string> tab-id;
+    in property <string> label;
+    in property <bool> active;
+
+    width: chip-content.preferred-width + 16px;
+    height: 32px;
+    border-radius: Tokens.radius-default;
+    background: touch.pressed ? Tokens.surface-container-high.darker(10%)
+        : root.active ? Tokens.surface-container-lowest
+        : (touch.has-hover ? Tokens.surface-container-high : transparent);
+    border-width: root.active ? 1px : 0px;
+    border-color: Tokens.outline-variant;
+
+    touch := TouchArea {
+        clicked => { TerminalTabsModel.tab-selected(root.tab-id); }
+    }
+
+    chip-content := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            background: Tokens.success;
+        }
+        Text {
+            text: root.label;
+            color: root.active ? Tokens.on-surface : Tokens.on-surface-variant;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 9px;
+            background: close-touch.pressed ? Tokens.error-container.darker(20%) : close-touch.has-hover ? Tokens.error-container : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: "×";
+                color: close-touch.has-hover ? Tokens.on-error-container : Tokens.on-surface-variant;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            close-touch := TouchArea {
+                clicked => { TerminalTabsModel.tab-close-requested(root.tab-id); }
+            }
+        }
+    }
+}
+
+// Window bar — SATU-SATUNYA bar di paling atas jendela (bukan dua
+// bar bertumpuk lagi — dulu `TopBar`/kotak pencarian render sebagai
+// baris TERPISAH di bawah ini, laporan user: "masih bikin bar baru di
+// bawah window bar" — makanya kotak pencarian SEKARANG pindah jadi
+// bagian dari bar ini juga, `TopBar` sendiri tidak dipakai lagi di
+// app-window.slint). Isinya, urut dari kiri: (1) tombol buka/tutup
+// sidebar (2) daftar tab SSH yang lagi terbuka (3) kotak pencarian
+// (disembunyikan waktu halaman Terminal aktif) (4) tombol pengaturan
+// terminal ⚙ (PINDAH ke sini dari header halaman Terminal — atas
+// permintaan user, biar tidak nyempil sendirian di pojok). Sesi SSH
+// yang jalan di background (mis. user lagi buka halaman Hosts) tetap
+// gampang dibalikin tampilannya kapan saja lewat tab-tab di sini tanpa
+// connect ulang.
+//
+// CATATAN SCOPE: ini BUKAN window chrome custom/frameless (bar ini
+// TIDAK menggantikan title bar asli OS — minimize/maximize/close di
+// gambar referensi Termius yang ditunjukkan user itu kontrol jendela
+// NATIF, beda proyek/scope dari mengganti dekorasi window OS, butuh
+// integrasi platform terpisah). Kalau itu yang benar-benar dimaksud,
+// perlu dikonfirmasi dulu sebagai pekerjaan tersendiri.
+export component TerminalTabBar inherits Rectangle {
+    in property <bool> sidebar-collapsed: false;
+    in property <bool> show-search: true;
+    // Cuma tampil waktu halaman Terminal aktif (atas permintaan user
+    // — sebelumnya SELALU ada, dianggap tidak relevan di halaman lain).
+    in property <bool> show-settings-gear: false;
+    callback toggle-sidebar-requested();
+    // Diteruskan dari `HostsModel.focus-search-requested` (shortcut
+    // Ctrl+S di halaman Hosts, lihat `page-hosts.slint`) — no-op kalau
+    // `search-field` lagi tidak diinstansiasi (`show-search: false`,
+    // mis. lagi di halaman Terminal).
+    public function focus-search() {
+        search-field.focus-search();
+    }
+
+    height: 46px;
+    background: Tokens.surface-container-low;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+
+    HorizontalLayout {
+        padding: 6px;
+        spacing: 6px;
+        // `alignment: start` SENGAJA DIHAPUS — itu penyebab bug
+        // "tombol window action ketumpuk di kiri, ruang kosong malah
+        // di kanan" (laporan user): `alignment: start` MEMATIKAN
+        // distribusi stretch bawaan (`horizontal-stretch`) sama sekali
+        // & maksa SEMUA child dipaketin rapat dari kiri — jadi
+        // `drag-area` (satu-satunya elemen `horizontal-stretch: 1`,
+        // dimaksudkan buat "mendorong" gear+minimize+maximize+close ke
+        // ujung kanan) malah ikut dipaketin rapat juga (lebar alaminya
+        // 0, kosong tanpa konten) alih-alih melebar. Default (`stretch`,
+        // tanpa nulis `alignment` sama sekali) yang benar di sini.
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: Tokens.radius-default;
+            background: sidebar-touch.pressed ? Tokens.surface-container-high.darker(10%) : sidebar-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: "☰";
+                color: Tokens.on-surface-variant;
+                font-size: 22px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            sidebar-touch := TouchArea { clicked => { root.toggle-sidebar-requested(); } }
+        }
+        Rectangle {
+            width: 1px;
+            background: Tokens.outline-variant;
+        }
+
+        for t in TerminalTabsModel.tabs : TabChip {
+            tab-id: t.id;
+            label: t.label;
+            active: t.id == TerminalTabsModel.active-tab-id;
+        }
+
+        // SELALU diinstansiasi (bukan `if root.show-search : ...` lagi)
+        // — elemen di dalam `if` TIDAK BISA dipanggil lewat id dari
+        // `public function` di luar blok `if`-nya (`search-field.
+        // focus-search()` di bawah butuh akses itu buat shortcut
+        // Ctrl+S), jadi disembunyikan lewat `visible`+`width:0` waktu
+        // `!show-search` alih-alih tidak diinstansiasi sama sekali.
+        search-field := SearchField {
+            visible: root.show-search;
+            width: root.show-search ? 260px : 0px;
+            y: (parent.height - self.height) / 2;
+            placeholder: "Find a host or ssh user@host";
+        }
+
+        // Sisa ruang kosong di bar ini SEKALIGUS jadi "drag handle"
+        // buat mindahin jendela (`no-frame: true` di app-window.slint
+        // artinya OS TIDAK lagi kasih title bar buat itu) — geser
+        // mouse sambil ditekan di area kosong ini. `pressed-x/y` FIXED
+        // di posisi awal tekan, `mouse-x/y` update terus selama drag,
+        // deltanya (dalam koordinat LOKAL, sama nilainya dengan
+        // pergeseran jendela di layar) dikirim ke Rust lewat
+        // `window-drag-requested`. Lihat catatan Wayland yang panjang
+        // di models.slint soal kenapa ini bisa no-op di sebagian
+        // sistem — di luar kendali kita, batasan protokol windowing.
+        drag-area := Rectangle {
+            horizontal-stretch: 1;
+            drag-touch := TouchArea {
+                moved => {
+                    if drag-touch.pressed {
+                        TerminalTabsModel.window-drag-requested(
+                            drag-touch.mouse-x - drag-touch.pressed-x,
+                            drag-touch.mouse-y - drag-touch.pressed-y);
+                    }
+                }
+                double-clicked => {
+                    TerminalTabsModel.window-maximize-toggle-requested();
+                }
+            }
+        }
+
+        if root.show-settings-gear : Rectangle {
+            width: 48px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Tokens.radius-default;
+            background: settings-touch.pressed ? Tokens.surface-container-high.darker(10%) : settings-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: "⚙";
+                color: Tokens.on-surface-variant;
+                font-size: 26px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            settings-touch := TouchArea {
+                clicked => { TerminalTabsModel.settings-open = !TerminalTabsModel.settings-open; }
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            background: Tokens.outline-variant;
+        }
+
+        // Kontrol jendela CUSTOM (minimize/maximize/close) — GANTI
+        // punya OS yang hilang gara-gara `no-frame: true`. Lihat
+        // komentar panjang `window-*-requested` di models.slint.
+        Rectangle {
+            width: 46px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            background: min-touch.pressed ? Tokens.surface-container-high.darker(10%) : min-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: "─";
+                color: Tokens.on-surface-variant;
+                font-size: 18px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            min-touch := TouchArea { clicked => { TerminalTabsModel.window-minimize-requested(); } }
+        }
+        Rectangle {
+            width: 46px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            background: max-touch.pressed ? Tokens.surface-container-high.darker(10%) : max-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: TerminalTabsModel.window-maximized ? "❐" : "▢";
+                color: Tokens.on-surface-variant;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            max-touch := TouchArea { clicked => { TerminalTabsModel.window-maximize-toggle-requested(); } }
+        }
+        Rectangle {
+            width: 46px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            background: close-win-touch.pressed ? Tokens.error.with-alpha(45%) : close-win-touch.has-hover ? Tokens.error.with-alpha(30%) : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            Text {
+                text: "✕";
+                color: close-win-touch.has-hover ? Tokens.error : Tokens.on-surface-variant;
+                font-size: 18px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+            close-win-touch := TouchArea { clicked => { TerminalTabsModel.window-close-requested(); } }
+        }
+    }
+}

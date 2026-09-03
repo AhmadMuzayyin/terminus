@@ -1,0 +1,82 @@
+import { Tokens } from "../tokens.slint";
+
+// Ikon garis (line icon) monokrom — GANTI emoji berwarna (🖥/📁/⌨/📖/🗑)
+// yang dipakai sebelumnya di sidebar & kartu host, atas permintaan
+// eksplisit user ("ganti dengan icon line", "warnanya kurang jelas") —
+// emoji punya warna BAWAAN sendiri (tidak bisa di-tint ikut tema
+// aplikasi), makanya kelihatan tidak konsisten/kurang jelas di atas
+// background gelap. Semua di sini murni `Path` bergaris (`fill:
+// transparent`, cuma `stroke`), warnanya ikut `color` yang dioper
+// caller (biasanya `Tokens.on-surface-variant`/`on-success-container`)
+// — persis prinsip "line icon" (ikon outline satu warna).
+export component IconServer inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    fill: transparent;
+    commands: "M3 4 h18 a1 1 0 0 1 1 1 v4 a1 1 0 0 1 -1 1 h-18 a1 1 0 0 1 -1 -1 v-4 a1 1 0 0 1 1 -1 Z"
+        + " M3 14 h18 a1 1 0 0 1 1 1 v4 a1 1 0 0 1 -1 1 h-18 a1 1 0 0 1 -1 -1 v-4 a1 1 0 0 1 1 -1 Z"
+        + " M6.5 7.5 h.01 M6.5 17.5 h.01";
+}
+
+export component IconFolder inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    stroke-line-join: round;
+    fill: transparent;
+    commands: "M3 6 h6 l2 2.5 h10 v10.5 a1 1 0 0 1 -1 1 h-16 a1 1 0 0 1 -1 -1 v-12 a1 1 0 0 1 1 -1 Z";
+}
+
+export component IconTerminal inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    stroke-line-join: round;
+    stroke-line-cap: round;
+    fill: transparent;
+    commands: "M3 4.5 a1.2 1.2 0 0 1 1.2 -1.2 h15.6 a1.2 1.2 0 0 1 1.2 1.2 v15 a1.2 1.2 0 0 1 -1.2 1.2 h-15.6 a1.2 1.2 0 0 1 -1.2 -1.2 Z"
+        + " M6.5 9.5 l4 3.2 l-4 3.2 M12.5 16 h5";
+}
+
+export component IconBook inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    stroke-line-join: round;
+    fill: transparent;
+    commands: "M12 6.5 c-1.5 -1.5 -4 -2 -8 -1.7 v13.4 c4 -0.3 6.5 0.2 8 1.7 c1.5 -1.5 4 -2 8 -1.7 v-13.4 c-4 -0.3 -6.5 0.2 -8 1.7 Z"
+        + " M12 6.5 v13.4";
+}
+
+export component IconTrash inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    stroke-line-join: round;
+    stroke-line-cap: round;
+    fill: transparent;
+    commands: "M4 7 h16 M9.5 7 v-2 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 v2"
+        + " M6 7 l1 13.5 a1.2 1.2 0 0 0 1.2 1.1 h7.6 a1.2 1.2 0 0 0 1.2 -1.1 L18 7"
+        + " M10 11 v6 M14 11 v6";
+}

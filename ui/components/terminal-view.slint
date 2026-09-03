@@ -1,0 +1,92 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { TerminalTabsModel, TermRow } from "../models.slint";
+
+// Satu baris terminal = deretan "run" (lihat komentar `TermRow` di
+// models.slint) ditaruh sejajar tanpa spasi/padding supaya sel-sel
+// yang berdekatan (mis. background warna prompt) nyambung mulus,
+// persis grid karakter monospace asli.
+// `export` (bukan private lagi) — dipakai ULANG oleh `ConsoleView`
+// (`console-view.slint`, halaman Console/serial) supaya rendering satu
+// baris grid terminal (warna/font/cursor) tidak dobel-implementasi;
+// yang beda cuma SUMBER `rows`-nya (`TerminalTabsModel` buat tab SSH,
+// `ConsoleModel` buat sesi serial).
+export component TerminalRowView inherits HorizontalLayout {
+    in property <TermRow> term-row;
+    spacing: 0px;
+
+    for run in root.term-row.runs : Rectangle {
+        background: run.bg;
+        width: t.preferred-width;
+        height: t.preferred-height;
+        t := Text {
+            text: run.text;
+            color: run.fg;
+            // Font terminal (BUKAN `Tokens.font-mono` bawaan lagi) —
+            // bisa diganti user lewat pengaturan (⚙ di halaman
+            // Terminal), diisi Rust dari font monospace terinstall di
+            // sistem, lihat `TerminalTabsModel.terminal-font-family`.
+            font-family: TerminalTabsModel.terminal-font-family;
+            font-size: TerminalTabsModel.terminal-font-size * 1px;
+            font-weight: run.bold ? 700 : 400;
+            wrap: no-wrap;
+        }
+    }
+}
+
+// Area terminal interaktif beneran: nangkep keyboard lewat FocusScope,
+// terjemahin tombol khusus (Enter/Backspace/panah/Ctrl+huruf umum) jadi
+// byte control yang benar, sisanya (teks biasa) diteruskan apa adanya
+// ke `TerminalTabsModel.pty-input-requested` — TIDAK ada local echo di
+// sini, karakter yang kelihatan datang balik dari server lewat PTY
+// (server echo), persis terminal sungguhan. Dipakai satu instance per
+// tab AKTIF (lihat `ui/pages/page-terminal.slint`) — tab yang tidak
+// ditampilkan tidak me-render `TerminalView`, tapi sesinya tetap hidup
+// di background (state-nya dipegang Rust, bukan di sini).
+export component TerminalView inherits Rectangle {
+    background: TerminalTabsModel.terminal-bg-color;
+
+    focus-scope := FocusScope {
+        key-pressed(event) => {
+            if (event.modifiers.control && event.text != "") {
+                if (event.text == "c") { TerminalTabsModel.pty-input-requested("\u{3}"); return accept; }
+                if (event.text == "d") { TerminalTabsModel.pty-input-requested("\u{4}"); return accept; }
+                if (event.text == "z") { TerminalTabsModel.pty-input-requested("\u{1a}"); return accept; }
+                if (event.text == "l") { TerminalTabsModel.pty-input-requested("\u{c}"); return accept; }
+                if (event.text == "a") { TerminalTabsModel.pty-input-requested("\u{1}"); return accept; }
+                if (event.text == "e") { TerminalTabsModel.pty-input-requested("\u{5}"); return accept; }
+                if (event.text == "u") { TerminalTabsModel.pty-input-requested("\u{15}"); return accept; }
+                if (event.text == "w") { TerminalTabsModel.pty-input-requested("\u{17}"); return accept; }
+                if (event.text == "r") { TerminalTabsModel.pty-input-requested("\u{12}"); return accept; }
+            }
+            if (event.text == Key.Return) { TerminalTabsModel.pty-input-requested("\u{d}"); return accept; }
+            if (event.text == Key.Backspace) { TerminalTabsModel.pty-input-requested("\u{7f}"); return accept; }
+            if (event.text == Key.Tab) { TerminalTabsModel.pty-input-requested("\u{9}"); return accept; }
+            if (event.text == Key.Escape) { TerminalTabsModel.pty-input-requested("\u{1b}"); return accept; }
+            if (event.text == Key.UpArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[A"); return accept; }
+            if (event.text == Key.DownArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[B"); return accept; }
+            if (event.text == Key.RightArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[C"); return accept; }
+            if (event.text == Key.LeftArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[D"); return accept; }
+            if (event.text == Key.Delete) { TerminalTabsModel.pty-input-requested("\u{1b}[3~"); return accept; }
+            if (event.text == Key.Home) { TerminalTabsModel.pty-input-requested("\u{1b}[H"); return accept; }
+            if (event.text == Key.End) { TerminalTabsModel.pty-input-requested("\u{1b}[F"); return accept; }
+            TerminalTabsModel.pty-input-requested(event.text);
+            accept
+        }
+
+        // Fokus otomatis begitu tab ini dirender (biar bisa langsung
+        // ngetik tanpa klik dulu — termasuk waktu pindah tab), DAN
+        // klik ulang di mana saja di dalam area ini buat balikin fokus
+        // kalau sempat kepindah.
+        init => { focus-scope.focus(); }
+        TouchArea { clicked => { focus-scope.focus(); } }
+
+        ScrollView {
+            VerticalLayout {
+                padding: Tokens.gutter-md;
+                alignment: start;
+                for r in TerminalTabsModel.rows : TerminalRowView { term-row: r; }
+            }
+        }
+    }
+}

@@ -1,0 +1,13 @@
+[package]
+name = "terminus-sftp-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+terminus-core.workspace = true
+terminus-ssh-engine.workspace = true
+russh.workspace = true
+russh-sftp.workspace = true
+tokio.workspace = true
+thiserror.workspace = true

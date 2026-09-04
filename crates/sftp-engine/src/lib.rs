@@ -124,9 +124,27 @@ impl SftpBrowser {
     }
 
     /// Tulis byte ke satu file remote (bikin baru/timpa) — dipakai buat
-    /// "upload" (klik file di panel Local, tombol "Copy →").
+    /// "upload" (drag & drop dari panel Local ke Remote).
+    ///
+    /// SENGAJA BUKAN `self.session.write(...)` bawaan `russh_sftp` —
+    /// itu convenience method di library-nya sendiri buka file cuma
+    /// pakai flag `OpenFlags::WRITE` doang (lihat source-nya,
+    /// `russh-sftp-2.4.0/src/client/session.rs`), TANPA `CREATE` —
+    /// artinya kalau file itu BELUM ADA di remote (kasus PALING umum
+    /// waktu upload: bikin file baru), server SFTP menolak dengan "no
+    /// such file", upload selalu gagal. Ini bug nyata di upstream,
+    /// bukan di kode kita — root cause laporan user "upload dari lokal
+    /// ke server belum bisa, download jalan" (download cuma BACA file
+    /// yang SUDAH ADA, tidak kena masalah CREATE sama sekali). Fix:
+    /// pakai `session.create()` (juga disediakan `russh_sftp`,
+    /// convenience method LAIN yang benar — buka dengan
+    /// `CREATE | TRUNCATE | WRITE`, persis semantik "bikin baru/timpa"
+    /// yang kita mau) lalu `write_all` manual.
     pub async fn upload(&self, remote_path: &str, data: &[u8]) -> Result<(), SftpError> {
-        self.session.write(remote_path, data).await.map_err(|e| SftpError::Io(e.to_string()))
+        use tokio::io::AsyncWriteExt;
+        let mut file = self.session.create(remote_path).await.map_err(|e| SftpError::Io(e.to_string()))?;
+        file.write_all(data).await.map_err(|e| SftpError::Io(e.to_string()))?;
+        Ok(())
     }
 
     /// Ganti nama/pindahkan satu entry remote (file ATAU folder) —

@@ -67,6 +67,11 @@ component FilePane inherits Rectangle {
     // (Ctrl+R) & halaman Hosts (Ctrl+S): baca `event.modifiers.*` di
     // `key-pressed` sebuah `FocusScope`.
     property <bool> shift-held: false;
+    // Sama pola dengan `shift-held` — dipakai buat bedain klik biasa
+    // (single-select, GANTI seleksi lama) dari Ctrl+klik (toggle-
+    // tambah/kurang SATU baris, seleksi lain tidak ikut hilang). Lihat
+    // `clicked` di `FileRow` di bawah.
+    property <bool> ctrl-held: false;
 
     // FocusScope KHUSUS panel ini (beda dari `key-catcher` di
     // `PageSftp` yang cuma nangkep Ctrl+R global) — WAJIB dapat fokus
@@ -79,6 +84,9 @@ component FilePane inherits Rectangle {
         key-pressed(event) => {
             if event.modifiers.shift {
                 root.shift-held = true;
+            }
+            if event.modifiers.control {
+                root.ctrl-held = true;
             }
             if event.modifiers.control && event.text == "a" {
                 SftpModel.sftp-select-all-requested(root.pane-key);
@@ -101,6 +109,9 @@ component FilePane inherits Rectangle {
         key-released(event) => {
             if !event.modifiers.shift {
                 root.shift-held = false;
+            }
+            if !event.modifiers.control {
+                root.ctrl-held = false;
             }
             reject
         }
@@ -352,14 +363,30 @@ component FilePane inherits Rectangle {
                                                     // dari titik awal yang sama).
                                                     root.cursor-index = i;
                                                     SftpModel.sftp-select-range-requested(root.pane-key, root.entries[root.anchor-index].name, f.name);
-                                                } else {
-                                                    // Klik biasa -> anchor baru + toggle
-                                                    // satu baris ini (perilaku lama tetap
-                                                    // dipertahankan, jadi klik biasa masih
-                                                    // bisa nyentang beberapa file lepas).
+                                                } else if root.ctrl-held {
+                                                    // Ctrl+klik -> toggle TAMBAH/KURANG baris
+                                                    // ini SAJA, seleksi lain yang sudah ada
+                                                    // tidak ikut hilang (ala file manager pada
+                                                    // umumnya).
                                                     root.anchor-index = i;
                                                     root.cursor-index = i;
                                                     SftpModel.sftp-toggle-check-requested(root.pane-key, f.name);
+                                                } else {
+                                                    // Klik BIASA (tanpa modifier apa pun) ->
+                                                    // single-select: GANTI seleksi jadi cuma
+                                                    // baris ini, apa pun yang sebelumnya
+                                                    // tercentang ikut hilang. Sebelumnya ini
+                                                    // toggle (nambah, bukan ganti) — laporan
+                                                    // user: klik file lain, file pertama
+                                                    // "ikut ke-blok" padahal Shift tidak
+                                                    // ditekan. Reuse `sftp-select-range-
+                                                    // requested` dengan anchor==target==baris
+                                                    // ini sendiri (Rust REPLACE seleksi jadi
+                                                    // range 1 file itu-itu saja) — tidak perlu
+                                                    // callback baru.
+                                                    root.anchor-index = i;
+                                                    root.cursor-index = i;
+                                                    SftpModel.sftp-select-range-requested(root.pane-key, f.name, f.name);
                                                 }
                                             }
                                         }

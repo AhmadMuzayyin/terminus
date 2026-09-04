@@ -43,3 +43,20 @@ pakai runner CI `macos-latest`), lalu:
 Hasil: `build/Terminus.app`, `build/Terminus-0.1.0.dmg`. Binary belum
 di-codesign/notarize (lihat catatan di ujung output script) — cukup
 buat testing lokal, distribusi publik butuh Apple Developer ID.
+
+## Windows (`.exe` + `.zip`) — WAJIB dijalankan di Windows asli
+
+**Tidak bisa dibangun dari lingkungan ini (Linux)** — link ke toolchain
+MSVC yang cuma ada di Windows (lihat bagian Instalasi di README utama).
+Di Windows (PowerShell), atau runner CI `windows-latest`:
+
+```powershell
+.\packaging\windows\build.ps1
+```
+
+Hasil: `build\terminus.exe`, `build\terminus-0.1.0-windows-x86_64.zip`.
+Windows TIDAK butuh format "paket" berlapis ala Linux — satu `.exe`
+sudah langsung bisa dijalankan/dibagikan apa adanya. Binary belum
+di-codesign — Windows SmartScreen mungkin menandainya "unrecognized
+app" di mesin lain (tetap bisa dijalankan lewat "More info" → "Run
+anyway"); installer MSI/NSIS + code-signing certificate belum dibuat.

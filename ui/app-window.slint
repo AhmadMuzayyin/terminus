@@ -104,6 +104,13 @@ export component AppWindow inherits Window {
                 if !root.sidebar-collapsed : NavRail {
                     current-page: root.current-page;
                     page-selected(i) => { root.current-page = i; }
+                    // Beda dari `focus-search-requested` (lihat komentar
+                    // di bawah) — di sini KITA yang megang instance
+                    // `NavRail`-nya langsung, jadi bisa nyantol ke
+                    // callback komponennya di sini juga, lalu MANGGIL
+                    // (bukan handle) global `HostsModel.documentation-
+                    // requested()` supaya Rust yang urus buka browser-nya.
+                    documentation-clicked => { HostsModel.documentation-requested(); }
                 }
 
                 VerticalLayout {

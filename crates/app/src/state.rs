@@ -86,12 +86,16 @@ pub struct AppState {
     /// di halaman Terminal), disimpan keyed by `HostProfile::id` (atas
     /// permintaan eksplisit user: "setiap host bisa beda theme").
     /// Host yang belum pernah eksplisit ganti tema TIDAK ada entry-nya
-    /// di sini — `theme_name_for()`/`palette_for()` fallback ke
-    /// default "Terminus Dark". SENGAJA cuma in-memory (hidup selama
-    /// app jalan, TIDAK ditulis ke vault) — bukan lintas restart app,
-    /// lihat catatan yang sama di komentar `theme_name_for()`. Dibaca
-    /// ULANG tiap kali render (bukan disimpan di `TerminalInstance`)
-    /// — lihat `TerminalInstance::snapshot`.
+    /// di sini — `theme_name_for()`/`palette_for()` fallback ke default
+    /// "Terminus Dark". Ini CACHE baca-cepat (dibaca ULANG tiap kali
+    /// render, bukan disimpan di `TerminalInstance` — lihat
+    /// `TerminalInstance::snapshot`) supaya `theme_name_for`/
+    /// `palette_for` tidak perlu query vault (SQLite) tiap render —
+    /// sumber kebenaran PERSISTEN-nya ada di `HostProfile.terminal_
+    /// theme` (kolom vault), diisi ke cache ini waktu connect
+    /// (`perform_connect`) dan ditulis balik ke vault waktu ganti tema
+    /// (`on_terminal_theme_changed`) — jadi tetap bertahan lintas
+    /// restart app, per host.
     terminal_themes: Arc<Mutex<HashMap<Uuid, String>>>,
     /// Id host/grup yang lagi dicentang buat bulk delete (checkbox di
     /// tiap kartu, lihat `HostsModel.host-selection-toggled`/`group-
@@ -340,6 +344,19 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
+    // --- Klik "Documentation" di sidebar -> buka situs dokumentasi di
+    //     browser default OS. `open::that` sengaja hasilnya dibuang
+    //     (`let _ =`) bukan di-`unwrap` — kalau OS-nya entah kenapa
+    //     tidak punya handler URL default (mis. lingkungan minimal
+    //     tanpa desktop environment), ini TIDAK BOLEH bikin app crash,
+    //     cukup diam-diam gagal (tidak ada UI buat nampilin error di
+    //     sini pun, ini fire-and-forget). ---
+    {
+        ui.global::<HostsModel>().on_documentation_requested(move || {
+            let _ = open::that("https://ahmadmuzayyin.github.io/terminus/");
+        });
+    }
+
     // --- New host ---
     {
         let ui_weak = ui.as_weak();
@@ -365,6 +382,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 auth: AuthMethod::Password { credential_id },
                 group_id,
                 tags: parse_tags(&form.tags),
+                terminal_theme: None,
             };
             let password_bytes = form.password.as_bytes().to_vec();
 
@@ -565,6 +583,12 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 auth: AuthMethod::Password { credential_id },
                 group_id,
                 tags: parse_tags(&form.tags),
+                // Form edit host TIDAK punya field tema (tema diatur
+                // dari panel pengaturan terminal, bukan dari sini) —
+                // bawa terus nilai lama biar simpan perubahan lain
+                // (label/host/port/dst) tidak diam-diam mereset tema
+                // yang sudah dipilih user buat host ini ke default.
+                terminal_theme: existing.terminal_theme.clone(),
             };
             let new_password = if form.password.is_empty() { None } else { Some(form.password.as_bytes().to_vec()) };
 
@@ -1076,6 +1100,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 auth: AuthMethod::Password { credential_id },
                 group_id,
                 tags: parse_tags(&form.tags),
+                terminal_theme: None,
             };
             let password = form.password.to_string();
             let password_bytes = password.clone().into_bytes();
@@ -1241,6 +1266,7 @@ fn import_parsed_hosts_into_vault(
             auth: AuthMethod::Password { credential_id: Uuid::new_v4() },
             group_id,
             tags: vec!["imported".to_string()],
+            terminal_theme: None,
         };
         vault.save_profile(&profile).map_err(|e| e.to_string())?;
         imported += 1;
@@ -1397,6 +1423,30 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 // sesaat kalau kebetulan lagi tidak ada tab.
                 if let Some(id) = active_id {
                     state.terminal_themes.lock().unwrap_or_else(|e| e.into_inner()).insert(id, name.to_string());
+                    // Tulis balik ke vault (`HostProfile.terminal_theme`)
+                    // juga — bukan cuma cache in-memory di atas — supaya
+                    // pilihan ini bertahan lintas restart app. Dikerjakan
+                    // lewat `spawn_blocking` (bukan langsung `vault.
+                    // lock()` di sini) karena akses vault itu blocking
+                    // (SQLite lewat `std::sync::Mutex`), sama pola dengan
+                    // operasi vault lain yang dipanggil dari context
+                    // async di file ini. Gagal simpan (mis. profil sudah
+                    // kehapus barengan) sengaja diam-diam diabaikan —
+                    // ganti tema tetap kepakai buat sesi berjalan lewat
+                    // cache in-memory di atas, cuma tidak "nempel" lintas
+                    // restart, bukan kegagalan yang harus mengganggu user.
+                    let vault = state.vault.clone();
+                    let theme_name = name.to_string();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let mut vault = vault.lock().unwrap();
+                        if let Some(mut profile) =
+                            vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == id))
+                        {
+                            profile.terminal_theme = Some(theme_name);
+                            let _ = vault.save_profile(&profile);
+                        }
+                    })
+                    .await;
                 }
                 // Update background PANEL terminal juga (bukan cuma
                 // per-sel teks) — biar begitu user buka/pindah tab ke
@@ -1510,6 +1560,7 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 auth: AuthMethod::Password { credential_id: Uuid::new_v4() },
                 group_id: None,
                 tags: Vec::new(),
+                terminal_theme: None,
             };
 
             sftp_model.set_connecting(true);
@@ -2962,6 +3013,14 @@ fn refresh_terminal_tabs_model(ui: &AppWindow, state: &Arc<AppState>) {
 /// tangan, tidak perlu baca ulang).
 async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, profile: HostProfile, password: String) {
     let uuid = profile.id;
+    // Muat tema tersimpan (`HostProfile.terminal_theme`, persist di
+    // vault — lihat komentar panjang di field `terminal_themes`) ke
+    // cache in-memory SEBELUM `switch_to_tab` dipanggil di bawah, biar
+    // tab yang baru terbuka ini langsung pakai tema terakhir yang
+    // diatur user buat host ini, bahkan setelah app di-restart.
+    if let Some(theme) = &profile.terminal_theme {
+        state.terminal_themes.lock().unwrap_or_else(|e| e.into_inner()).insert(uuid, theme.clone());
+    }
     set_status(&state, uuid, "connecting");
     {
         let ui_weak = ui_weak.clone();

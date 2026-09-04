@@ -48,6 +48,13 @@ export global HostsModel {
     // di sini, DIHANDLE (bukan cuma diteruskan) dari app-window.slint
     // yang punya akses ke instance window bar-nya.
     callback focus-search-requested();
+    // Klik "Documentation" di NavRail (sidebar) — bubble sampai ke
+    // Rust (`state.rs`) buat buka https://ahmadmuzayyin.github.io/terminus/
+    // lewat browser default OS (crate `open`). Dipasang di sini
+    // (bukan langsung di `app-window.slint`) karena `HostsModel` sudah
+    // jadi hub buat "aksi app-level lain-lain" yang bukan milik satu
+    // halaman spesifik — sama pola dengan `focus-search-requested`.
+    callback documentation-requested();
 
     // UI state murni (dialog buka/tutup) — sengaja tidak lewat Rust,
     // cukup di-toggle langsung dari Slint sendiri.

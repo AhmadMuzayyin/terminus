@@ -61,6 +61,10 @@ slint = "1.17"
 slint-build = "1.17"
 # Native "Open File" dialog (GTK di Linux) buat fitur Import XML.
 rfd = "0.15"
+# Buka URL (link dokumentasi di sidebar) lewat browser default OS —
+# `xdg-open` di Linux, `open` di macOS, `ShellExecute` di Windows,
+# semua dibungkus satu API cross-platform yang sama.
+open = "5"
 
 # --- storage & crypto (vault) ---
 rusqlite = { version = "0.32", features = ["bundled"] }

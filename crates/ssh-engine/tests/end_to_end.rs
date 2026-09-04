@@ -68,6 +68,7 @@ fn test_profile(credential_id: Uuid) -> HostProfile {
         auth: AuthMethod::Password { credential_id },
         group_id: None,
         tags: vec![],
+        terminal_theme: None,
     }
 }
 

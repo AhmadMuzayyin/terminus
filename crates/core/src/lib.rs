@@ -44,6 +44,15 @@ pub struct HostProfile {
     pub auth: AuthMethod,
     pub group_id: Option<Uuid>,
     pub tags: Vec<String>,
+    /// Nama color theme terminal (lihat `terminus_term_emulator::
+    /// palette::built_in_themes()`) yang terakhir dipilih user buat
+    /// host ini — `None` berarti belum pernah eksplisit ganti tema
+    /// (UI fallback ke default "Terminus Dark"). Persist di sini
+    /// (bukan cuma in-memory) supaya pilihan tema bertahan lintas
+    /// restart app, per host, atas permintaan eksplisit user ("setiap
+    /// host bisa beda theme, next login pakai theme yang di atur
+    /// terakhir kali pada host tersebut").
+    pub terminal_theme: Option<String>,
 }
 
 /// Grup/folder untuk mengorganisir banyak host di sidebar.

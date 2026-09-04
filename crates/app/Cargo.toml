@@ -18,6 +18,7 @@ terminus-serial-engine.workspace = true
 terminus-vault.workspace = true
 slint.workspace = true
 rfd.workspace = true
+open.workspace = true
 fontdb.workspace = true
 tokio.workspace = true
 tracing.workspace = true

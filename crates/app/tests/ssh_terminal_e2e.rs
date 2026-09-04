@@ -67,6 +67,7 @@ async fn perintah_beneran_lewat_ssh_muncul_di_grid_terminal() {
         auth: AuthMethod::Password { credential_id },
         group_id: None,
         tags: vec![],
+        terminal_theme: None,
     };
     let host_key_store: Arc<dyn HostKeyStore> = Arc::new(TestHostKeyStore { vault: vault.clone() });
 

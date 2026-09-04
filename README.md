@@ -383,6 +383,8 @@ cargo build --workspace   # pastikan hijau lagi
 - ✅ Terminal SSH multi-tab (parsing VTE asli, warna penuh, host-key TOFU, tema per-host)
 - ✅ SFTP dual-pane (drag & drop, context menu, multi-select, path bar editable)
 - ✅ Console serial lintas platform (Windows/Linux/macOS), disconnect yang benar-benar memutus
+- ✅ Tema per-host persist lintas restart app (kolom `terminal_theme` di skema `HostProfile`,
+  migrasi vault otomatis buat instalasi lama)
 
 **Batasan saat ini:**
 
@@ -391,21 +393,17 @@ cargo build --workspace   # pastikan hijau lagi
 - ⏳ Console (serial) belum punya konsep "saved device profile" — port
   dipilih ulang tiap sesi (disengaja, lihat komentar di
   `ui/pages/page-console.slint`).
-- ⏳ Tema per-host saat ini **in-memory saja** (reset ke default tiap
-  restart app) — belum ditulis ke vault/disk (lihat Rencana Selanjutnya).
 
 **Rencana selanjutnya:**
 
-1. **Persist tema per-host lintas restart** — perlu tambah kolom ke
-   skema `HostProfile` + migrasi vault.
-2. **Export host ke XML** (format serupa `config.xml` SecureCRT) —
+1. **Export host ke XML** (format serupa `config.xml` SecureCRT) —
    kebalikan dari fitur Import yang sudah ada.
-3. **Export JSON dengan password terenkripsi** — format backup/pindahan
+2. **Export JSON dengan password terenkripsi** — format backup/pindahan
    portable, terpisah dari file vault SQLite asli.
-4. **Identity tersimpan** (pasangan username+password terpisah dari
+3. **Identity tersimpan** (pasangan username+password terpisah dari
    host) — bisa dipakai ulang sebagai kredensial waktu menambah host
    baru, tanpa isi ulang dari nol tiap kali.
-5. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
+4. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
 
 ## Berkontribusi
 

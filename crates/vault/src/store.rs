@@ -90,7 +90,38 @@ impl VaultStore {
                 );
                 ",
             )
-            .map_err(|e| VaultError::Database(format!("migrasi gagal: {e}")))
+            .map_err(|e| VaultError::Database(format!("migrasi gagal: {e}")))?;
+
+        // `CREATE TABLE IF NOT EXISTS` di atas TIDAK menambah kolom baru
+        // ke tabel `profiles` yang sudah ada dari instalasi sebelum fitur
+        // "tema per-host persist" ini — perlu migrasi kolom terpisah,
+        // dijaga idempotent (aman dipanggil ulang tiap start app) lewat
+        // cek `PRAGMA table_info` dulu sebelum `ALTER TABLE`.
+        self.add_column_if_missing("profiles", "terminal_theme", "TEXT")?;
+
+        Ok(())
+    }
+
+    /// Tambah satu kolom ke tabel yang SUDAH ADA, hanya kalau belum ada
+    /// kolom dengan nama itu — SQLite tidak punya `ADD COLUMN IF NOT
+    /// EXISTS` bawaan, jadi dicek manual lewat `PRAGMA table_info`.
+    fn add_column_if_missing(&self, table: &str, column: &str, sql_type: &str) -> Result<(), VaultError> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .map_err(|e| VaultError::Database(e.to_string()))?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| VaultError::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == column);
+        drop(stmt);
+        if !exists {
+            self.conn
+                .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {sql_type}"), [])
+                .map_err(|e| VaultError::Database(format!("gagal tambah kolom {column}: {e}")))?;
+        }
+        Ok(())
     }
 
     // --- Lifecycle master password ---
@@ -180,7 +211,7 @@ impl VaultStore {
         query_params: impl rusqlite::Params,
     ) -> Result<Vec<HostProfile>, VaultError> {
         let sql = format!(
-            "SELECT id, label, host, port, username, kind, auth_method, credential_id, group_id, tags \
+            "SELECT id, label, host, port, username, kind, auth_method, credential_id, group_id, tags, terminal_theme \
              FROM profiles {clause}"
         );
         let mut stmt = self.conn.prepare(&sql).map_err(|e| VaultError::Database(e.to_string()))?;
@@ -201,6 +232,7 @@ impl VaultStore {
         let credential_id: Option<String> = row.get(7)?;
         let group_id: Option<String> = row.get(8)?;
         let tags_json: String = row.get(9)?;
+        let terminal_theme: Option<String> = row.get(10)?;
 
         let kind = match kind.as_str() {
             "cisco_ios" => ConnectionKind::CiscoIos,
@@ -228,6 +260,7 @@ impl VaultStore {
             auth,
             group_id: group_id.and_then(|s| Uuid::parse_str(&s).ok()),
             tags,
+            terminal_theme,
         })
     }
 
@@ -245,12 +278,13 @@ impl VaultStore {
 
         self.conn
             .execute(
-                "INSERT INTO profiles (id, label, host, port, username, kind, auth_method, credential_id, group_id, tags)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "INSERT INTO profiles (id, label, host, port, username, kind, auth_method, credential_id, group_id, tags, terminal_theme)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                    label = excluded.label, host = excluded.host, port = excluded.port,
                    username = excluded.username, kind = excluded.kind, auth_method = excluded.auth_method,
-                   credential_id = excluded.credential_id, group_id = excluded.group_id, tags = excluded.tags",
+                   credential_id = excluded.credential_id, group_id = excluded.group_id, tags = excluded.tags,
+                   terminal_theme = excluded.terminal_theme",
                 params![
                     profile.id.to_string(),
                     profile.label,
@@ -262,6 +296,7 @@ impl VaultStore {
                     credential_id,
                     profile.group_id.map(|g| g.to_string()),
                     tags_json,
+                    profile.terminal_theme,
                 ],
             )
             .map_err(|e| VaultError::Database(e.to_string()))?;
@@ -525,6 +560,7 @@ mod tests {
             auth: AuthMethod::Password { credential_id },
             group_id: Some(group.id),
             tags: vec![],
+            terminal_theme: None,
         };
         store.save_profile(&profile).unwrap();
 
@@ -540,6 +576,7 @@ mod tests {
             auth: AuthMethod::Password { credential_id: Uuid::new_v4() },
             group_id: None,
             tags: vec![],
+            terminal_theme: None,
         };
         store.save_profile(&untouched).unwrap();
 
@@ -553,5 +590,61 @@ mod tests {
             matches!(store.read_secret(credential_id), Err(VaultError::Database(_))),
             "password terenkripsi host yang terhapus harus ikut dibersihkan, bukan nyangkut"
         );
+    }
+
+    /// Bukti langsung fitur "tema per-host lintas restart": `terminal_
+    /// theme` harus ikut ke-roundtrip lewat `save_profile`/`list_all_
+    /// profiles` persis kolom lain, TERMASUK simulasi vault LAMA (dibuat
+    /// sebelum kolom ini ada) yang di-buka ulang lewat `open_at` — buat
+    /// buktikan migrasi `ALTER TABLE ADD COLUMN` (`add_column_if_
+    /// missing`) beneran idempotent & tidak merusak data lama.
+    #[test]
+    fn terminal_theme_persist_lintas_buka_ulang_vault() {
+        // Sama pola dengan `temp_store()` (bukan lewat helper itu
+        // langsung) karena test ini butuh PATH-nya juga buat `open_at`
+        // ULANG beberapa kali (simulasi restart app) — `temp_store()`
+        // sendiri tidak mengembalikan path-nya.
+        let db_path = std::env::temp_dir().join(format!("terminus-vault-test-{}.db", Uuid::new_v4()));
+
+        let mut store = VaultStore::open_at(db_path.clone()).unwrap();
+        store.initialize("password-kuat-123").unwrap();
+        let credential_id = Uuid::new_v4();
+        store.store_secret(credential_id, b"secret").unwrap();
+        let profile = HostProfile {
+            id: Uuid::new_v4(),
+            label: "router-core".into(),
+            host: "10.1.1.1".into(),
+            port: 22,
+            username: "admin".into(),
+            kind: ConnectionKind::Ssh,
+            auth: AuthMethod::Password { credential_id },
+            group_id: None,
+            tags: vec![],
+            terminal_theme: None,
+        };
+        store.save_profile(&profile).unwrap();
+        drop(store);
+
+        // "Buka ulang" vault ala restart app — profil BELUM punya tema
+        // (`None`), sama seperti host yang belum pernah eksplisit ganti
+        // tema.
+        let mut store = VaultStore::open_at(db_path.clone()).unwrap();
+        let loaded = store.list_all_profiles().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].terminal_theme, None, "tema belum pernah diset, harus None");
+
+        // Simulasikan user ganti tema (persis alur `on_terminal_theme_
+        // changed` di crates/app/src/state.rs) lalu simpan ulang profil.
+        let mut updated = loaded[0].clone();
+        updated.terminal_theme = Some("Solarized Dark".to_string());
+        store.save_profile(&updated).unwrap();
+        drop(store);
+
+        // Buka ulang LAGI — tema harus tetap "Solarized Dark", bukti
+        // fitur ini beneran lintas restart (bukan cuma in-memory).
+        let store = VaultStore::open_at(db_path).unwrap();
+        let reloaded = store.list_all_profiles().unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].terminal_theme.as_deref(), Some("Solarized Dark"));
     }
 }

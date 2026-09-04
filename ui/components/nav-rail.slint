@@ -71,6 +71,12 @@ component NavItem inherits Rectangle {
 export component NavRail inherits Rectangle {
     in property <int> current-page: 0;
     callback page-selected(int);
+    // Klik "Documentation" — buka situs dokumentasi (link web, bukan
+    // halaman di dalam app) lewat browser default sistem. NavRail
+    // sendiri TIDAK tahu caranya buka browser (itu kerja Rust, lewat
+    // crate `open`) — cuma mancarin callback ini ke atas
+    // (`app-window.slint`), yang teruskan ke Rust.
+    callback documentation-clicked();
 
     width: Tokens.sidebar-width;
     background: Tokens.surface-container-lowest;
@@ -164,10 +170,9 @@ export component NavRail inherits Rectangle {
         Rectangle { height: 4px; }
 
         // "Settings" SENGAJA dihapus juga (atas permintaan user) —
-        // cuma "Documentation" yang disisakan. Klik-nya nanti buka
-        // halaman web dokumentasi (terminus.github.io) — user SENGAJA
-        // minta itu "belakangan" (belum sekarang), jadi belum ada
-        // callback/URL-opener di sini, murni nav item nongkrong dulu.
+        // cuma "Documentation" yang disisakan. Klik-nya buka halaman
+        // web dokumentasi (terminus.github.io) lewat browser default
+        // sistem — lihat `documentation-clicked` di atas.
         // `active: false` PERMANEN artinya `icon-color` (lihat
         // `NavBadge`) selalu pakai `on-surface-variant` — warna abu2
         // terang yang KONSISTEN, bukan emoji 📖 berwarna cokelat/kuning
@@ -176,6 +181,7 @@ export component NavRail inherits Rectangle {
             icon-kind: "book";
             label: "Documentation";
             active: false;
+            clicked => { root.documentation-clicked(); }
         }
     }
 }

@@ -49,7 +49,7 @@ tanpa peringatan Gatekeeper butuh Apple Developer ID.
 ## Windows (`.exe`, `.zip`) — WAJIB dijalankan di Windows asli
 
 **Tidak bisa dibangun dari Linux/macOS** — link ke toolchain MSVC yang
-cuma ada di Windows (lihat [Instalasi](../getting-started/)). Di
+cuma ada di Windows (lihat [Instalasi](#getting-started)). Di
 Windows (PowerShell), atau runner CI `windows-latest`:
 
 ```powershell

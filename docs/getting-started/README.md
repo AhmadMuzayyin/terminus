@@ -92,4 +92,4 @@ mau match persis; headline tetap terbaca jelas tanpa itu.
 
 ## Selanjutnya
 
-Setelah semua terpasang, lanjut ke **[Menjalankan Aplikasi](../usage/)**.
+Setelah semua terpasang, lanjut ke **[Menjalankan Aplikasi](#usage)**.

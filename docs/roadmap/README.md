@@ -37,5 +37,5 @@
    baru, tanpa isi ulang dari nol tiap kali.
 5. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
 
-Lihat **[Berkontribusi](../contributing/)** untuk cara mulai bantu
+Lihat **[Berkontribusi](#contributing)** untuk cara mulai bantu
 kerjakan salah satunya.

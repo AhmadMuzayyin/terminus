@@ -47,4 +47,4 @@ slint-viewer --screenshot out.png ui/app-window.slint
    terdeteksi + baud rate → `Connect` — untuk akses kabel console fisik
    ke perangkat jaringan (switch/router/access point).
 
-Detail tiap fitur ada di halaman **[Fitur](../features/)**.
+Detail tiap fitur ada di halaman **[Fitur](#features)**.

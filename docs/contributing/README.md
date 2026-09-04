@@ -13,9 +13,9 @@ di root repo; ringkasannya di bawah.
    langsung ke `main`).
 2. Jalankan `cargo build --workspace` dan `cargo test --workspace`
    sebelum membuka PR — pastikan keduanya hijau (lihat
-   **[Testing](../testing/)**).
+   **[Testing](#testing)**).
 3. Kalau mengubah file `.slint`, jalankan `slint-viewer --check
-   ui/app-window.slint` juga (lihat **[Menjalankan Aplikasi](../usage/)**).
+   ui/app-window.slint` juga (lihat **[Menjalankan Aplikasi](#usage)**).
 4. Ikuti konvensi yang sudah ada di kode:
    - Komentar ditulis dalam **Bahasa Indonesia**, fokus menjelaskan
      **kenapa** suatu keputusan diambil (bukan cuma mengulang apa yang
@@ -23,7 +23,7 @@ di root repo; ringkasannya di bawah.
    - Jangan tulis warna/spacing/radius literal di `.slint` — selalu
      lewat `global Tokens` (`ui/tokens.slint`).
    - Jaga arah dependency antar crate tetap searah (lihat
-     **[Arsitektur](../architecture/)**) — jangan sampai `core` depend
+     **[Arsitektur](#architecture)**) — jangan sampai `core` depend
      balik ke crate lain.
    - Kredensial/secret tidak boleh mendarat di `core` atau logging
      mana pun — hanya lewat `terminus-vault`.

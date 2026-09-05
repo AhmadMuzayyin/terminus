@@ -1,0 +1,30 @@
+# Contoh self-host: `docker compose up` di folder ini langsung
+# menyalakan MySQL + terminus-server, tinggal isi `.env` dulu (copy dari
+# `.env.example`). Kalau MySQL-nya sudah ada sendiri (mis. container
+# terpisah), cukup jalankan service `server` saja dan arahkan
+# DATABASE_URL ke situ, tidak wajib pakai service `mysql` di sini.
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: terminus_backend
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-4000}:4000"
+
+volumes:
+  mysql-data:

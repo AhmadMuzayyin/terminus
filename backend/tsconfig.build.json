@@ -1,0 +1,12 @@
+// Dipakai KHUSUS `npm run build` (`tsc -p tsconfig.build.json`) — beda
+// dari `tsconfig.json` (dipakai editor/vitest, mencakup `src/` DAN
+// `tests/`), file ini sengaja CUMA compile `src/` (kode yang benar-benar
+// jadi bagian image runtime). Test tidak pernah perlu di-`tsc`-build,
+// vitest transpile TypeScript sendiri (esbuild) waktu jalan.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

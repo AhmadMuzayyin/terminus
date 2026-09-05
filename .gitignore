@@ -15,6 +15,14 @@
 .DS_Store
 build
 
+# Backend API (Node.js, lihat backend/DESIGN.md) — dependency terinstal
+# & hasil build, JANGAN ikut ke-commit. `.env` isinya secret asli
+# (SERVER_MASTER_KEY/JWT_SECRET/kredensial DB) — cuma `.env.example`
+# (template tanpa nilai asli) yang boleh ke-commit.
+/backend/node_modules/
+/backend/dist/
+/backend/.env
+
 # Tool packaging pihak ketiga (linuxdeploy/appimagetool) yang
 # didownload otomatis oleh `packaging/linux/build-appimage.sh` —
 # binary besar, bukan bagian source proyek, jangan ikut ke-commit.

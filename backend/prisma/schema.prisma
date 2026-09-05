@@ -1,0 +1,146 @@
+// Skema database — lihat backend/DESIGN.md bagian 4 buat penjelasan
+// tiap tabel & alasan desainnya. Field host_profiles/host_groups/
+// identities SENGAJA sejajar nama & makna dengan struct Rust
+// terminus-core (HostProfile/HostGroup/Identity) supaya mapping
+// JSON API <-> struct itu 1:1.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  ownedVaults   Vault[]        @relation("VaultOwner")
+  memberships   VaultMember[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+// Satu vault = satu unit yang bisa dipakai personal (cuma owner jadi
+// member) ATAU tim (banyak member) — lihat DESIGN.md bagian 1 & 5.3.
+model Vault {
+  id          String   @id @default(uuid())
+  name        String
+  ownerUserId String   @map("owner_user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  owner       User          @relation("VaultOwner", fields: [ownerUserId], references: [id])
+  members     VaultMember[]
+  hostGroups  HostGroup[]
+  hosts       HostProfile[]
+  identities  Identity[]
+  secrets     Secret[]
+
+  @@map("vaults")
+}
+
+enum VaultRole {
+  owner
+  member
+}
+
+// RBAC sederhana v1: cuma 2 role, belum ada permission granular per
+// resource di dalam satu vault (lihat DESIGN.md bagian 7, "di luar
+// scope sekarang").
+model VaultMember {
+  vaultId   String    @map("vault_id")
+  userId    String    @map("user_id")
+  role      VaultRole
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([vaultId, userId])
+  @@map("vault_members")
+}
+
+// Mirror terminus_core::HostGroup + vaultId.
+model HostGroup {
+  id       String  @id @default(uuid())
+  vaultId  String  @map("vault_id")
+  name     String
+  subtitle String?
+  parentId String? @map("parent_id")
+
+  vault Vault         @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  hosts HostProfile[]
+
+  @@map("host_groups")
+}
+
+// Mirror terminus_core::HostProfile + vaultId. Field-field ini
+// PLAINTEXT (sama seperti SQLite lokal sekarang) — cuma password yang
+// lewat tabel Secret terpisah (lihat DESIGN.md bagian 5.4/5.5).
+model HostProfile {
+  id            String  @id @default(uuid())
+  vaultId       String  @map("vault_id")
+  label         String
+  host          String
+  port          Int
+  username      String
+  kind          String // "ssh" | "cisco_ios" — string biasa, sama alasan dengan terminus_core::export::json::BackupHost.kind
+  authMethod    String  @map("auth_method") // "password" | "private_key" | "agent"
+  credentialId  String? @map("credential_id")
+  groupId       String? @map("group_id")
+  tags          String  @default("[]") // JSON array, sama pola dengan kolom `tags` di terminus-vault::store
+  terminalTheme String? @map("terminal_theme")
+
+  vault Vault      @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  group HostGroup? @relation(fields: [groupId], references: [id])
+
+  @@map("host_profiles")
+}
+
+// Mirror terminus_core::Identity + vaultId.
+model Identity {
+  id           String @id @default(uuid())
+  vaultId      String @map("vault_id")
+  label        String
+  username     String
+  credentialId String @map("credential_id")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@map("identities")
+}
+
+// Password host, TERENKRIPSI (ChaCha20-Poly1305 + SERVER_MASTER_KEY,
+// lihat src/crypto/secrets.ts) — encryptedData TIDAK PERNAH plaintext.
+// credentialId di sini SENGAJA bukan foreign key formal ke HostProfile/
+// Identity (sama pola dengan tabel `secrets` di terminus-vault lokal:
+// credential_id "menggantung" tanpa constraint, karena satu credential
+// bisa dipakai bareng HostProfile ATAU Identity, tidak keduanya
+// eksplisit lewat FK).
+model Secret {
+  credentialId  String @id @map("credential_id")
+  vaultId       String @map("vault_id")
+  encryptedData Bytes  @map("encrypted_data")
+
+  vault Vault @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+
+  @@map("secrets")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}

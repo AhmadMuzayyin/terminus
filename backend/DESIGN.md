@@ -82,7 +82,7 @@ backend/
       tokens.ts               # generate/verify access token (JWT) + refresh token (random+hash)
     middleware/
       auth.ts                 # requireAuth: verifikasi JWT dari header Authorization, isi req.user
-      vaultAccess.ts           # requireVaultMember: cek req.user anggota :vaultId di URL
+      vaultAccess.ts           # validateVaultIdParam (cek format UUID SEBELUM query DB) -> requireVaultMember (cek req.user anggota :vaultId) -> requireVaultOwner (cek role owner)
       validate.ts              # bungkus skema zod jadi middleware validasi
       errorHandler.ts          # error handler terpusat -> response JSON konsisten
     utils/
@@ -203,16 +203,28 @@ dikembalikan PLAINTEXT lewat endpoint-endpoint ini — cukup diamankan
 lewat HTTPS in-transit + auth, sama seperti metadata plaintext di
 SQLite lokal sekarang.
 
-### 5.5 Password host (secret)
+### 5.5 Password host & identity (secret)
 - `PUT /api/v1/vaults/:vaultId/hosts/:id/secret` (body: `{ password }`)
   → server enkripsi (`crypto/secrets.ts`) → simpan ke `secrets.
-  encrypted_data`.
+  encrypted_data`. Host BOLEH dibuat tanpa password dulu
+  (`credentialId` selalu digenerate waktu create, "menggantung" tanpa
+  baris `secrets` — mirror host hasil Import SecureCRT desktop app).
 - `GET /api/v1/vaults/:vaultId/hosts/:id/secret` → server dekripsi →
   balikin plaintext SEKALI PAKAI ke client lewat HTTPS (dipanggil app
   cuma waktu benar-benar mau connect SSH, mirror `vault.read_secret`
   di desktop app sekarang) — TIDAK PERNAH ikut di response list/GET
-  host biasa (supaya password tidak ke-fetch tanpa perlu tiap kali
-  render daftar host).
+  host biasa (`hasPassword: boolean` doang yang ikut di situ).
+- **Identity BEDA dari host**: password-nya WAJIB ikut langsung di
+  body `POST .../identities` (dan opsional di `PUT` — kosongkan berarti
+  tidak diubah), BUKAN via endpoint secret terpisah kayak host —
+  Identity tanpa password tidak ada gunanya sama sekali (mirror
+  `terminus_core::Identity` + alur `identity-create-requested` desktop
+  app yang SELALU satu langkah). Tetap ada `GET
+  .../identities/:id/secret` buat client baca-balik plaintext-nya
+  (dipakai waktu "pick identity" ngisi form host baru, mirror
+  `on_identity_picked` desktop app) — detail ini TIDAK eksplisit
+  disebut di draft awal bagian ini, diputuskan waktu Milestone 4
+  dikerjakan.
 
 ## 6. Urutan Pengerjaan (Milestone)
 
@@ -239,8 +251,19 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    ke user itu sebagai owner — setiap suite test SEKARANG WAJIB bersih-
    bersih fixture-nya sendiri di `afterAll`, bukan cuma `beforeAll`,
    biar tidak saling ganggu database sungguhan yang dipakai bareng.
-4. **Hosts/Groups/Identities module** — CRUD penuh + endpoint secret +
-   test.
+4. ✅ **Hosts/Groups/Identities module** — CRUD penuh + endpoint secret,
+   diverifikasi lawan MySQL sungguhan (53 test + curl manual end-to-end:
+   vault→group→host→set/get secret→identity→get secret→cascade
+   delete). Hapus grup MENCABUT semua host di dalamnya BESERTA
+   password-nya (cascade), MIRROR PERSIS `VaultStore::delete_group` di
+   desktop app. Nambah `src/crypto/secrets.ts` (ChaCha20-Poly1305 lewat
+   `node:crypto`, sudah direncanakan sejak Milestone 1 tapi baru
+   ditulis sekarang) dan `validateVaultIdParam` di `vaultAccess.ts` —
+   DITEMUKAN waktu dikerjakan: `requireVaultMember` di-mount di level
+   app.use() (SEBELUM `validate()` per-route di hosts/groups/identities,
+   beda dari modul vaults), jadi vaultId asal-asalan jatuh ke DB query
+   dulu (403 "bukan anggota") alih-alih ditolak validasi (400) —
+   sekarang divalidasi formatnya duluan.
 5. **Docker packaging final** — pastikan `docker compose up` dari nol
    beneran jalan end-to-end (dites manual).
 

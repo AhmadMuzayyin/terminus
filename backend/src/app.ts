@@ -8,7 +8,12 @@ import express, { type Express } from "express";
 
 import { prisma } from "./db/client.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { requireAuth } from "./middleware/auth.js";
+import { requireVaultMember, validateVaultIdParam } from "./middleware/vaultAccess.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { groupsRouter } from "./modules/groups/groups.routes.js";
+import { hostsRouter } from "./modules/hosts/hosts.routes.js";
+import { identitiesRouter } from "./modules/identities/identities.routes.js";
 import { vaultsRouter } from "./modules/vaults/vaults.routes.js";
 
 export function createApp(): Express {
@@ -32,6 +37,32 @@ export function createApp(): Express {
 
   app.use("/api/v1/auth", authRouter);
   app.use("/api/v1/vaults", vaultsRouter);
+  // Hosts/groups/identities SEMUA butuh login DAN keanggotaan vault
+  // yang ditunjuk `:vaultId` di path-nya — dipasang sekali di sini
+  // (mount-level), bukan diulang di tiap route dalam masing-masing
+  // router (yang sudah `mergeParams: true` buat bisa baca `:vaultId`
+  // parent ini).
+  app.use(
+    "/api/v1/vaults/:vaultId/hosts",
+    requireAuth,
+    validateVaultIdParam,
+    requireVaultMember,
+    hostsRouter,
+  );
+  app.use(
+    "/api/v1/vaults/:vaultId/groups",
+    requireAuth,
+    validateVaultIdParam,
+    requireVaultMember,
+    groupsRouter,
+  );
+  app.use(
+    "/api/v1/vaults/:vaultId/identities",
+    requireAuth,
+    validateVaultIdParam,
+    requireVaultMember,
+    identitiesRouter,
+  );
 
   // WAJIB PALING TERAKHIR — Express nentuin ini "error handler" cuma
   // dari arity 4 parameter (err, req, res, next), bukan dari nama atau

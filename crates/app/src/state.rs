@@ -20,10 +20,10 @@
 
 use crate::host_key_store::AppHostKeyStore;
 use crate::{
-    console, AppWindow, ConnectingModel, ConsoleModel, FileEntry, GroupItem, HostItem, HostsModel, NewHostForm,
-    SftpModel, TermRow, TerminalTab, TerminalTabsModel, VaultModel,
+    console, AppWindow, ConnectingModel, ConsoleModel, FileEntry, GroupItem, HostItem, HostsModel, IdentityItem,
+    NewHostForm, SftpModel, TermRow, TerminalTab, TerminalTabsModel, VaultModel,
 };
-use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile};
+use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile, Identity};
 use terminus_serial_engine::{SerialOutputEvent, SerialPortEntry, SerialSession};
 use terminus_sftp_engine::{RemoteEntry, SftpBrowser, SftpError};
 use terminus_ssh_engine::{HostKeyStore, SecretMaterial, SshOutputEvent, SshSession};
@@ -456,6 +456,101 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     }
                 });
             });
+        });
+    }
+
+    // --- Identity tersimpan (pasangan username+password TERPISAH dari
+    //     host, lihat `terminus_core::Identity`) — dikelola lewat
+    //     `IdentitiesDialog` (`dialogs.slint`). ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<HostsModel>().on_identity_create_requested(
+            move |label: slint::SharedString, username: slint::SharedString, password: slint::SharedString| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                if ui.global::<HostsModel>().get_identities_busy() {
+                    return;
+                }
+                ui.global::<HostsModel>().set_identities_busy(true);
+
+                let identity =
+                    Identity { id: Uuid::new_v4(), label: label.to_string(), username: username.to_string(), credential_id: Uuid::new_v4() };
+                let password_bytes = password.as_bytes().to_vec();
+
+                let vault = state.vault.clone();
+                let ui_weak_task = ui_weak.clone();
+                let state_task = state.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        let mut vault = vault.lock().unwrap();
+                        vault.store_secret(identity.credential_id, &password_bytes)?;
+                        vault.save_identity(&identity)
+                    })
+                    .await
+                    .expect("blocking task panik");
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui_weak_task.upgrade() else { return };
+                        ui.global::<HostsModel>().set_identities_busy(false);
+                        match result {
+                            Ok(()) => refresh_hosts_model(&ui, &state_task),
+                            Err(e) => show_notice(&ui, &format!("Gagal simpan identity: {e}"), true),
+                        }
+                    });
+                });
+            },
+        );
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<HostsModel>().on_identity_delete_requested(move |identity_id: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Ok(uuid) = Uuid::parse_str(&identity_id) else { return };
+            if ui.global::<HostsModel>().get_identities_busy() {
+                return;
+            }
+            ui.global::<HostsModel>().set_identities_busy(true);
+
+            let vault = state.vault.clone();
+            let ui_weak_task = ui_weak.clone();
+            let state_task = state.clone();
+            tokio::spawn(async move {
+                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().delete_identity(uuid))
+                    .await
+                    .expect("blocking task panik");
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_task.upgrade() else { return };
+                    ui.global::<HostsModel>().set_identities_busy(false);
+                    match result {
+                        Ok(()) => refresh_hosts_model(&ui, &state_task),
+                        Err(e) => show_notice(&ui, &format!("Gagal hapus identity: {e}"), true),
+                    }
+                });
+            });
+        });
+    }
+    // Pilih satu identity di picker `HostSlideOver` (mode "New Host") —
+    // baca cepat + dekripsi (vault SUDAH unlocked, tidak perlu Argon2id
+    // ulang, cukup ChaCha20-Poly1305 instan) langsung SINKRON, sama pola
+    // dengan `on_group_opened` di atas (bukan mutasi, tidak butuh state
+    // loading async).
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<HostsModel>().on_identity_picked(move |identity_id: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Ok(uuid) = Uuid::parse_str(&identity_id) else { return };
+            let vault = state.vault.lock().unwrap();
+            let Some(identity) = vault.list_identities().ok().and_then(|list| list.into_iter().find(|i| i.id == uuid))
+            else {
+                return;
+            };
+            let Ok(password) = vault.read_secret(identity.credential_id) else { return };
+            drop(vault);
+            ui.global::<HostsModel>().set_panel_host_username(identity.username.into());
+            ui.global::<HostsModel>().set_panel_host_password(String::from_utf8_lossy(&password).into_owned().into());
         });
     }
 
@@ -3569,14 +3664,30 @@ fn host_profile_to_item(state: &Arc<AppState>, p: &HostProfile) -> HostItem {
 /// mutasi parsial per-item, lebih gampang dijaga konsistensinya untuk
 /// ukuran data yang wajar (daftar host personal, bukan ribuan baris).
 fn refresh_hosts_model(ui: &AppWindow, state: &Arc<AppState>) {
-    let (ungrouped, groups, all) = {
+    let (ungrouped, groups, all, identities) = {
         let vault = state.vault.lock().unwrap();
         (
             vault.list_ungrouped_profiles().unwrap_or_default(),
             vault.list_groups().unwrap_or_default(),
             vault.list_all_profiles().unwrap_or_default(),
+            vault.list_identities().unwrap_or_default(),
         )
     };
+
+    // Identity tersimpan — dua model SEJAJAR index-nya (lihat komentar
+    // `HostsModel.identity-labels`): satu array `IdentityItem` (dipakai
+    // `IdentitiesDialog` buat render + `identity-delete-requested`),
+    // satu lagi array label string polos siap pakai `ComboBox.model` di
+    // `host-panel.slint` (Slint sendiri tidak bisa derive itu dari yang
+    // pertama, tidak ada array-comprehension expression).
+    let identity_labels: Vec<slint::SharedString> =
+        identities.iter().map(|i| format!("{} ({})", i.label, i.username).into()).collect();
+    let identity_items: Vec<IdentityItem> = identities
+        .iter()
+        .map(|i| IdentityItem { id: i.id.to_string().into(), label: i.label.clone().into(), username: i.username.clone().into() })
+        .collect();
+    ui.global::<HostsModel>().set_identities(ModelRc::new(VecModel::from(identity_items)));
+    ui.global::<HostsModel>().set_identity_labels(ModelRc::new(VecModel::from(identity_labels)));
 
     let ungrouped_items: Vec<HostItem> = ungrouped.iter().map(|p| host_profile_to_item(state, p)).collect();
     ui.global::<HostsModel>().set_ungrouped_hosts(ModelRc::new(VecModel::from(ungrouped_items)));
@@ -4175,6 +4286,39 @@ mod tests {
             )
             .await;
             assert!(ui.global::<HostsModel>().get_notice_is_error(), "connect ke port yang tidak ada harus gagal");
+
+            // --- Identity tersimpan: create -> muncul di list (dengan
+            // label tampilan "Label (username)" SEJAJAR) -> dipilih dari
+            // picker (mode "New Host") isi otomatis panel_host_username/
+            // panel_host_password -> delete -> hilang lagi. ---
+            ui.global::<HostsModel>().invoke_identity_create_requested(
+                "NOC Router".into(),
+                "bro-noc".into(),
+                "secret-identity-pw".into(),
+            );
+            wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 1, "identity tersimpan muncul")
+                .await;
+            let identity_item = ui.global::<HostsModel>().get_identities().row_data(0).unwrap();
+            assert_eq!(identity_item.label, "NOC Router");
+            assert_eq!(identity_item.username, "bro-noc");
+            assert_eq!(
+                ui.global::<HostsModel>().get_identity_labels().row_data(0).unwrap(),
+                "NOC Router (bro-noc)",
+                "identity_labels harus SEJAJAR index dengan identities"
+            );
+
+            ui.global::<HostsModel>().invoke_open_create_panel();
+            assert!(ui.global::<HostsModel>().get_panel_is_new(), "harus mode New Host");
+            assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "", "field harus kosong sebelum dipilih");
+
+            ui.global::<HostsModel>().invoke_identity_picked(identity_item.id.clone());
+            // Sinkron (bukan `tokio::spawn`, lihat komentar handler-nya) —
+            // efeknya harus LANGSUNG kelihatan tanpa `wait_until`.
+            assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "bro-noc");
+            assert_eq!(ui.global::<HostsModel>().get_panel_host_password(), "secret-identity-pw");
+
+            ui.global::<HostsModel>().invoke_identity_delete_requested(identity_item.id.clone());
+            wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 0, "identity terhapus").await;
 
             // --- Bagian 2: unlock dengan password salah ditolak ---
             // Digabung ke test yang sama (bukan #[test] terpisah) karena

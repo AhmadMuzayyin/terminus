@@ -67,6 +67,27 @@ pub struct HostGroup {
     pub parent_id: Option<Uuid>,
 }
 
+/// Kredensial tersimpan TERPISAH dari host — pasangan username+password
+/// yang bisa dipilih ulang waktu bikin host baru (isi otomatis field
+/// Username/Password di panel, lihat `on_identity_picked` di
+/// `crates/app/src/state.rs`) supaya tidak perlu ketik ulang dari nol
+/// tiap kali nambah host yang pakai kredensial sama (mis. banyak router
+/// dengan user/password NOC yang sama). BUKAN referensi hidup — begitu
+/// dipilih, nilainya di-COPY ke form host baru (`credential_id` host itu
+/// SENDIRI, terpisah dari punya Identity ini), jadi hapus/ubah Identity
+/// nanti TIDAK memengaruhi host yang sudah dibuat dari situ (sama
+/// filosofi dengan "Duplicate host" — deep copy, bukan share reference).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Identity {
+    pub id: Uuid,
+    pub label: String,
+    pub username: String,
+    /// Referensi ke password terenkripsi di `terminus-vault` — SAMA
+    /// mekanisme dengan `HostProfile::auth` (`AuthMethod::Password`),
+    /// bukan disimpan plaintext di sini.
+    pub credential_id: Uuid,
+}
+
 /// State satu sesi yang sedang aktif (dipakai UI buat render tab).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {

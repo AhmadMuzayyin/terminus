@@ -383,6 +383,10 @@ export component PageHosts inherits Rectangle {
                 label: "Export JSON";
                 clicked => { HostsModel.show-export-json-dialog = true; }
             }
+            ToolbarButton {
+                label: "Identities";
+                clicked => { HostsModel.show-identities-dialog = true; }
+            }
             ToolbarButton { label: "Serial"; }
             // Bulk delete — cuma nongol waktu ada checkbox yang
             // dicentang (lihat komentar `HostsModel.host-selection-

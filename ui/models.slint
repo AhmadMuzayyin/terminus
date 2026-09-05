@@ -1,4 +1,4 @@
-import { HostItem, GroupItem, FileEntry } from "./components/cards.slint";
+import { HostItem, GroupItem, FileEntry, IdentityItem } from "./components/cards.slint";
 
 // Data form host, dipakai buat create (New Host) MAUPUN save (panel
 // detail host) — dikirim satu kali daripada banyak argumen posisional
@@ -151,6 +151,11 @@ export global HostsModel {
     in-out property <string> panel-host-group-id: "";
     in-out property <string> panel-host-tags: ""; // dipisah koma
     in-out property <string> panel-host-status: "";
+    // Diisi HANYA lewat `identity-picked` (lihat blok Identity di bawah)
+    // waktu `panel-is-new` — password host BARU biasanya diketik manual
+    // (field ini kosong), TIDAK PERNAH dibaca ulang dari vault (beda
+    // dari `panel-host-username` yang juga dipakai mode edit).
+    in-out property <string> panel-host-password: "";
 
     // Buka slide-over dalam mode "New Host": reset semua field
     // `panel-host-*` ke kosong/default (BUKAN baca vault — memang
@@ -163,6 +168,7 @@ export global HostsModel {
         panel-host-host = "";
         panel-host-port = 22;
         panel-host-username = "";
+        panel-host-password = "";
         panel-host-kind = "ssh";
         panel-host-group-id = "";
         panel-host-tags = "";
@@ -170,6 +176,35 @@ export global HostsModel {
         panel-is-new = true;
         panel-visible = true;
     }
+
+    // --- Identity tersimpan (pasangan username+password TERPISAH dari
+    //     host, lihat `terminus_core::Identity`) — dikelola lewat
+    //     dialog terpisah (`IdentitiesDialog`, `dialogs.slint`), dipilih
+    //     dari `HostSlideOver` waktu `panel-is-new` buat isi otomatis
+    //     `panel-host-username`/`panel-host-password` (lihat komentar
+    //     `on_identity_picked` di `crates/app/src/state.rs` soal kenapa
+    //     ini BUKAN referensi hidup, cuma di-copy sekali). Daftar ini
+    //     ikut di-refresh `refresh_hosts_model` (sama seperti `groups`
+    //     di atas) — SELALU siap dipakai `HostSlideOver` tanpa perlu
+    //     trigger "on dialog opened" terpisah. ---
+    in-out property <[IdentityItem]> identities: [];
+    // Label tampilan "Label (username)" per identity, index SEJAJAR
+    // persis dengan `identities` di atas (diisi bareng-bareng Rust di
+    // `refresh_hosts_model`) — dibangun di Rust, bukan Slint, karena
+    // Slint tidak punya array-comprehension expression (cuma bisa `for`
+    // buat REPETISI elemen UI, bukan membangun nilai array baru) buat
+    // derive "Label (username)" dari `[IdentityItem]` langsung di sisi
+    // `host-panel.slint`. Dipakai sebagai `model:` picker `ComboBox` di
+    // sana, index hasil pilihnya dipakai balik ke `identities[index].id`.
+    in-out property <[string]> identity-labels: [];
+    in-out property <bool> show-identities-dialog: false;
+    in-out property <bool> identities-busy: false;
+    callback identity-create-requested(string /* label */, string /* username */, string /* password */);
+    callback identity-delete-requested(string /* identity id */);
+    // Dipanggil `HostSlideOver` waktu satu identity dipilih dari
+    // picker-nya — Rust yang baca+dekripsi password-nya lalu isi
+    // `panel-host-username`/`panel-host-password` di atas.
+    callback identity-picked(string /* identity id */);
 
     // Notifikasi terakhir (mis. "gagal connect", "host key berubah") —
     // ditampilkan sebagai toast kecil di app-window.slint. Rust yang

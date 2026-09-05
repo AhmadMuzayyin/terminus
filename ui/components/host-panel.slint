@@ -1,4 +1,4 @@
-import { ScrollView, SpinBox } from "std-widgets.slint";
+import { ScrollView, SpinBox, ComboBox } from "std-widgets.slint";
 import { Tokens } from "../tokens.slint";
 import { HostsModel, NewHostForm } from "../models.slint";
 import { DialogField, DialogButton, GroupChipPicker } from "./dialogs.slint";
@@ -150,6 +150,39 @@ export component HostSlideOver inherits Rectangle {
 
             Rectangle { height: 1px; background: Tokens.outline-variant; }
 
+            // Picker "Identity Tersimpan" — CUMA mode "New Host". Pilih
+            // satu isi otomatis Username/Password di bawah (Rust yang
+            // baca+dekripsi lewat `on_identity_picked`, lihat
+            // `HostsModel.identity-picked`). Tidak tampil di mode edit
+            // host — field Password biasa (kosongkan = tidak diubah)
+            // sudah cukup buat itu, picker ini gampang salah pencet
+            // kalau dipakai buat host yang SUDAH ada.
+            if HostsModel.panel-is-new && HostsModel.identities.length > 0 : VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "Isi dari Identity Tersimpan (opsional)";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                }
+                ComboBox {
+                    // Label tampilan ("Label (username)") sudah dibangun
+                    // Rust di `HostsModel.identity-labels` — index-nya
+                    // SEJAJAR persis dengan `HostsModel.identities`
+                    // (diisi bareng-bareng di `refresh_hosts_model`),
+                    // dipakai balik buat resolve `.id` waktu dipilih.
+                    // (Slint tidak punya array-comprehension expression
+                    // buat derive ini di sisi Slint sendiri.)
+                    model: HostsModel.identity-labels;
+                    current-index: -1;
+                    selected(text) => {
+                        if self.current-index >= 0 {
+                            HostsModel.identity-picked(HostsModel.identities[self.current-index].id);
+                        }
+                    }
+                }
+            }
+
             label-field := DialogField {
                 label-text: "Label";
                 placeholder: "mis. prod-web-01";
@@ -170,6 +203,7 @@ export component HostSlideOver inherits Rectangle {
                 label-text: "Password";
                 placeholder: HostsModel.panel-is-new ? "••••••••" : "(kosongkan supaya tidak diubah)";
                 is-password: true;
+                initial-value: HostsModel.panel-host-password;
             }
             tags-field := DialogField {
                 label-text: "Tags";

@@ -389,6 +389,9 @@ cargo build --workspace   # pastikan hijau lagi
   ter-export bertingkat, password sengaja TIDAK ikut, sama seperti Import)
 - ✅ Export backup JSON TERMASUK password, dienkripsi Argon2id+ChaCha20-Poly1305 pakai
   passphrase backup terpisah (bukan master password vault)
+- ✅ Identity tersimpan (pasangan username+password terpisah dari host) — dikelola lewat
+  dialog "Identities", dipilih dari panel "New Host" buat isi otomatis (deep copy, bukan
+  referensi hidup)
 
 **Batasan saat ini:**
 
@@ -400,10 +403,7 @@ cargo build --workspace   # pastikan hijau lagi
 
 **Rencana selanjutnya:**
 
-1. **Identity tersimpan** (pasangan username+password terpisah dari
-   host) — bisa dipakai ulang sebagai kredensial waktu menambah host
-   baru, tanpa isi ulang dari nol tiap kali.
-2. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
+1. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
 
 ## Berkontribusi
 

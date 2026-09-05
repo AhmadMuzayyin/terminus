@@ -492,3 +492,143 @@ export component ExportJsonDialog inherits DialogScrim {
         }
     }
 }
+
+// Dialog "Identity Tersimpan" — kelola (list/tambah/hapus) pasangan
+// username+password reusable, lihat `terminus_core::Identity`. Bukan
+// tempat MEMILIH identity buat host baru (itu picker terpisah di
+// `HostSlideOver`, `host-panel.slint`) — dialog ini murni manajemen
+// datanya sendiri, dibuka dari toolbar Hosts.
+export component IdentitiesDialog inherits DialogScrim {
+    card := DialogCard {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 6;
+        height: 480px;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            HorizontalLayout {
+                Text {
+                    text: "Identity Tersimpan";
+                    color: Tokens.on-surface;
+                    font-family: Tokens.font-headline;
+                    font-size: Tokens.text-headline-md;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                }
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: close-touch.pressed ? Tokens.surface-container-high.darker(10%) : close-touch.has-hover ? Tokens.surface-container-high : transparent;
+                    Text {
+                        text: "×";
+                        color: Tokens.on-surface-variant;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    close-touch := TouchArea { clicked => { HostsModel.show-identities-dialog = false; } }
+                }
+            }
+            Text {
+                text: "Kredensial username+password reusable — pilih salah satu waktu bikin host baru, tanpa isi ulang dari nol tiap kali.";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            ScrollView {
+                height: 160px;
+                VerticalLayout {
+                    spacing: 4px;
+                    if HostsModel.identities.length == 0 : Text {
+                        text: "Belum ada identity tersimpan.";
+                        color: Tokens.outline;
+                        font-family: Tokens.font-body;
+                        font-size: 12px;
+                    }
+                    for identity in HostsModel.identities : Rectangle {
+                        height: 40px;
+                        border-radius: Tokens.radius-default;
+                        background: Tokens.surface-container;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 6px;
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: identity.label;
+                                    color: Tokens.on-surface;
+                                    font-family: Tokens.font-body;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: identity.username;
+                                    color: Tokens.on-surface-variant;
+                                    font-family: Tokens.font-mono;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            Rectangle {
+                                width: 26px;
+                                height: 26px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: Tokens.radius-sm;
+                                background: del-touch.pressed ? Tokens.error-container.darker(20%) : del-touch.has-hover ? Tokens.error-container : transparent;
+                                Text {
+                                    text: "🗑";
+                                    font-size: 13px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                del-touch := TouchArea {
+                                    enabled: !HostsModel.identities-busy;
+                                    clicked => { HostsModel.identity-delete-requested(identity.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Tokens.outline-variant; }
+
+            Text {
+                text: "Tambah Identity Baru";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            new-label-field := DialogField { label-text: "Label"; placeholder: "mis. NOC Router"; }
+            new-username-field := DialogField { label-text: "Username"; placeholder: "mis. bro-noc"; }
+            new-password-field := DialogField { label-text: "Password"; placeholder: "••••••••"; is-password: true; }
+
+            Rectangle { vertical-stretch: 1; }
+
+            DialogButton {
+                label-text: HostsModel.identities-busy ? "Menyimpan..." : "Tambah Identity";
+                filled: true;
+                enabled: !HostsModel.identities-busy
+                    && new-label-field.value != ""
+                    && new-username-field.value != ""
+                    && new-password-field.value != "";
+                clicked => {
+                    HostsModel.identity-create-requested(new-label-field.value, new-username-field.value, new-password-field.value);
+                }
+            }
+        }
+    }
+}

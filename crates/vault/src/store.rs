@@ -1,6 +1,6 @@
 use crate::crypto;
 use crate::VaultError;
-use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile};
+use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile, Identity};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -87,6 +87,18 @@ impl VaultStore {
                     port INTEGER NOT NULL,
                     key_line TEXT NOT NULL,
                     PRIMARY KEY (host, port)
+                );
+                -- Identity tersimpan (pasangan username+password
+                -- TERPISAH dari host, lihat `terminus_core::Identity`).
+                -- `credential_id` NOT NULL (beda dari `profiles` yang
+                -- boleh NULL buat `AuthMethod::Agent`) — Identity tanpa
+                -- password sama sekali tidak ada gunanya, jadi selalu
+                -- ada satu baris `secrets` yang terkait.
+                CREATE TABLE IF NOT EXISTS identities (
+                    id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    credential_id TEXT NOT NULL
                 );
                 ",
             )
@@ -436,6 +448,68 @@ impl VaultStore {
         Ok(())
     }
 
+    // --- Identity CRUD (pasangan username+password reusable, TERPISAH
+    //     dari host — lihat `terminus_core::Identity`). Metadata
+    //     (label/username) plaintext, sama seperti `profiles`; password
+    //     lewat `credential_id` ke tabel `secrets` yang sama dipakai
+    //     host. ---
+
+    pub fn list_identities(&self) -> Result<Vec<Identity>, VaultError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, label, username, credential_id FROM identities")
+            .map_err(|e| VaultError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let label: String = row.get(1)?;
+                let username: String = row.get(2)?;
+                let credential_id: String = row.get(3)?;
+                Ok(Identity {
+                    id: Uuid::parse_str(&id).unwrap_or_default(),
+                    label,
+                    username,
+                    credential_id: Uuid::parse_str(&credential_id).unwrap_or_default(),
+                })
+            })
+            .map_err(|e| VaultError::Database(e.to_string()))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| VaultError::Database(e.to_string()))
+    }
+
+    pub fn save_identity(&mut self, identity: &Identity) -> Result<(), VaultError> {
+        self.conn
+            .execute(
+                "INSERT INTO identities (id, label, username, credential_id) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET label = excluded.label, username = excluded.username, credential_id = excluded.credential_id",
+                params![identity.id.to_string(), identity.label, identity.username, identity.credential_id.to_string()],
+            )
+            .map_err(|e| VaultError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Hapus identity BESERTA password terenkripsi terkait (cascade,
+    /// sama pola dengan `delete_profile`) — host yang SUDAH dibuat dari
+    /// identity ini sebelumnya TIDAK terpengaruh (password-nya sudah
+    /// di-copy ke `credential_id` host itu sendiri waktu dipilih, lihat
+    /// doc comment `terminus_core::Identity`).
+    pub fn delete_identity(&mut self, id: Uuid) -> Result<(), VaultError> {
+        let credential_id: Option<String> = self
+            .conn
+            .query_row("SELECT credential_id FROM identities WHERE id = ?1", params![id.to_string()], |row| {
+                row.get(0)
+            })
+            .ok();
+        self.conn
+            .execute("DELETE FROM identities WHERE id = ?1", params![id.to_string()])
+            .map_err(|e| VaultError::Database(e.to_string()))?;
+        if let Some(credential_id) = credential_id {
+            self.conn
+                .execute("DELETE FROM secrets WHERE credential_id = ?1", params![credential_id])
+                .map_err(|e| VaultError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     // --- Known hosts (TOFU host-key pinning, metadata plaintext) ---
 
     /// Baris `known_hosts` yang sudah tersimpan buat `(host, port)` ini,
@@ -589,6 +663,46 @@ mod tests {
         assert!(
             matches!(store.read_secret(credential_id), Err(VaultError::Database(_))),
             "password terenkripsi host yang terhapus harus ikut dibersihkan, bukan nyangkut"
+        );
+    }
+
+    /// Bukti langsung fitur "Identity tersimpan": simpan, list, dan
+    /// hapus identity BESERTA cascade delete password terenkripsinya
+    /// (sama pola cascade dengan `delete_profile`) — identity LAIN yang
+    /// tidak dihapus harus tetap utuh.
+    #[test]
+    fn identity_crud_dan_hapus_ikut_hapus_secret() {
+        let mut store = temp_store();
+        store.initialize("password-kuat-123").unwrap();
+
+        let cred_a = Uuid::new_v4();
+        store.store_secret(cred_a, b"password-noc-router").unwrap();
+        let identity_a =
+            Identity { id: Uuid::new_v4(), label: "NOC Router".into(), username: "bro-noc".into(), credential_id: cred_a };
+        store.save_identity(&identity_a).unwrap();
+
+        let cred_b = Uuid::new_v4();
+        store.store_secret(cred_b, b"password-lain").unwrap();
+        let identity_b =
+            Identity { id: Uuid::new_v4(), label: "Server Admin".into(), username: "admin".into(), credential_id: cred_b };
+        store.save_identity(&identity_b).unwrap();
+
+        let listed = store.list_identities().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|i| i.id == identity_a.id && i.username == "bro-noc"));
+
+        store.delete_identity(identity_a.id).unwrap();
+        let after_delete = store.list_identities().unwrap();
+        assert_eq!(after_delete.len(), 1, "cuma identity yang dihapus yang hilang");
+        assert_eq!(after_delete[0].id, identity_b.id);
+        assert!(
+            matches!(store.read_secret(cred_a), Err(VaultError::Database(_))),
+            "password identity yang dihapus harus ikut dibersihkan, bukan nyangkut"
+        );
+        assert_eq!(
+            store.read_secret(cred_b).unwrap(),
+            b"password-lain",
+            "password identity LAIN yang tidak dihapus harus tetap utuh"
         );
     }
 

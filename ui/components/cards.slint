@@ -27,6 +27,17 @@ export struct GroupItem {
     checked: bool, // dicentang buat bulk delete? diisi Rust dari state seleksi
 }
 
+// Identity tersimpan (pasangan username+password TERPISAH dari host,
+// lihat `terminus_core::Identity`) — password-nya SENGAJA tidak ada di
+// sini (tidak pernah dikirim ke UI dalam bentuk daftar; cuma dibaca
+// Rust waktu satu identity DIPILIH lewat `HostsModel.identity-picked`,
+// lihat `ui/components/host-panel.slint`).
+export struct IdentityItem {
+    id: string, // Uuid Identity
+    label: string,
+    username: string,
+}
+
 export struct FileEntry {
     name: string,
     is-dir: bool,

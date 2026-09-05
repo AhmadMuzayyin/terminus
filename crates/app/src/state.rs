@@ -1210,6 +1210,67 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             });
         });
     }
+
+    // --- Export SEMUA host tersimpan ke `config.xml` format SecureCRT
+    //     (`terminus_core::export::securecrt`) — kebalikan dari Import
+    //     di atas. Sama polanya: dialog "Save File" native (`rfd`)
+    //     BLOCKING dijalankan bareng baca vault di dalam
+    //     `spawn_blocking`, biar UI thread tidak freeze dan
+    //     `exporting=true` sempat ke-render. ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<HostsModel>().on_export_xml_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if ui.global::<HostsModel>().get_exporting() {
+                return;
+            }
+            ui.global::<HostsModel>().set_exporting(true);
+
+            let vault = state.vault.clone();
+            let ui_weak_task = ui_weak.clone();
+            tokio::spawn(async move {
+                let outcome = tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
+                    let hosts = {
+                        let vault = vault.lock().unwrap();
+                        export_hosts_from_vault(&vault)?
+                    };
+                    if hosts.is_empty() {
+                        return Err("Belum ada host tersimpan untuk di-export.".to_string());
+                    }
+                    let count = hosts.len();
+                    let xml = terminus_core::export::securecrt::export(&hosts);
+
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export host ke config.xml (SecureCRT)")
+                        .set_file_name("config.xml")
+                        .add_filter("XML", &["xml"])
+                        .save_file()
+                    else {
+                        return Ok(None); // user batal — bukan error
+                    };
+                    std::fs::write(&path, xml).map_err(|e| format!("Gagal tulis file: {e}"))?;
+                    Ok(Some(count))
+                })
+                .await
+                .expect("blocking task panik");
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_task.upgrade() else { return };
+                    ui.global::<HostsModel>().set_exporting(false);
+                    match outcome {
+                        Ok(None) => {} // user batal pilih lokasi simpan, tidak perlu notice
+                        Ok(Some(count)) => show_notice(
+                            &ui,
+                            &format!("Export selesai: {count} host ditulis ke config.xml (tanpa password)."),
+                            false,
+                        ),
+                        Err(e) => show_notice(&ui, &format!("Export gagal: {e}"), true),
+                    }
+                });
+            });
+        });
+    }
 }
 
 struct ImportSummary {
@@ -1272,6 +1333,41 @@ fn import_parsed_hosts_into_vault(
         imported += 1;
     }
     Ok(ImportSummary { imported, skipped: parsed.skipped })
+}
+
+/// Baca semua profil+grup dari vault, resolve `group_id` tiap profil
+/// jadi `group_path` (kebalikan PERSIS dari cara
+/// `import_parsed_hosts_into_vault` nge-flatten `group_path` jadi satu
+/// nama grup `"A / B"` waktu import — di sini di-split lagi by `" / "`),
+/// lalu bungkus jadi `ExportHost` siap dipakai
+/// `terminus_core::export::securecrt::export`.
+///
+/// Dipisah dari closure `on_export_xml_requested` (bukan cuma inline di
+/// situ) supaya bisa dites langsung tanpa perlu buka dialog file
+/// beneran — lihat `tests::export_resolve_group_path_dari_group_id`.
+fn export_hosts_from_vault(
+    vault: &VaultStore,
+) -> Result<Vec<terminus_core::export::securecrt::ExportHost>, String> {
+    let groups: HashMap<Uuid, String> =
+        vault.list_groups().map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
+
+    let profiles = vault.list_all_profiles().map_err(|e| e.to_string())?;
+    Ok(profiles
+        .into_iter()
+        .map(|p| {
+            let group_path = match p.group_id.and_then(|id| groups.get(&id)) {
+                Some(name) => name.split(" / ").map(str::to_string).collect(),
+                None => Vec::new(),
+            };
+            terminus_core::export::securecrt::ExportHost {
+                label: p.label,
+                host: p.host,
+                port: p.port,
+                username: p.username,
+                group_path,
+            }
+        })
+        .collect())
 }
 
 /// Callback seputar tab-tab terminal SSH (`TerminalTabsModel`, lihat
@@ -3510,6 +3606,50 @@ mod tests {
         import_parsed_hosts_into_vault(&mut vault, parsed_again).unwrap();
         let groups_after = vault.list_groups().unwrap();
         assert_eq!(groups_after.len(), 1, "import ulang TIDAK BOLEH bikin grup 'ROUTER / BAROKAH' dobel");
+    }
+
+    /// Membuktikan `export_hosts_from_vault` (dipakai
+    /// `on_export_xml_requested`) beneran jadi KEBALIKAN dari
+    /// `import_parsed_hosts_into_vault`: import file SecureCRT ->
+    /// export lagi -> hasil XML-nya, di-parse ulang lewat
+    /// `terminus_core::import::securecrt::parse`, punya host & folder
+    /// path yang SAMA seperti file aslinya (round-trip penuh: vault ->
+    /// export -> import lagi).
+    #[test]
+    fn export_hosts_from_vault_round_trip_dengan_import() {
+        let mut vault = temp_vault();
+        vault.initialize("master-password-test").unwrap();
+
+        let parsed = terminus_core::import::securecrt::parse(IMPORT_SAMPLE_XML).unwrap();
+        import_parsed_hosts_into_vault(&mut vault, parsed).unwrap();
+
+        let export_hosts = export_hosts_from_vault(&vault).unwrap();
+        assert_eq!(export_hosts.len(), 3);
+
+        let rtr01 = export_hosts.iter().find(|h| h.label == "rtr-01").unwrap();
+        assert_eq!(rtr01.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+        let standalone = export_hosts.iter().find(|h| h.label == "standalone-host").unwrap();
+        assert!(standalone.group_path.is_empty(), "host ungrouped di vault harus jadi group_path kosong lagi");
+
+        let xml = terminus_core::export::securecrt::export(&export_hosts);
+        let reimported = terminus_core::import::securecrt::parse(&xml).unwrap();
+        assert_eq!(reimported.hosts.len(), 3);
+        assert_eq!(reimported.skipped, 0);
+        let rtr01_reimported = reimported.hosts.iter().find(|h| h.label == "rtr-01").unwrap();
+        assert_eq!(rtr01_reimported.host, "10.1.1.1");
+        assert_eq!(rtr01_reimported.port, 22);
+        assert_eq!(rtr01_reimported.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+    }
+
+    /// Vault kosong (belum ada host apa pun) -> `export_hosts_from_vault`
+    /// harus balikin `Ok(vec![])`, BUKAN error — validasi "tidak ada
+    /// yang di-export" itu tanggung jawab caller (`on_export_xml_requested`),
+    /// bukan fungsi murni ini, supaya gampang dites terpisah.
+    #[test]
+    fn export_hosts_from_vault_kosong_kalau_belum_ada_host() {
+        let mut vault = temp_vault();
+        vault.initialize("master-password-test").unwrap();
+        assert_eq!(export_hosts_from_vault(&vault).unwrap(), vec![]);
     }
 
     /// Poll `check` tiap beberapa milidetik sampai `true` atau timeout

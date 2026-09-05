@@ -12,6 +12,8 @@
 - ✅ Packaging tiap OS: `.deb`/`.rpm`/AppImage (Linux), `.app`/`.dmg` (macOS), `.exe`/`.zip` (Windows)
 - ✅ Tema per-host persist lintas restart app (kolom `terminal_theme` di skema `HostProfile`,
   migrasi vault otomatis buat instalasi lama)
+- ✅ Export host ke `config.xml` format SecureCRT (kebalikan dari Import — folder grup ikut
+  ter-export bertingkat, password sengaja TIDAK ikut, sama seperti Import)
 
 ## Batasan saat ini
 
@@ -26,14 +28,12 @@
 
 ## Rencana Selanjutnya
 
-1. **Export host ke XML** (format serupa `config.xml` SecureCRT) —
-   kebalikan dari fitur Import yang sudah ada.
-2. **Export JSON dengan password terenkripsi** — format backup/
+1. **Export JSON dengan password terenkripsi** — format backup/
    pindahan portable, terpisah dari file vault SQLite asli.
-3. **Identity tersimpan** (pasangan username+password terpisah dari
+2. **Identity tersimpan** (pasangan username+password terpisah dari
    host) — bisa dipakai ulang sebagai kredensial waktu menambah host
    baru, tanpa isi ulang dari nol tiap kali.
-4. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
+3. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
 
 Lihat **[Berkontribusi](#contributing)** untuk cara mulai bantu
 kerjakan salah satunya.

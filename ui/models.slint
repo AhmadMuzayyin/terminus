@@ -215,6 +215,16 @@ export global HostsModel {
     // password diisi manual lewat panel sebelum bisa connect.
     in-out property <bool> importing: false;
     callback import-xml-requested();
+
+    // Export SEMUA host tersimpan ke `config.xml` format SecureCRT —
+    // kebalikan dari Import di atas. Tombol "Export" di toolbar manggil
+    // ini TANPA argumen, sama seperti Import: Rust yang baca vault,
+    // susun XML (`terminus_core::export::securecrt`), lalu buka dialog
+    // native "Save File" (`rfd`) buat pilih lokasi simpan. Password
+    // TIDAK PERNAH ikut ke file ini (lihat doc comment modul Rust-nya)
+    // — murni metadata koneksi, sama seperti hasil Import.
+    in-out property <bool> exporting: false;
+    callback export-xml-requested();
 }
 
 // Data + aksi buat halaman SFTP — DUA MODE: (1) "chooser" (belum

@@ -374,6 +374,11 @@ export component PageHosts inherits Rectangle {
                 enabled: !HostsModel.importing;
                 clicked => { HostsModel.import-xml-requested(); }
             }
+            ToolbarButton {
+                label: HostsModel.exporting ? "Exporting..." : "Export";
+                enabled: !HostsModel.exporting;
+                clicked => { HostsModel.export-xml-requested(); }
+            }
             ToolbarButton { label: "Serial"; }
             // Bulk delete — cuma nongol waktu ada checkbox yang
             // dicentang (lihat komentar `HostsModel.host-selection-

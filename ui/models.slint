@@ -225,6 +225,18 @@ export global HostsModel {
     // — murni metadata koneksi, sama seperti hasil Import.
     in-out property <bool> exporting: false;
     callback export-xml-requested();
+
+    // Export backup JSON TERMASUK password (terenkripsi) — beda dari
+    // Export XML di atas. Tombol "Export JSON" di toolbar cuma buka
+    // dialog (`show-export-json-dialog`, lihat `ExportJsonDialog` di
+    // `dialogs.slint`) buat minta passphrase backup dulu; dialog itu
+    // yang manggil `export-json-requested(passphrase)` waktu user klik
+    // tombol Export-nya. Rust yang urus baca vault, enkripsi
+    // (`terminus_vault::crypto`, passphrase INI — bukan master password
+    // vault), lalu buka dialog native "Save File".
+    in-out property <bool> show-export-json-dialog: false;
+    in-out property <bool> exporting-json: false;
+    callback export-json-requested(string /* passphrase backup */);
 }
 
 // Data + aksi buat halaman SFTP — DUA MODE: (1) "chooser" (belum

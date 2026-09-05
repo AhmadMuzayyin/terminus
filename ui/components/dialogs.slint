@@ -413,3 +413,82 @@ export component NewGroupDialog inherits DialogScrim {
         }
     }
 }
+
+// Dialog "Export JSON" — minta passphrase BACKUP (sengaja terpisah
+// dari master password vault, lihat doc comment
+// `terminus_core::export::json`) sebelum Rust baca vault, enkripsi tiap
+// password host pakainya, lalu buka dialog "Save File" native. Validasi
+// (passphrase minimal 8 karakter, dua field harus sama) dilakukan DI
+// SINI (Slint) — tombol Export cuma `enabled` kalau lolos, Rust tidak
+// perlu tahu soal validasi ini sama sekali, cuma terima passphrase yang
+// sudah pasti valid.
+export component ExportJsonDialog inherits DialogScrim {
+    card := DialogCard {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        height: 340px;
+
+        property <bool> passphrase-valid: passphrase-field.value.character-count >= 8
+            && passphrase-field.value == confirm-field.value;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: "Export Backup (JSON)";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: "Semua host TERMASUK password ikut ter-backup, dienkripsi pakai passphrase ini — bukan master password vault. Simpan passphrase-nya, tidak bisa dipulihkan kalau lupa.";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            passphrase-field := DialogField {
+                label-text: "Passphrase Backup";
+                placeholder: "min. 8 karakter";
+                is-password: true;
+                auto-focus: true;
+            }
+            confirm-field := DialogField {
+                label-text: "Ulangi Passphrase";
+                placeholder: "harus sama persis";
+                is-password: true;
+            }
+
+            if passphrase-field.value != "" && !card.passphrase-valid : Text {
+                text: passphrase-field.value.character-count < 8
+                    ? "Passphrase minimal 8 karakter."
+                    : "Passphrase tidak sama.";
+                color: Tokens.error;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    enabled: !HostsModel.exporting-json;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.show-export-json-dialog = false; }
+                }
+                DialogButton {
+                    label-text: HostsModel.exporting-json ? "Exporting..." : "Export";
+                    filled: true;
+                    enabled: card.passphrase-valid && !HostsModel.exporting-json;
+                    horizontal-stretch: 1;
+                    clicked => { HostsModel.export-json-requested(passphrase-field.value); }
+                }
+            }
+        }
+    }
+}

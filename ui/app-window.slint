@@ -16,7 +16,7 @@ import { PageSftp } from "./pages/page-sftp.slint";
 import { PageConsole } from "./pages/page-console.slint";
 import { PageTerminal } from "./pages/page-terminal.slint";
 import { TerminalTabBar } from "./components/terminal-tabs-bar.slint";
-import { VaultDialog, NewGroupDialog } from "./components/dialogs.slint";
+import { VaultDialog, NewGroupDialog, ExportJsonDialog } from "./components/dialogs.slint";
 import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog } from "./components/confirm-dialog.slint";
 import { ConnectingView } from "./components/connecting-view.slint";
 import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel } from "./models.slint";
@@ -139,6 +139,7 @@ export component AppWindow inherits Window {
     }
 
     if VaultModel.is-unlocked && HostsModel.show-new-group-dialog : NewGroupDialog { }
+    if VaultModel.is-unlocked && HostsModel.show-export-json-dialog : ExportJsonDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-delete-open : ConfirmDeleteHostDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-delete-group-open : ConfirmDeleteGroupDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-bulk-delete-open : ConfirmBulkDeleteDialog { }

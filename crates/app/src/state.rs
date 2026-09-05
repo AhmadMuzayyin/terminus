@@ -1271,6 +1271,77 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             });
         });
     }
+
+    // --- Export backup JSON TERMASUK password (terenkripsi) — beda
+    //     dari Export XML di atas. Passphrase (dari `ExportJsonDialog`,
+    //     lihat `ui/components/dialogs.slint`) SENGAJA terpisah dari
+    //     master password vault (lihat doc comment
+    //     `terminus_core::export::json`). Dialog TETAP terbuka sampai
+    //     hasil (sukses/gagal) balik — biar user tidak perlu isi ulang
+    //     passphrase kalau mis. batal di dialog "Save File" atau ada
+    //     error I/O — cuma ditutup eksplisit di sini waktu BENERAN
+    //     sukses tertulis ke disk. ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<HostsModel>().on_export_json_requested(move |passphrase: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            if ui.global::<HostsModel>().get_exporting_json() {
+                return;
+            }
+            ui.global::<HostsModel>().set_exporting_json(true);
+            let passphrase = passphrase.to_string();
+
+            let vault = state.vault.clone();
+            let ui_weak_task = ui_weak.clone();
+            tokio::spawn(async move {
+                let outcome = tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
+                    let backup = {
+                        let vault = vault.lock().unwrap();
+                        build_json_backup(&vault, &passphrase)?
+                    };
+                    if backup.hosts.is_empty() {
+                        return Err("Belum ada host tersimpan untuk di-export.".to_string());
+                    }
+                    let count = backup.hosts.len();
+                    let json = terminus_core::export::json::render(&backup);
+
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export backup host (JSON terenkripsi)")
+                        .set_file_name("terminus-backup.json")
+                        .add_filter("JSON", &["json"])
+                        .save_file()
+                    else {
+                        return Ok(None); // user batal — bukan error
+                    };
+                    std::fs::write(&path, json).map_err(|e| format!("Gagal tulis file: {e}"))?;
+                    Ok(Some(count))
+                })
+                .await
+                .expect("blocking task panik");
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_task.upgrade() else { return };
+                    ui.global::<HostsModel>().set_exporting_json(false);
+                    match outcome {
+                        // User batal pilih lokasi simpan -> dialog TETAP
+                        // kebuka (lihat komentar blok ini) biar bisa
+                        // langsung retry tanpa isi ulang passphrase.
+                        Ok(None) => {}
+                        Ok(Some(count)) => {
+                            ui.global::<HostsModel>().set_show_export_json_dialog(false);
+                            show_notice(
+                                &ui,
+                                &format!("Export selesai: {count} host (password ikut, terenkripsi) ditulis ke JSON."),
+                                false,
+                            );
+                        }
+                        Err(e) => show_notice(&ui, &format!("Export gagal: {e}"), true),
+                    }
+                });
+            });
+        });
+    }
 }
 
 struct ImportSummary {
@@ -1368,6 +1439,71 @@ fn export_hosts_from_vault(
             }
         })
         .collect())
+}
+
+/// Baca semua profil+grup+secret dari vault, enkripsi tiap password
+/// (kalau ada) pakai passphrase BACKUP (parameter `passphrase` —
+/// SENGAJA BUKAN master password vault, lihat doc comment
+/// `terminus_core::export::json`), bungkus jadi
+/// `terminus_core::export::json::Backup` siap dipakai `render`.
+///
+/// Host tanpa secret tersimpan (mis. hasil Import SecureCRT yang belum
+/// diisi password manual — `read_secret` gagal) dapat
+/// `encrypted_password: None`, BUKAN error — itu state valid, bukan
+/// kegagalan export.
+///
+/// Dipisah dari closure `on_export_json_requested` (bukan cuma inline
+/// di situ) supaya bisa dites tanpa perlu buka dialog file beneran —
+/// lihat `tests::build_json_backup_enkripsi_password_dan_bisa_didekripsi_ulang`.
+fn build_json_backup(vault: &VaultStore, passphrase: &str) -> Result<terminus_core::export::json::Backup, String> {
+    let groups: HashMap<Uuid, String> =
+        vault.list_groups().map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
+    let profiles = vault.list_all_profiles().map_err(|e| e.to_string())?;
+
+    let salt = terminus_vault::crypto::generate_salt();
+    let key = terminus_vault::crypto::derive_key(passphrase, &salt).map_err(|e| e.to_string())?;
+
+    let mut hosts = Vec::with_capacity(profiles.len());
+    for p in profiles {
+        let group_path: Vec<String> = match p.group_id.and_then(|id| groups.get(&id)) {
+            Some(name) => name.split(" / ").map(str::to_string).collect(),
+            None => Vec::new(),
+        };
+        let kind = match p.kind {
+            ConnectionKind::Ssh => "ssh",
+            ConnectionKind::CiscoIos => "cisco_ios",
+        }
+        .to_string();
+        let encrypted_password = match p.auth {
+            AuthMethod::Password { credential_id } => match vault.read_secret(credential_id) {
+                Ok(plaintext) => {
+                    Some(terminus_vault::crypto::encrypt(&key, &plaintext).map_err(|e| e.to_string())?)
+                }
+                Err(_) => None, // belum ada password tersimpan — bukan error
+            },
+            // PrivateKey/Agent: ssh-engine belum implementasi auth
+            // selain password (lihat plan host-panel), tidak ada secret
+            // buat dibaca.
+            _ => None,
+        };
+        hosts.push(terminus_core::export::json::BackupHost {
+            label: p.label,
+            host: p.host,
+            port: p.port,
+            username: p.username,
+            kind,
+            group_path,
+            tags: p.tags,
+            terminal_theme: p.terminal_theme,
+            encrypted_password,
+        });
+    }
+
+    Ok(terminus_core::export::json::Backup {
+        version: terminus_core::export::json::CURRENT_VERSION,
+        salt: salt.to_vec(),
+        hosts,
+    })
 }
 
 /// Callback seputar tab-tab terminal SSH (`TerminalTabsModel`, lihat
@@ -3650,6 +3786,81 @@ mod tests {
         let mut vault = temp_vault();
         vault.initialize("master-password-test").unwrap();
         assert_eq!(export_hosts_from_vault(&vault).unwrap(), vec![]);
+    }
+
+    /// Membuktikan `build_json_backup` (dipakai `on_export_json_requested`):
+    /// (1) password host BENERAN ke-enkripsi (bukan plaintext) di
+    /// `encrypted_password`, TAPI bisa didekripsi ulang pakai passphrase
+    /// backup yang SAMA lewat `terminus_vault::crypto::decrypt`; (2)
+    /// passphrase SALAH gagal dekripsi (auth tag ChaCha20-Poly1305 tidak
+    /// cocok); (3) host tanpa secret tersimpan dapat
+    /// `encrypted_password: None`, bukan error; (4) `group_path`
+    /// ke-resolve benar dari `group_id`.
+    #[test]
+    fn build_json_backup_enkripsi_password_dan_bisa_didekripsi_ulang() {
+        let mut vault = temp_vault();
+        vault.initialize("master-password-vault-test").unwrap();
+
+        let group_id = Uuid::new_v4();
+        vault
+            .save_group(&HostGroup { id: group_id, name: "ROUTER".to_string(), subtitle: None, parent_id: None })
+            .unwrap();
+
+        let cred_dengan_password = Uuid::new_v4();
+        vault.store_secret(cred_dengan_password, b"password-ssh-rahasia").unwrap();
+        vault
+            .save_profile(&HostProfile {
+                id: Uuid::new_v4(),
+                label: "rtr-fwd".to_string(),
+                host: "192.168.1.1".to_string(),
+                port: 22,
+                username: "admin".to_string(),
+                kind: ConnectionKind::Ssh,
+                auth: AuthMethod::Password { credential_id: cred_dengan_password },
+                group_id: Some(group_id),
+                tags: vec![],
+                terminal_theme: None,
+            })
+            .unwrap();
+
+        // Host TANPA secret tersimpan (credential_id "menggantung") —
+        // sama seperti host hasil Import SecureCRT yang belum diisi.
+        vault
+            .save_profile(&HostProfile {
+                id: Uuid::new_v4(),
+                label: "belum-diisi".to_string(),
+                host: "10.0.0.9".to_string(),
+                port: 22,
+                username: "root".to_string(),
+                kind: ConnectionKind::Ssh,
+                auth: AuthMethod::Password { credential_id: Uuid::new_v4() },
+                group_id: None,
+                tags: vec!["imported".to_string()],
+                terminal_theme: None,
+            })
+            .unwrap();
+
+        let backup = build_json_backup(&vault, "passphrase-backup-terpisah").unwrap();
+        assert_eq!(backup.hosts.len(), 2);
+
+        let with_pw = backup.hosts.iter().find(|h| h.label == "rtr-fwd").unwrap();
+        assert_eq!(with_pw.group_path, vec!["ROUTER".to_string()]);
+        let ciphertext = with_pw.encrypted_password.as_ref().expect("harus ada password ter-enkripsi");
+        assert_ne!(ciphertext.as_slice(), b"password-ssh-rahasia", "password TIDAK BOLEH plaintext di backup");
+
+        let without_pw = backup.hosts.iter().find(|h| h.label == "belum-diisi").unwrap();
+        assert!(without_pw.encrypted_password.is_none());
+        assert!(without_pw.group_path.is_empty());
+
+        // Dekripsi ulang pakai passphrase yang SAMA -> harus balik ke
+        // plaintext asli.
+        let key_benar = terminus_vault::crypto::derive_key("passphrase-backup-terpisah", &backup.salt).unwrap();
+        let decrypted = terminus_vault::crypto::decrypt(&key_benar, ciphertext).unwrap();
+        assert_eq!(decrypted, b"password-ssh-rahasia");
+
+        // Passphrase SALAH -> harus gagal, bukan diam-diam balikin data lain.
+        let key_salah = terminus_vault::crypto::derive_key("passphrase-salah", &backup.salt).unwrap();
+        assert!(terminus_vault::crypto::decrypt(&key_salah, ciphertext).is_err());
     }
 
     /// Poll `check` tiap beberapa milidetik sampai `true` atau timeout

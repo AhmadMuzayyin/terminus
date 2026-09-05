@@ -387,6 +387,8 @@ cargo build --workspace   # pastikan hijau lagi
   migrasi vault otomatis buat instalasi lama)
 - ✅ Export host ke `config.xml` format SecureCRT (kebalikan dari Import — folder grup ikut
   ter-export bertingkat, password sengaja TIDAK ikut, sama seperti Import)
+- ✅ Export backup JSON TERMASUK password, dienkripsi Argon2id+ChaCha20-Poly1305 pakai
+  passphrase backup terpisah (bukan master password vault)
 
 **Batasan saat ini:**
 
@@ -398,12 +400,10 @@ cargo build --workspace   # pastikan hijau lagi
 
 **Rencana selanjutnya:**
 
-1. **Export JSON dengan password terenkripsi** — format backup/pindahan
-   portable, terpisah dari file vault SQLite asli.
-2. **Identity tersimpan** (pasangan username+password terpisah dari
+1. **Identity tersimpan** (pasangan username+password terpisah dari
    host) — bisa dipakai ulang sebagai kredensial waktu menambah host
    baru, tanpa isi ulang dari nol tiap kali.
-3. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
+2. **API backend + aplikasi Android** yang sinkron dengan vault desktop.
 
 ## Berkontribusi
 

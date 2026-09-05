@@ -33,4 +33,14 @@ pub enum VaultError {
 
     #[error("crypto error: {0}")]
     Crypto(String),
+
+    /// Dipetakan dari respons HTTP non-2xx backend (mis. `{ "error":
+    /// "..." }`, lihat `errorHandler.ts` di `backend/`) atau error
+    /// jaringan (timeout/connection refused/dst) waktu mode
+    /// Self-hosted aktif — lihat
+    /// `docs/desktop-selfhosted-integration.md` bagian 2.4. TIDAK
+    /// PERNAH muncul di mode Local (murni file lokal, tidak ada
+    /// jaringan).
+    #[error("server error: {0}")]
+    Remote(String),
 }

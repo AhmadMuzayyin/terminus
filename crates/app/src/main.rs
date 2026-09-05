@@ -1,8 +1,10 @@
 // File .slint dicompile jadi module Rust oleh build.rs.
 slint::include_modules!();
 
+mod app_config;
 mod console;
 mod host_key_store;
+mod session_store;
 mod state;
 
 fn main() -> anyhow::Result<()> {

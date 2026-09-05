@@ -71,6 +71,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
 rand = "0.8"
+# HTTP client mode Self-hosted (`RemoteVaultClient`, lihat
+# docs/desktop-selfhosted-integration.md). SENGAJA versi ASYNC biasa
+# (BUKAN fitur "blocking") — `reqwest::blocking` panik kalau dipanggil
+# dari thread yang sudah "milik" runtime Tokio, termasuk thread
+# `tokio::task::spawn_blocking` (lihat penjelasan di doc bagian 2.1).
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 
 # --- util umum ---
 serde = { version = "1", features = ["derive"] }

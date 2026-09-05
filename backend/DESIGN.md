@@ -268,18 +268,26 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    beda dari modul vaults), jadi vaultId asal-asalan jatuh ke DB query
    dulu (403 "bukan anggota") alih-alih ditolak validasi (400) —
    sekarang divalidasi formatnya duluan.
-5. ⏳ **Docker packaging final** — `docker-compose.yml` diubah jadi
+5. ✅ **Docker packaging final** — `docker-compose.yml` diubah jadi
    CUMA berisi service `server` (MySQL DIHAPUS dari situ atas
    permintaan eksplisit user — produksi sudah punya `mesem-mysql`
    sendiri, dan dev lokal sengaja TIDAK PERNAH pakai Docker, cukup
    `npm run dev`). `docker compose config` sudah diverifikasi resolve
    bersih (container_name/network/volume ter-namespace `terminus-*`,
-   tidak nabrak `mesem-*`/`nms-net`). **Belum sempat diverifikasi**
-   `docker compose up --build` beneran sukses end-to-end — dicoba di
-   sandbox development, base image Docker gagal ke-pull (network
-   Docker di sandbox itu sendiri yang bermasalah, bukan Dockerfile/
-   compose-nya) — perlu dicoba ulang di mesin yang punya akses
-   internet normal buat Docker (mis. server produksi asli).
+   tidak nabrak `mesem-*`/`nms-net`). Kode & config dianggap SELESAI —
+   **catatan tersisa**: `docker compose up --build` end-to-end belum
+   sempat dicoba beneran jalan (dicoba di sandbox development, base
+   image Docker gagal ke-pull karena network Docker sandbox itu sendiri
+   yang bermasalah, bukan Dockerfile/compose-nya). Diputuskan LANJUT ke
+   pekerjaan berikutnya — verifikasi run pertama ditunda ke waktu
+   deploy sungguhan di server produksi (bukan blocker buat kerja
+   desktop app; backend & desktop app dua deployment independen).
+
+Backend API v1 dianggap **selesai** per titik ini. Pekerjaan
+selanjutnya (integrasi desktop app supaya bisa pilih Local vs
+Self-hosted) didokumentasikan terpisah di
+`../docs/desktop-selfhosted-integration.md` — ikuti pola yang sama:
+desain dulu sebelum nulis kode Rust.
 
 ## 7. Sengaja DI LUAR SCOPE sekarang (jangan dikerjakan tanpa diminta)
 

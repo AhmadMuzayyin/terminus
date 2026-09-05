@@ -9,6 +9,7 @@ import express, { type Express } from "express";
 import { prisma } from "./db/client.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { vaultsRouter } from "./modules/vaults/vaults.routes.js";
 
 export function createApp(): Express {
   const app = express();
@@ -30,6 +31,7 @@ export function createApp(): Express {
   });
 
   app.use("/api/v1/auth", authRouter);
+  app.use("/api/v1/vaults", vaultsRouter);
 
   // WAJIB PALING TERAKHIR — Express nentuin ini "error handler" cuma
   // dari arity 4 parameter (err, req, res, next), bukan dari nama atau

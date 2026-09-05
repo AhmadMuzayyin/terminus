@@ -61,6 +61,7 @@ backend/
   package.json
   tsconfig.json               # dipakai editor/vitest (mencakup src/ + tests/)
   tsconfig.build.json          # dipakai `npm run build` — extends tsconfig.json, rootDir+include DIPERSEMPIT ke src/ saja
+  vitest.config.ts             # `fileParallelism: false` — WAJIB, semua suite lawan SATU database MySQL sungguhan yang sama (lihat bagian 6 poin 3)
   .env.example
   Dockerfile
   docker-compose.yml
@@ -229,8 +230,15 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    manual). Nambah `src/errors.ts`, `src/utils/asyncHandler.ts`,
    `tsconfig.build.json` (lihat bagian 3) yang tidak ada di rencana
    awal — kebutuhan nyata yang muncul waktu dikerjakan.
-3. **Vaults module** — create vault, list vault, add/remove member +
-   test.
+3. ✅ **Vaults module** — create vault, list vault, add/remove member
+   (owner-only, `src/middleware/vaultAccess.ts`), diverifikasi lawan
+   MySQL sungguhan. Nambah `vitest.config.ts` (`fileParallelism:
+   false`) — DITEMUKAN waktu dikerjakan: suite test lain
+   (`auth.test.ts`) menghapus SEMUA baris tabel `users`, yang gagal
+   FK-constraint kalau ada Vault (dari suite ini) yang masih menunjuk
+   ke user itu sebagai owner — setiap suite test SEKARANG WAJIB bersih-
+   bersih fixture-nya sendiri di `afterAll`, bukan cuma `beforeAll`,
+   biar tidak saling ganggu database sungguhan yang dipakai bareng.
 4. **Hosts/Groups/Identities module** — CRUD penuh + endpoint secret +
    test.
 5. **Docker packaging final** — pastikan `docker compose up` dari nol

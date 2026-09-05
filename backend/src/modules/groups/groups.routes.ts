@@ -2,7 +2,12 @@ import { Router } from "express";
 
 import { validate } from "../../middleware/validate.js";
 import { createGroup, deleteGroup, getGroup, listGroups, updateGroup } from "./groups.controller.js";
-import { createGroupSchema, groupIdParamSchema, listGroupsSchema, updateGroupSchema } from "./groups.schema.js";
+import {
+  createGroupSchema,
+  groupIdParamSchema,
+  listGroupsSchema,
+  updateGroupSchema,
+} from "./groups.schema.js";
 
 // `mergeParams: true` WAJIB — router ini di-mount di app.ts pada path
 // yang punya `:vaultId` (mis. `/api/v1/vaults/:vaultId/groups`), tanpa

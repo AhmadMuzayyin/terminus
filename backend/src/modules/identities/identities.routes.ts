@@ -1,8 +1,20 @@
 import { Router } from "express";
 
 import { validate } from "../../middleware/validate.js";
-import { createIdentity, deleteIdentity, getIdentity, getIdentitySecret, listIdentities, updateIdentity } from "./identities.controller.js";
-import { createIdentitySchema, identityIdParamSchema, listIdentitiesSchema, updateIdentitySchema } from "./identities.schema.js";
+import {
+  createIdentity,
+  deleteIdentity,
+  getIdentity,
+  getIdentitySecret,
+  listIdentities,
+  updateIdentity,
+} from "./identities.controller.js";
+import {
+  createIdentitySchema,
+  identityIdParamSchema,
+  listIdentitiesSchema,
+  updateIdentitySchema,
+} from "./identities.schema.js";
 
 // `mergeParams: true` — lihat komentar sama di groups.routes.ts.
 export const identitiesRouter = Router({ mergeParams: true });

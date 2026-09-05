@@ -54,7 +54,9 @@ export async function createIdentity(
 
   const identity = await prisma.$transaction(async (tx) => {
     await tx.secret.create({ data: { credentialId, vaultId, encryptedData: encrypted } });
-    return tx.identity.create({ data: { vaultId, label: input.label, username: input.username, credentialId } });
+    return tx.identity.create({
+      data: { vaultId, label: input.label, username: input.username, credentialId },
+    });
   });
 
   return toResponse(identity);

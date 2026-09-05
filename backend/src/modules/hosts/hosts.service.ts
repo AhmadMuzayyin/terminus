@@ -120,7 +120,11 @@ export async function createHost(vaultId: string, input: HostInput): Promise<Hos
   return toResponse(host, new Set());
 }
 
-export async function updateHost(vaultId: string, id: string, input: Partial<HostInput>): Promise<HostResponse> {
+export async function updateHost(
+  vaultId: string,
+  id: string,
+  input: Partial<HostInput>,
+): Promise<HostResponse> {
   await findHostOrThrow(vaultId, id);
   const host = await prisma.hostProfile.update({
     where: { id },

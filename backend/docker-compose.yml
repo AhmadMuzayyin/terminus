@@ -1,30 +1,44 @@
-# Contoh self-host: `docker compose up` di folder ini langsung
-# menyalakan MySQL + terminus-server, tinggal isi `.env` dulu (copy dari
-# `.env.example`). Kalau MySQL-nya sudah ada sendiri (mis. container
-# terpisah), cukup jalankan service `server` saja dan arahkan
-# DATABASE_URL ke situ, tidak wajib pakai service `mysql` di sini.
+# Self-host: `docker compose up` di folder ini menyalakan CUMA
+# terminus-server — MySQL-nya TIDAK dibundle di sini sama sekali,
+# harus SUDAH ADA sendiri (mis. instance produksi yang sudah jalan
+# terpisah, seperti `mesem-mysql`). Ini SENGAJA, bukan kelalaian:
+# kebanyakan yang mau self-host alat ini kemungkinan besar SUDAH punya
+# MySQL jalan buat keperluan lain, jadi tidak perlu container MySQL
+# kedua yang cuma nambah beban/port yang harus diurus.
+#
+# `name:`/`container_name:` di bawah SENGAJA prefix "terminus-" — biar
+# tidak nabrak nama container/network/volume stack Docker lain yang
+# sudah ada di server yang sama (mis. container_name `mesem-*` di
+# network `nms-net`).
+#
+# Isi `DATABASE_URL` di `.env` supaya nyambung ke MySQL yang sudah ada
+# itu. Dua skenario umum:
+#   1. MySQL-nya publish port ke host (mis. `mesem-mysql` publish
+#      "3306:3306") -> `DATABASE_URL` bisa pakai IP/hostname mesin itu
+#      langsung, port 3306.
+#   2. Mau connect lewat network Docker internal (tanpa lewat host
+#      port sama sekali) -> gabungkan `server` ke network EXTERNAL
+#      tempat MySQL itu hidup (mis. `nms-net`, lihat compose file
+#      produksi yang sudah ada), lalu `DATABASE_URL` cukup pakai nama
+#      container-nya (mis. `mesem-mysql`) sebagai host. Contoh (buka
+#      komentar di bawah & sesuaikan nama network-nya):
+#
+# networks:
+#   nms-net:
+#     external: true
+#
+# lalu tambahkan di service `server`:
+#   networks:
+#     - nms-net
+
+name: terminus-backend
 
 services:
-  mysql:
-    image: mysql:8.0
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: terminus_backend
-    volumes:
-      - mysql-data:/var/lib/mysql
-    ports:
-      - "3306:3306"
-
   server:
     build: .
+    container_name: terminus-server
     restart: unless-stopped
-    depends_on:
-      - mysql
     env_file:
       - .env
     ports:
       - "${PORT:-4000}:4000"
-
-volumes:
-  mysql-data:

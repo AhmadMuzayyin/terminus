@@ -27,11 +27,13 @@ npm test
 
 ## Self-host lewat Docker
 
-```
-cp .env.example .env   # isi dulu
-docker compose up -d
-```
+`docker-compose.yml` di sini CUMA berisi service `server` — MySQL-nya
+TIDAK dibundle (harus sudah ada sendiri, mis. instance produksi yang
+sudah jalan terpisah). Baca komentar di `docker-compose.yml` buat 2
+cara umum nyambungin ke MySQL yang sudah ada itu (lewat host port yang
+dia publish, atau gabung ke network Docker eksternal tempat dia hidup).
 
-Kalau MySQL-nya sudah ada sendiri (container/instance terpisah), edit
-`docker-compose.yml` supaya cuma jalankan service `server` dan arahkan
-`DATABASE_URL` di `.env` ke situ.
+```
+cp .env.example .env   # isi DATABASE_URL ke MySQL yang sudah ada, dst
+docker compose up -d --build
+```

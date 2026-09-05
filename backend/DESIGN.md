@@ -50,7 +50,7 @@ data yang sama, bukan lewat mekanisme sync-antar-file.
 | Validasi request | **zod** | Skema TypeScript-first, dipakai buat validasi body/query di setiap endpoint sebelum masuk ke logic bisnis. |
 | Test | **vitest** | Modern, cepat, cocok TypeScript/ESM. |
 | Lint/format | ESLint + Prettier | Standar. |
-| Deployment | Docker image + `docker-compose.yml` (bundling MySQL) | Self-host tinggal `docker compose up`. |
+| Deployment | Docker image (server saja) + `docker-compose.yml` | MySQL TIDAK dibundle — harus sudah ada sendiri (asumsi realistis: yang mau self-host alat ini kemungkinan besar sudah punya MySQL jalan buat keperluan lain, mis. instance produksi yang sudah ada). Dev lokal TIDAK pakai Docker sama sekali, cukup `npm run dev`. |
 
 ## 3. Struktur Folder
 
@@ -158,9 +158,13 @@ JSON API <-> struct Rust itu 1:1, tidak perlu transformasi rumit.
 ## 5. Alur API
 
 ### 5.1 Setup awal (sekali, waktu self-host pertama kali)
-Admin jalankan `docker compose up` dengan env `SERVER_MASTER_KEY` (buat
-enkripsi `secrets.encrypted_data`) dan `JWT_SECRET` (buat tandatangan
-access token) sudah diisi. Database masih kosong.
+Admin jalankan `docker compose up` dengan `DATABASE_URL` (nunjuk ke
+MySQL yang SUDAH ADA sendiri — TIDAK dibundle di compose file ini,
+lihat komentar di `docker-compose.yml`), `SERVER_MASTER_KEY` (buat
+enkripsi `secrets.encrypted_data`), dan `JWT_SECRET` (buat tandatangan
+access token) sudah diisi di `.env`. Database masih kosong (tabelnya
+sendiri yang belum ada — `prisma migrate deploy` di `Dockerfile`
+bikinnya otomatis waktu container start).
 
 ### 5.2 Register & Login
 - `POST /api/v1/auth/register` — **CUMA aktif kalau tabel `users` masih
@@ -264,8 +268,18 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    beda dari modul vaults), jadi vaultId asal-asalan jatuh ke DB query
    dulu (403 "bukan anggota") alih-alih ditolak validasi (400) —
    sekarang divalidasi formatnya duluan.
-5. **Docker packaging final** — pastikan `docker compose up` dari nol
-   beneran jalan end-to-end (dites manual).
+5. ⏳ **Docker packaging final** — `docker-compose.yml` diubah jadi
+   CUMA berisi service `server` (MySQL DIHAPUS dari situ atas
+   permintaan eksplisit user — produksi sudah punya `mesem-mysql`
+   sendiri, dan dev lokal sengaja TIDAK PERNAH pakai Docker, cukup
+   `npm run dev`). `docker compose config` sudah diverifikasi resolve
+   bersih (container_name/network/volume ter-namespace `terminus-*`,
+   tidak nabrak `mesem-*`/`nms-net`). **Belum sempat diverifikasi**
+   `docker compose up --build` beneran sukses end-to-end — dicoba di
+   sandbox development, base image Docker gagal ke-pull (network
+   Docker di sandbox itu sendiri yang bermasalah, bukan Dockerfile/
+   compose-nya) — perlu dicoba ulang di mesin yang punya akses
+   internet normal buat Docker (mis. server produksi asli).
 
 ## 7. Sengaja DI LUAR SCOPE sekarang (jangan dikerjakan tanpa diminta)
 

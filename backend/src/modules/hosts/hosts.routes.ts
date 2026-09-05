@@ -1,8 +1,22 @@
 import { Router } from "express";
 
 import { validate } from "../../middleware/validate.js";
-import { createHost, deleteHost, getHost, getHostSecret, listHosts, setHostSecret, updateHost } from "./hosts.controller.js";
-import { createHostSchema, hostIdParamSchema, listHostsSchema, setHostSecretSchema, updateHostSchema } from "./hosts.schema.js";
+import {
+  createHost,
+  deleteHost,
+  getHost,
+  getHostSecret,
+  listHosts,
+  setHostSecret,
+  updateHost,
+} from "./hosts.controller.js";
+import {
+  createHostSchema,
+  hostIdParamSchema,
+  listHostsSchema,
+  setHostSecretSchema,
+  updateHostSchema,
+} from "./hosts.schema.js";
 
 // `mergeParams: true` — lihat komentar sama di groups.routes.ts,
 // alasannya identik (router ini di-mount di path yang punya `:vaultId`).

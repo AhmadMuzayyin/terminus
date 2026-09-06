@@ -5,6 +5,8 @@ import { prisma } from "../../db/client.js";
 import { NotFoundError } from "../../errors.js";
 
 interface GroupInput {
+  // Lihat komentar `id` di hosts.schema.ts.
+  id?: string;
   name: string;
   subtitle?: string | null;
   parentId?: string | null;
@@ -28,7 +30,13 @@ export async function getGroup(vaultId: string, id: string) {
 
 export async function createGroup(vaultId: string, input: GroupInput) {
   return prisma.hostGroup.create({
-    data: { vaultId, name: input.name, subtitle: input.subtitle ?? null, parentId: input.parentId ?? null },
+    data: {
+      id: input.id,
+      vaultId,
+      name: input.name,
+      subtitle: input.subtitle ?? null,
+      parentId: input.parentId ?? null,
+    },
   });
 }
 

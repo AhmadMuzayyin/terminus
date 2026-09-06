@@ -1,5 +1,7 @@
 // Self-contained (lihat pola sama di vaults.test.ts/hosts.test.ts).
 
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 
@@ -60,6 +62,17 @@ describe("Groups CRUD + cascade delete", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .send({});
     expect(res.status).toBe(400);
+  });
+
+  it("create grup DENGAN id yang dikirim client -> id itu dipakai apa adanya", async () => {
+    const clientId = randomUUID();
+    const res = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/groups`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ id: clientId, name: "SWITCH" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(clientId);
   });
 
   it("get grup by id", async () => {

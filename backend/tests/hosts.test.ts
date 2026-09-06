@@ -2,6 +2,8 @@
 // sendiri lewat Prisma langsung, bersihkan penuh di afterAll (Vault
 // dihapus DULU baru User-nya — Vault.owner_user_id tidak cascade).
 
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 
@@ -198,5 +200,19 @@ describe("Hosts CRUD + secret", () => {
       .get(`/api/v1/vaults/${vaultId}/hosts/${hostId}`)
       .set("Authorization", `Bearer ${ownerToken}`);
     expect(getRes.status).toBe(404);
+  });
+
+  // Ditaruh PALING TERAKHIR (bukan dekat "create host" di atas) SENGAJA
+  // — bikin host independen sendiri, tidak numpang `hostId` bareng yang
+  // dites di atas, biar tidak ganggu asersi jumlah list host yang lain.
+  it("create host DENGAN id yang dikirim client -> id itu dipakai apa adanya (bukan di-generate ulang)", async () => {
+    const clientId = randomUUID();
+    const res = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/hosts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ id: clientId, label: "router-noc-1", host: "10.0.0.9", username: "admin" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(clientId);
   });
 });

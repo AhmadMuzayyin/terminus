@@ -10,6 +10,8 @@ export const listIdentitiesSchema = z.object({
 export const createIdentitySchema = z.object({
   params: z.object({ vaultId: z.string().uuid("vaultId tidak valid") }),
   body: z.object({
+    // Lihat komentar sama di hosts.schema.ts `createHostSchema.id`.
+    id: z.string().uuid("id tidak valid").optional(),
     label: z.string().min(1, "Label wajib diisi"),
     username: z.string().min(1, "Username wajib diisi"),
     password: z.string().min(1, "Password wajib diisi"),

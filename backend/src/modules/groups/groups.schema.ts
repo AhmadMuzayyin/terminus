@@ -7,6 +7,8 @@ export const listGroupsSchema = z.object({
 export const createGroupSchema = z.object({
   params: z.object({ vaultId: z.string().uuid("vaultId tidak valid") }),
   body: z.object({
+    // Lihat komentar sama di hosts.schema.ts `createHostSchema.id`.
+    id: z.string().uuid("id tidak valid").optional(),
     name: z.string().min(1, "Nama grup wajib diisi"),
     subtitle: z.string().nullable().optional(),
     parentId: z.string().uuid("parentId tidak valid").nullable().optional(),

@@ -28,6 +28,8 @@ use terminus_serial_engine::{SerialOutputEvent, SerialPortEntry, SerialSession};
 use terminus_sftp_engine::{RemoteEntry, SftpBrowser, SftpError};
 use terminus_ssh_engine::{HostKeyStore, SecretMaterial, SshOutputEvent, SshSession};
 use terminus_term_emulator::TerminalInstance;
+use terminus_vault::VaultBackend;
+#[cfg(test)]
 use terminus_vault::VaultStore;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::collections::HashMap;
@@ -52,7 +54,22 @@ struct TabMeta {
 /// dibungkus `Arc` supaya bisa di-`clone()` murah ke tiap closure
 /// callback dan ke task tokio yang di-spawn.
 pub struct AppState {
-    vault: Arc<Mutex<VaultStore>>,
+    /// Local: baca/tulis SQLite via `spawn_blocking`. Self-hosted: HTTP
+    /// ke backend — lihat `docs/desktop-selfhosted-integration.md`.
+    /// `VaultBackend` sendiri `Clone` murah (isinya `Arc`), TIDAK ADA
+    /// `Arc<Mutex<...>>` lagi DI LUAR sini (beda dari sebelumnya).
+    vault: VaultBackend,
+    /// Salinan TERBARU `list_all_profiles`/`list_groups`/
+    /// `list_identities` — dipakai titik-titik BACA CEPAT yang HARUS
+    /// tetap sinkron (klik kartu host, buka grup, pencarian, pilih
+    /// identity) supaya TIDAK perlu jadi network call di mode
+    /// Self-hosted. Di-refresh (`refresh_vault_cache`) SETELAH SETIAP
+    /// mutasi vault sukses, SEBELUM `refresh_hosts_model` (yang baca
+    /// cache ini) dipanggil — lihat komentar panjang di
+    /// `refresh_vault_cache`/`refresh_hosts_model`.
+    profiles_cache: Arc<Mutex<Vec<HostProfile>>>,
+    groups_cache: Arc<Mutex<Vec<HostGroup>>>,
+    identities_cache: Arc<Mutex<Vec<Identity>>>,
     /// Sesi SSH yang lagi aktif, key-nya `HostProfile::id`. Satu entry
     /// = satu tab terbuka (lihat `tab_meta` di bawah, selalu sinkron
     /// dengan ini — sesi ada di sini KALAU DAN HANYA KALAU tab-nya ada
@@ -179,9 +196,12 @@ pub struct AppState {
 /// biasanya diabaikan caller (semua closure callback sudah pegang
 /// clone-nya sendiri buat tetap hidup) — dipakai test buat inspeksi
 /// vault langsung tanpa lewat Slint (mis. bandingkan `credential_id`).
-pub fn wire_callbacks(ui: &AppWindow, vault: VaultStore) -> Arc<AppState> {
+pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
     let state = Arc::new(AppState {
-        vault: Arc::new(Mutex::new(vault)),
+        vault,
+        profiles_cache: Arc::new(Mutex::new(Vec::new())),
+        groups_cache: Arc::new(Mutex::new(Vec::new())),
+        identities_cache: Arc::new(Mutex::new(Vec::new())),
         sessions: Arc::new(TokioMutex::new(HashMap::new())),
         statuses: Arc::new(Mutex::new(HashMap::new())),
         active_terminal: Arc::new(Mutex::new(None)),
@@ -207,7 +227,13 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultStore) -> Arc<AppState> {
         pending_password_profile: Arc::new(Mutex::new(None)),
     });
 
-    let is_first_run = !state.vault.lock().unwrap().is_initialized().unwrap_or(false);
+    // `is_initialized` method lifecycle Local-only (lihat
+    // `docs/desktop-selfhosted-integration.md` bagian 2.2) — Milestone
+    // 2b ini BELUM mengimplementasikan toggle mode beneran, `main.rs`
+    // MASIH SELALU buka mode Local (Milestone 3 nanti nambah cabang
+    // Self-hosted di startup, TIDAK di sini).
+    let local_store = state.vault.local_store().expect("mode Self-hosted belum didukung startup-nya, lihat Milestone 3");
+    let is_first_run = !local_store.lock().unwrap().is_initialized().unwrap_or(false);
     ui.global::<VaultModel>().set_is_first_run(is_first_run);
 
     // Font & tema terminal — SEKALI di sini (bukan tiap kali panel
@@ -264,7 +290,10 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<VaultModel>().set_busy(true);
 
-            let vault = state.vault.clone();
+            // `initialize` method lifecycle Local-only (lihat komentar
+            // `is_first_run` di `wire_callbacks`) — `.expect()` aman di
+            // sini, Milestone 2b belum ada cabang startup Self-hosted.
+            let store = state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3");
             let password = password.to_string();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
@@ -272,10 +301,13 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 // Argon2id genuinely CPU-bound & lambat by design —
                 // `spawn_blocking` biar tidak numpang worker thread
                 // async biasa (yang isinya tugas-tugas ringan lain).
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().initialize(&password))
+                let result = tokio::task::spawn_blocking(move || store.lock().unwrap().initialize(&password))
                     .await
                     .expect("blocking task panik");
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<VaultModel>().set_busy(false);
@@ -301,15 +333,18 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<VaultModel>().set_busy(true);
 
-            let vault = state.vault.clone();
+            let store = state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3");
             let password = password.to_string();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().unlock(&password))
+                let result = tokio::task::spawn_blocking(move || store.lock().unwrap().unlock(&password))
                     .await
                     .expect("blocking task panik");
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<VaultModel>().set_busy(false);
@@ -325,6 +360,27 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             });
         });
     }
+}
+
+/// Refresh cache in-memory (`profiles_cache`/`groups_cache`/
+/// `identities_cache`) dari vault — Local: baca SQLite (spawn_blocking
+/// di dalam `VaultBackend`); Self-hosted: HTTP call ke backend. WAJIB
+/// dipanggil SETELAH SETIAP mutasi vault sukses, SEBELUM
+/// `refresh_hosts_model` (yang baca cache ini, TETAP SINKRON) supaya
+/// UI menampilkan data TERBARU. Gagal refresh (mis. server sempat
+/// putus) dibiarkan diam-diam — cache lama tetap dipakai, TIDAK
+/// menggagalkan mutasi yang sudah SUKSES tersimpan (lihat
+/// docs/desktop-selfhosted-integration.md bagian 2 soal alasan pola
+/// cache ini dipilih: menjaga titik baca cepat seperti
+/// `on_identity_picked`/`on_group_opened` TETAP SINKRON tanpa perlu
+/// jadi network call, tanpa mengubah kontrak yang sudah dites).
+async fn refresh_vault_cache(state: &Arc<AppState>) {
+    let profiles = state.vault.list_all_profiles().await.unwrap_or_default();
+    let groups = state.vault.list_groups().await.unwrap_or_default();
+    let identities = state.vault.list_identities().await.unwrap_or_default();
+    *state.profiles_cache.lock().unwrap() = profiles;
+    *state.groups_cache.lock().unwrap() = groups;
+    *state.identities_cache.lock().unwrap() = identities;
 }
 
 fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
@@ -391,14 +447,15 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let state_task = state.clone();
             let profile_for_panel = profile.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut vault = vault.lock().unwrap();
-                    vault.store_secret(credential_id, &password_bytes)?;
-                    vault.save_profile(&profile)
-                })
-                .await
-                .expect("blocking task panik");
+                let result: Result<(), terminus_vault::VaultError> = async move {
+                    vault.store_secret(credential_id, password_bytes).await?;
+                    vault.save_profile(profile).await
+                }
+                .await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_creating_host(false);
@@ -440,10 +497,11 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().save_group(&group))
-                    .await
-                    .expect("blocking task panik");
+                let result = vault.save_group(group).await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_creating_group(false);
@@ -481,14 +539,15 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 let ui_weak_task = ui_weak.clone();
                 let state_task = state.clone();
                 tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                        let mut vault = vault.lock().unwrap();
-                        vault.store_secret(identity.credential_id, &password_bytes)?;
-                        vault.save_identity(&identity)
-                    })
-                    .await
-                    .expect("blocking task panik");
+                    let result: Result<(), terminus_vault::VaultError> = async move {
+                        vault.store_secret(identity.credential_id, password_bytes).await?;
+                        vault.save_identity(identity).await
+                    }
+                    .await;
 
+                    if result.is_ok() {
+                        refresh_vault_cache(&state_task).await;
+                    }
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(ui) = ui_weak_task.upgrade() else { return };
                         ui.global::<HostsModel>().set_identities_busy(false);
@@ -516,10 +575,11 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().delete_identity(uuid))
-                    .await
-                    .expect("blocking task panik");
+                let result = vault.delete_identity(uuid).await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_identities_busy(false);
@@ -532,43 +592,50 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
     // Pilih satu identity di picker `HostSlideOver` (mode "New Host") —
-    // baca cepat + dekripsi (vault SUDAH unlocked, tidak perlu Argon2id
-    // ulang, cukup ChaCha20-Poly1305 instan) langsung SINKRON, sama pola
-    // dengan `on_group_opened` di atas (bukan mutasi, tidak butuh state
-    // loading async).
+    // beda dari `on_group_opened`/`on_search_requested`/`on_host_selected`
+    // di bawah: butuh baca PASSWORD (`read_secret`), yang TIDAK ikut
+    // di-cache (password sengaja tidak pernah disimpan plaintext di
+    // memori app lebih lama dari perlu) — jadi TETAP HARUS lewat vault
+    // beneran tiap kali, ASYNC (mode Self-hosted = network call). Ini
+    // SATU-SATUNYA titik "baca cepat" yang genuinely tidak bisa
+    // dihindari jadi async — lihat docs/desktop-selfhosted-integration
+    // .md bagian 2 & catatan test terkait di `tests` bawah file ini.
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.global::<HostsModel>().on_identity_picked(move |identity_id: slint::SharedString| {
-            let Some(ui) = ui_weak.upgrade() else { return };
+            if ui_weak.upgrade().is_none() {
+                return;
+            }
             let Ok(uuid) = Uuid::parse_str(&identity_id) else { return };
-            let vault = state.vault.lock().unwrap();
-            let Some(identity) = vault.list_identities().ok().and_then(|list| list.into_iter().find(|i| i.id == uuid))
-            else {
+            // Lookup metadata identity dari CACHE (sinkron, tidak perlu
+            // network call cuma buat cari username) — cuma password-nya
+            // yang beneran query vault.
+            let Some(identity) = state.identities_cache.lock().unwrap().iter().find(|i| i.id == uuid).cloned() else {
                 return;
             };
-            let Ok(password) = vault.read_secret(identity.credential_id) else { return };
-            drop(vault);
-            ui.global::<HostsModel>().set_panel_host_username(identity.username.into());
-            ui.global::<HostsModel>().set_panel_host_password(String::from_utf8_lossy(&password).into_owned().into());
+            let vault = state.vault.clone();
+            let ui_weak_task = ui_weak.clone();
+            tokio::spawn(async move {
+                let Ok(password) = vault.read_secret(identity.credential_id).await else { return };
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak_task.upgrade() else { return };
+                    ui.global::<HostsModel>().set_panel_host_username(identity.username.into());
+                    ui.global::<HostsModel>().set_panel_host_password(String::from_utf8_lossy(&password).into_owned().into());
+                });
+            });
         });
     }
 
-    // --- Drill-down ke satu grup (baca cepat, tetap sinkron — bukan
-    //     mutasi, tidak butuh state loading) ---
+    // --- Drill-down ke satu grup — baca dari CACHE (sinkron), bukan
+    //     mutasi, tidak butuh state loading. ---
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.global::<HostsModel>().on_group_opened(move |group_id: slint::SharedString| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Ok(uuid) = Uuid::parse_str(&group_id) else { return };
-            let name = state
-                .vault
-                .lock()
-                .unwrap()
-                .list_groups()
-                .ok()
-                .and_then(|groups| groups.into_iter().find(|g| g.id == uuid).map(|g| g.name));
+            let name = state.groups_cache.lock().unwrap().iter().find(|g| g.id == uuid).map(|g| g.name.clone());
             // Set eksplisit di sini (bukan cuma mengandalkan sisi Slint
             // yang sudah men-set ini sebelum manggil callback) — biar
             // handler ini "self-sufficient" tidak bergantung urutan
@@ -580,11 +647,11 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     }
 
     // --- Pencarian global (kotak di TopBar). Beda dari List/Groups:
-    //     nyari di SEMUA host dari vault langsung (`list_all_profiles`),
-    //     bukan cuma yang lagi ke-cache di `ungrouped-hosts`/
-    //     `active-group-hosts` — jadi host di dalam GRUP MANAPUN tetap
-    //     ketemu, bukan cuma yang lagi di-drill-down. Baca cepat &
-    //     sinkron (bukan mutasi), tidak butuh state loading. ---
+    //     nyari di SEMUA host dari CACHE (`profiles_cache`), bukan cuma
+    //     yang lagi ke-cache di `ungrouped-hosts`/`active-group-hosts`
+    //     — jadi host di dalam GRUP MANAPUN tetap ketemu, bukan cuma
+    //     yang lagi di-drill-down. Baca cepat & sinkron (bukan mutasi),
+    //     tidak butuh state loading. ---
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
@@ -594,10 +661,10 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let results: Vec<HostItem> = if query.is_empty() {
                 Vec::new()
             } else {
-                let vault = state.vault.lock().unwrap();
-                vault
-                    .list_all_profiles()
-                    .unwrap_or_default()
+                state
+                    .profiles_cache
+                    .lock()
+                    .unwrap()
                     .iter()
                     .filter(|p| host_matches_query(p, &query))
                     .map(|p| host_profile_to_item(&state, p))
@@ -607,7 +674,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
-    // --- Klik kartu host = select: baca profil lengkap dari vault
+    // --- Klik kartu host = select: baca profil lengkap dari CACHE
     //     (id, host, port, username, kind, group, tags — BUKAN
     //     password, itu sengaja tetap terenkripsi & tidak pernah
     //     ditampilkan) lalu isi `HostsModel.panel-host-*` supaya panel
@@ -620,10 +687,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Ok(uuid) = Uuid::parse_str(&host_id) else { return };
 
-            let profile = {
-                let vault = state.vault.lock().unwrap();
-                vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == uuid))
-            };
+            let profile = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == uuid).cloned();
             let Some(profile) = profile else {
                 show_notice(&ui, "Host tidak ditemukan", true);
                 return;
@@ -648,10 +712,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             let Ok(uuid) = Uuid::parse_str(&host_id) else { return };
 
-            let existing = {
-                let vault = state.vault.lock().unwrap();
-                vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == uuid))
-            };
+            let existing = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == uuid).cloned();
             let Some(existing) = existing else {
                 show_notice(&ui, "Host tidak ditemukan", true);
                 return;
@@ -692,16 +753,17 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let state_task = state.clone();
             let updated_for_task = updated.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut vault = vault.lock().unwrap();
+                let result: Result<(), terminus_vault::VaultError> = async move {
                     if let Some(pw) = new_password {
-                        vault.store_secret(credential_id, &pw)?;
+                        vault.store_secret(credential_id, pw).await?;
                     }
-                    vault.save_profile(&updated_for_task)
-                })
-                .await
-                .expect("blocking task panik");
+                    vault.save_profile(updated_for_task).await
+                }
+                .await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_panel_busy(false);
@@ -733,10 +795,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             let Ok(uuid) = Uuid::parse_str(&host_id) else { return };
 
-            let existing = {
-                let vault = state.vault.lock().unwrap();
-                vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == uuid))
-            };
+            let existing = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == uuid).cloned();
             let Some(existing) = existing else {
                 show_notice(&ui, "Host tidak ditemukan", true);
                 return;
@@ -754,23 +813,24 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || -> Result<HostProfile, String> {
-                    let mut vault = vault.lock().unwrap();
-                    let secret = vault.read_secret(old_credential_id).map_err(|e| e.to_string())?;
+                let result: Result<HostProfile, String> = async move {
+                    let secret = vault.read_secret(old_credential_id).await.map_err(|e| e.to_string())?;
                     let new_credential_id = Uuid::new_v4();
-                    vault.store_secret(new_credential_id, &secret).map_err(|e| e.to_string())?;
+                    vault.store_secret(new_credential_id, secret).await.map_err(|e| e.to_string())?;
                     let duplicate = HostProfile {
                         id: Uuid::new_v4(),
                         label: format!("{} (copy)", existing.label),
                         auth: AuthMethod::Password { credential_id: new_credential_id },
                         ..existing
                     };
-                    vault.save_profile(&duplicate).map_err(|e| e.to_string())?;
+                    vault.save_profile(duplicate.clone()).await.map_err(|e| e.to_string())?;
                     Ok(duplicate)
-                })
-                .await
-                .expect("blocking task panik");
+                }
+                .await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_panel_busy(false);
@@ -808,10 +868,11 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().delete_profile(uuid))
-                    .await
-                    .expect("blocking task panik");
+                let result = vault.delete_profile(uuid).await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_deleting_host(false);
@@ -859,10 +920,11 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || vault.lock().unwrap().delete_group(uuid))
-                    .await
-                    .expect("blocking task panik");
+                let result = vault.delete_group(uuid).await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_deleting_group(false);
@@ -994,18 +1056,19 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let vault = state.vault.clone();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
-            let ids_for_blocking = ids.clone();
+            let ids_for_task = ids.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut vault = vault.lock().unwrap();
-                    for id in &ids_for_blocking {
-                        vault.delete_profile(*id)?;
+                let result: Result<(), terminus_vault::VaultError> = async move {
+                    for id in &ids_for_task {
+                        vault.delete_profile(*id).await?;
                     }
-                    Ok::<_, terminus_vault::VaultError>(())
-                })
-                .await
-                .expect("blocking task panik");
+                    Ok(())
+                }
+                .await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_deleting_bulk(false);
@@ -1051,18 +1114,19 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let vault = state.vault.clone();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
-            let ids_for_blocking = ids.clone();
+            let ids_for_task = ids.clone();
             tokio::spawn(async move {
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut vault = vault.lock().unwrap();
-                    for id in &ids_for_blocking {
-                        vault.delete_group(*id)?;
+                let result: Result<(), terminus_vault::VaultError> = async move {
+                    for id in &ids_for_task {
+                        vault.delete_group(*id).await?;
                     }
-                    Ok::<_, terminus_vault::VaultError>(())
-                })
-                .await
-                .expect("blocking task panik");
+                    Ok(())
+                }
+                .await;
 
+                if result.is_ok() {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
                     ui.global::<HostsModel>().set_deleting_bulk(false);
@@ -1105,10 +1169,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 return;
             }
 
-            let profile = {
-                let vault = state.vault.lock().unwrap();
-                vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == uuid))
-            };
+            let profile = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == uuid).cloned();
             let Some(profile) = profile else {
                 show_notice(&ui, "Host tidak ditemukan", true);
                 return;
@@ -1121,49 +1182,58 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     return;
                 }
             };
-            // `Ok(bytes) if !bytes.is_empty()` — dua skenario "belum
-            // ada password" yang dua-duanya HARUS lewat jalur prompt di
-            // bawah, bukan cuma `Err`: (1) `read_secret` gagal/`Err`
-            // (credential_id belum PERNAH di-`store_secret`, skenario
-            // paling umum: host hasil Import SecureCRT), (2) `Ok(vec
-            // ![])` (PERNAH tersimpan tapi kosong — bisa terjadi kalau
-            // host baru dibuat dengan field Password sengaja dikosongi).
-            let password = {
-                let vault = state.vault.lock().unwrap();
-                match vault.read_secret(credential_id) {
+
+            // Baca password ASYNC (mode Self-hosted = network call, TIDAK
+            // BOLEH block UI thread) — keputusan connect-langsung vs
+            // minta-password diambil SETELAH ini selesai, lihat di bawah.
+            let vault = state.vault.clone();
+            let ui_weak_task = ui_weak.clone();
+            let state_task = state.clone();
+            tokio::spawn(async move {
+                // `Ok(bytes) if !bytes.is_empty()` — dua skenario "belum
+                // ada password" yang dua-duanya HARUS lewat jalur prompt
+                // di bawah, bukan cuma `Err`: (1) `read_secret` gagal/
+                // `Err` (credential_id belum PERNAH di-`store_secret`,
+                // skenario paling umum: host hasil Import SecureCRT),
+                // (2) `Ok(vec![])` (PERNAH tersimpan tapi kosong — bisa
+                // terjadi kalau host baru dibuat dengan field Password
+                // sengaja dikosongi).
+                let password = match vault.read_secret(credential_id).await {
                     Ok(bytes) if !bytes.is_empty() => Some(String::from_utf8_lossy(&bytes).to_string()),
                     _ => None,
-                }
-            };
+                };
 
-            match password {
-                Some(password) => {
-                    let ui_weak_task = ui_weak.clone();
-                    let state_task = state.clone();
-                    track_connect_task(&state, Some(uuid), perform_connect(ui_weak_task, state_task, profile, password));
+                match password {
+                    Some(password) => {
+                        track_connect_task(&state_task, Some(uuid), perform_connect(ui_weak_task, state_task.clone(), profile, password));
+                    }
+                    None => {
+                        // Password belum ada — DULU langsung gagal dengan
+                        // notice error, user harus buka panel Host Details
+                        // manual dulu. SEKARANG (atas permintaan eksplisit
+                        // user): tampilkan layar Connecting dalam mode
+                        // "minta password" (`ConnectingModel.needs-
+                        // password`), simpan profile-nya di `state.pending_
+                        // password_profile` biar `on_password_submitted`
+                        // (di bawah) tahu connect ke siapa begitu user
+                        // submit.
+                        let _ = slint::invoke_from_event_loop(move || {
+                            let Some(ui) = ui_weak_task.upgrade() else { return };
+                            let label = profile.label.clone();
+                            let subtitle = format!("SSH {}:{}", profile.host, profile.port);
+                            let avatar_letter =
+                                label.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string());
+                            *state_task.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = Some(profile);
+                            let cm = ui.global::<ConnectingModel>();
+                            cm.set_label(label.into());
+                            cm.set_subtitle(subtitle.into());
+                            cm.set_avatar_letter(avatar_letter.into());
+                            cm.set_needs_password(true);
+                            cm.set_visible(true);
+                        });
+                    }
                 }
-                None => {
-                    // Password belum ada — DULU langsung gagal dengan
-                    // notice error, user harus buka panel Host Details
-                    // manual dulu. SEKARANG (atas permintaan eksplisit
-                    // user): tampilkan layar Connecting dalam mode
-                    // "minta password" (`ConnectingModel.needs-
-                    // password`), simpan profile-nya di `state.pending_
-                    // password_profile` biar `on_password_submitted`
-                    // (di bawah) tahu connect ke siapa begitu user
-                    // submit.
-                    let label = profile.label.clone();
-                    let subtitle = format!("SSH {}:{}", profile.host, profile.port);
-                    let avatar_letter = label.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string());
-                    *state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = Some(profile);
-                    let cm = ui.global::<ConnectingModel>();
-                    cm.set_label(label.into());
-                    cm.set_subtitle(subtitle.into());
-                    cm.set_avatar_letter(avatar_letter.into());
-                    cm.set_needs_password(true);
-                    cm.set_visible(true);
-                }
-            }
+            });
         });
     }
 
@@ -1207,15 +1277,16 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let profile_for_connect = profile.clone();
             let profile_for_panel = profile.clone();
             let fut = async move {
-                let save_result = tokio::task::spawn_blocking(move || {
-                    let mut vault = vault.lock().unwrap();
-                    vault.store_secret(credential_id, &password_bytes)?;
-                    vault.save_profile(&profile)
-                })
-                .await
-                .expect("blocking task panik");
+                let save_result: Result<(), terminus_vault::VaultError> = async move {
+                    vault.store_secret(credential_id, password_bytes).await?;
+                    vault.save_profile(profile).await
+                }
+                .await;
 
                 let save_succeeded = save_result.is_ok();
+                if save_succeeded {
+                    refresh_vault_cache(&state_task).await;
+                }
                 let ui_weak_ui = ui_weak_task.clone();
                 let state_ui = state_task.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -1263,7 +1334,10 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let outcome = tokio::task::spawn_blocking(move || -> Result<Option<ImportSummary>, String> {
+                // Dialog file native (`rfd`, BLOCKING beneran) + baca+
+                // parse XML — TIDAK menyentuh vault sama sekali, tetap
+                // di `spawn_blocking` biar UI thread tidak freeze.
+                let parsed = tokio::task::spawn_blocking(move || -> Result<Option<terminus_core::import::securecrt::ParsedImport>, String> {
                     let Some(path) = rfd::FileDialog::new()
                         .set_title("Import host dari config.xml (SecureCRT)")
                         .add_filter("XML", &["xml"])
@@ -1272,12 +1346,21 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                         return Ok(None); // user batal — bukan error
                     };
                     let xml = std::fs::read_to_string(&path).map_err(|e| format!("Gagal baca file: {e}"))?;
-                    let parsed = terminus_core::import::securecrt::parse(&xml).map_err(|e| e.to_string())?;
-                    let mut vault = vault.lock().unwrap();
-                    import_parsed_hosts_into_vault(&mut vault, parsed).map(Some)
+                    terminus_core::import::securecrt::parse(&xml).map(Some).map_err(|e| e.to_string())
                 })
                 .await
                 .expect("blocking task panik");
+
+                // Tulis ke vault ASYNC (mode Self-hosted = network call),
+                // TERPISAH dari bagian dialog+file di atas.
+                let outcome: Result<Option<ImportSummary>, String> = match parsed {
+                    Ok(None) => Ok(None),
+                    Ok(Some(parsed)) => import_parsed_hosts_into_vault(&vault, parsed).await.map(Some),
+                    Err(e) => Err(e),
+                };
+                if matches!(outcome, Ok(Some(_))) {
+                    refresh_vault_cache(&state_task).await;
+                }
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
@@ -1325,30 +1408,33 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let vault = state.vault.clone();
             let ui_weak_task = ui_weak.clone();
             tokio::spawn(async move {
-                let outcome = tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
-                    let hosts = {
-                        let vault = vault.lock().unwrap();
-                        export_hosts_from_vault(&vault)?
-                    };
+                let outcome: Result<Option<usize>, String> = async move {
+                    let hosts = export_hosts_from_vault(&vault).await?;
                     if hosts.is_empty() {
                         return Err("Belum ada host tersimpan untuk di-export.".to_string());
                     }
                     let count = hosts.len();
                     let xml = terminus_core::export::securecrt::export(&hosts);
 
-                    let Some(path) = rfd::FileDialog::new()
-                        .set_title("Export host ke config.xml (SecureCRT)")
-                        .set_file_name("config.xml")
-                        .add_filter("XML", &["xml"])
-                        .save_file()
-                    else {
-                        return Ok(None); // user batal — bukan error
-                    };
-                    std::fs::write(&path, xml).map_err(|e| format!("Gagal tulis file: {e}"))?;
-                    Ok(Some(count))
-                })
-                .await
-                .expect("blocking task panik");
+                    // Dialog "Save File" native (`rfd`, BLOCKING beneran)
+                    // + tulis file — TIDAK menyentuh vault lagi, aman di
+                    // `spawn_blocking`.
+                    tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
+                        let Some(path) = rfd::FileDialog::new()
+                            .set_title("Export host ke config.xml (SecureCRT)")
+                            .set_file_name("config.xml")
+                            .add_filter("XML", &["xml"])
+                            .save_file()
+                        else {
+                            return Ok(None); // user batal — bukan error
+                        };
+                        std::fs::write(&path, xml).map_err(|e| format!("Gagal tulis file: {e}"))?;
+                        Ok(Some(count))
+                    })
+                    .await
+                    .expect("blocking task panik")
+                }
+                .await;
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
@@ -1390,30 +1476,33 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let vault = state.vault.clone();
             let ui_weak_task = ui_weak.clone();
             tokio::spawn(async move {
-                let outcome = tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
-                    let backup = {
-                        let vault = vault.lock().unwrap();
-                        build_json_backup(&vault, &passphrase)?
-                    };
+                let outcome: Result<Option<usize>, String> = async move {
+                    let backup = build_json_backup(&vault, &passphrase).await?;
                     if backup.hosts.is_empty() {
                         return Err("Belum ada host tersimpan untuk di-export.".to_string());
                     }
                     let count = backup.hosts.len();
                     let json = terminus_core::export::json::render(&backup);
 
-                    let Some(path) = rfd::FileDialog::new()
-                        .set_title("Export backup host (JSON terenkripsi)")
-                        .set_file_name("terminus-backup.json")
-                        .add_filter("JSON", &["json"])
-                        .save_file()
-                    else {
-                        return Ok(None); // user batal — bukan error
-                    };
-                    std::fs::write(&path, json).map_err(|e| format!("Gagal tulis file: {e}"))?;
-                    Ok(Some(count))
-                })
-                .await
-                .expect("blocking task panik");
+                    // Dialog "Save File" native (`rfd`, BLOCKING beneran)
+                    // + tulis file — TIDAK menyentuh vault lagi, aman di
+                    // `spawn_blocking`.
+                    tokio::task::spawn_blocking(move || -> Result<Option<usize>, String> {
+                        let Some(path) = rfd::FileDialog::new()
+                            .set_title("Export backup host (JSON terenkripsi)")
+                            .set_file_name("terminus-backup.json")
+                            .add_filter("JSON", &["json"])
+                            .save_file()
+                        else {
+                            return Ok(None); // user batal — bukan error
+                        };
+                        std::fs::write(&path, json).map_err(|e| format!("Gagal tulis file: {e}"))?;
+                        Ok(Some(count))
+                    })
+                    .await
+                    .expect("blocking task panik")
+                }
+                .await;
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
@@ -1455,12 +1544,12 @@ struct ImportSummary {
 /// Dipisah dari closure `on_import_xml_requested` (bukan cuma inline
 /// di situ) supaya bisa dites langsung tanpa perlu buka dialog file
 /// beneran — lihat `tests::import_flatten_group_path_dan_dedup_grup`.
-fn import_parsed_hosts_into_vault(
-    vault: &mut VaultStore,
+async fn import_parsed_hosts_into_vault(
+    vault: &VaultBackend,
     parsed: terminus_core::import::securecrt::ParsedImport,
 ) -> Result<ImportSummary, String> {
     let mut group_cache: HashMap<String, Uuid> =
-        vault.list_groups().map_err(|e| e.to_string())?.into_iter().map(|g| (g.name, g.id)).collect();
+        vault.list_groups().await.map_err(|e| e.to_string())?.into_iter().map(|g| (g.name, g.id)).collect();
 
     let mut imported = 0usize;
     for host in parsed.hosts {
@@ -1473,7 +1562,7 @@ fn import_parsed_hosts_into_vault(
             } else {
                 let id = Uuid::new_v4();
                 let group = HostGroup { id, name: name.clone(), subtitle: None, parent_id: None };
-                vault.save_group(&group).map_err(|e| e.to_string())?;
+                vault.save_group(group).await.map_err(|e| e.to_string())?;
                 group_cache.insert(name, id);
                 Some(id)
             }
@@ -1495,7 +1584,7 @@ fn import_parsed_hosts_into_vault(
             tags: vec!["imported".to_string()],
             terminal_theme: None,
         };
-        vault.save_profile(&profile).map_err(|e| e.to_string())?;
+        vault.save_profile(profile).await.map_err(|e| e.to_string())?;
         imported += 1;
     }
     Ok(ImportSummary { imported, skipped: parsed.skipped })
@@ -1511,13 +1600,13 @@ fn import_parsed_hosts_into_vault(
 /// Dipisah dari closure `on_export_xml_requested` (bukan cuma inline di
 /// situ) supaya bisa dites langsung tanpa perlu buka dialog file
 /// beneran — lihat `tests::export_resolve_group_path_dari_group_id`.
-fn export_hosts_from_vault(
-    vault: &VaultStore,
+async fn export_hosts_from_vault(
+    vault: &VaultBackend,
 ) -> Result<Vec<terminus_core::export::securecrt::ExportHost>, String> {
     let groups: HashMap<Uuid, String> =
-        vault.list_groups().map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
+        vault.list_groups().await.map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
 
-    let profiles = vault.list_all_profiles().map_err(|e| e.to_string())?;
+    let profiles = vault.list_all_profiles().await.map_err(|e| e.to_string())?;
     Ok(profiles
         .into_iter()
         .map(|p| {
@@ -1550,10 +1639,10 @@ fn export_hosts_from_vault(
 /// Dipisah dari closure `on_export_json_requested` (bukan cuma inline
 /// di situ) supaya bisa dites tanpa perlu buka dialog file beneran —
 /// lihat `tests::build_json_backup_enkripsi_password_dan_bisa_didekripsi_ulang`.
-fn build_json_backup(vault: &VaultStore, passphrase: &str) -> Result<terminus_core::export::json::Backup, String> {
+async fn build_json_backup(vault: &VaultBackend, passphrase: &str) -> Result<terminus_core::export::json::Backup, String> {
     let groups: HashMap<Uuid, String> =
-        vault.list_groups().map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
-    let profiles = vault.list_all_profiles().map_err(|e| e.to_string())?;
+        vault.list_groups().await.map_err(|e| e.to_string())?.into_iter().map(|g| (g.id, g.name)).collect();
+    let profiles = vault.list_all_profiles().await.map_err(|e| e.to_string())?;
 
     let salt = terminus_vault::crypto::generate_salt();
     let key = terminus_vault::crypto::derive_key(passphrase, &salt).map_err(|e| e.to_string())?;
@@ -1570,7 +1659,7 @@ fn build_json_backup(vault: &VaultStore, passphrase: &str) -> Result<terminus_co
         }
         .to_string();
         let encrypted_password = match p.auth {
-            AuthMethod::Password { credential_id } => match vault.read_secret(credential_id) {
+            AuthMethod::Password { credential_id } => match vault.read_secret(credential_id).await {
                 Ok(plaintext) => {
                     Some(terminus_vault::crypto::encrypt(&key, &plaintext).map_err(|e| e.to_string())?)
                 }
@@ -1764,16 +1853,11 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     // restart, bukan kegagalan yang harus mengganggu user.
                     let vault = state.vault.clone();
                     let theme_name = name.to_string();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        let mut vault = vault.lock().unwrap();
-                        if let Some(mut profile) =
-                            vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == id))
-                        {
-                            profile.terminal_theme = Some(theme_name);
-                            let _ = vault.save_profile(&profile);
-                        }
-                    })
-                    .await;
+                    let cached_profile = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == id).cloned();
+                    if let Some(mut profile) = cached_profile {
+                        profile.terminal_theme = Some(theme_name);
+                        let _ = vault.save_profile(profile).await;
+                    }
                 }
                 // Update background PANEL terminal juga (bukan cuma
                 // per-sel teks) — biar begitu user buka/pindah tab ke
@@ -1812,10 +1896,7 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             let Ok(uuid) = Uuid::parse_str(&host_id) else { return };
 
-            let profile = {
-                let vault = state.vault.lock().unwrap();
-                vault.list_all_profiles().ok().and_then(|list| list.into_iter().find(|p| p.id == uuid))
-            };
+            let profile = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == uuid).cloned();
             let Some(profile) = profile else {
                 show_notice(&ui, "Host tidak ditemukan", true);
                 return;
@@ -1827,27 +1908,34 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     return;
                 }
             };
-            let password = {
-                let vault = state.vault.lock().unwrap();
-                match vault.read_secret(credential_id) {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                    Err(e) => {
-                        show_notice(
-                            &ui,
-                            &format!("Gagal baca kredensial (mungkin belum diisi password): {e}"),
-                            true,
-                        );
-                        return;
-                    }
-                }
-            };
 
             ui.global::<SftpModel>().set_connecting(true);
             ui.global::<SftpModel>().set_connect_error("".into());
 
+            // Baca password ASYNC (mode Self-hosted = network call) —
+            // dipindah ke dalam future connect-nya sendiri, TIDAK LAGI
+            // sinkron di callback ini.
+            let vault = state.vault.clone();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             track_connect_task(&state, None, async move {
+                let password = match vault.read_secret(credential_id).await {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+                    Err(e) => {
+                        let ui_weak_err = ui_weak_task.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak_err.upgrade() {
+                                ui.global::<SftpModel>().set_connecting(false);
+                                show_notice(
+                                    &ui,
+                                    &format!("Gagal baca kredensial (mungkin belum diisi password): {e}"),
+                                    true,
+                                );
+                            }
+                        });
+                        return;
+                    }
+                };
                 sftp_connect_and_refresh(ui_weak_task, state_task, profile, SecretMaterial::Password(password)).await;
             });
         });
@@ -2878,10 +2966,7 @@ fn wire_connecting_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 // menggagalkan connect-nya, cuma berarti next time
                 // ditanya lagi) baru connect, biar begitu login sukses
                 // password itu SUDAH ada di vault buat next time.
-                let _ = tokio::task::spawn_blocking(move || {
-                    vault.lock().unwrap().store_secret(credential_id, &password_bytes)
-                })
-                .await;
+                let _ = vault.store_secret(credential_id, password_bytes).await;
                 perform_connect(ui_weak_task, state_task, profile, password).await;
             };
             track_connect_task(&state, Some(uuid), fut);
@@ -2983,7 +3068,12 @@ async fn sftp_connect_and_refresh(
     profile: HostProfile,
     secret: SecretMaterial,
 ) {
-    let host_key_store: Arc<dyn HostKeyStore> = Arc::new(AppHostKeyStore::new(state.vault.clone()));
+    // `local_store()` — lihat komentar `is_first_run` di `wire_callbacks`:
+    // `AppHostKeyStore` masih Local-only (belum ada `known_hosts` store
+    // yang always-local, lihat docs/desktop-selfhosted-integration.md
+    // bagian 2.7) — Milestone 2b belum ada cabang startup Self-hosted.
+    let host_key_store: Arc<dyn HostKeyStore> =
+        Arc::new(AppHostKeyStore::new(state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3")));
     let label = profile.label.clone();
     {
         let subtitle = format!("SFTP {}:{}", profile.host, profile.port);
@@ -3367,7 +3457,12 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
         });
     }
 
-    let host_key_store: Arc<dyn HostKeyStore> = Arc::new(AppHostKeyStore::new(state.vault.clone()));
+    // `local_store()` — lihat komentar `is_first_run` di `wire_callbacks`:
+    // `AppHostKeyStore` masih Local-only (belum ada `known_hosts` store
+    // yang always-local, lihat docs/desktop-selfhosted-integration.md
+    // bagian 2.7) — Milestone 2b belum ada cabang startup Self-hosted.
+    let host_key_store: Arc<dyn HostKeyStore> =
+        Arc::new(AppHostKeyStore::new(state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3")));
     let result = terminus_ssh_engine::connect(&profile, SecretMaterial::Password(password), host_key_store).await;
 
     let notice: Option<String> = match result {
@@ -3664,14 +3759,17 @@ fn host_profile_to_item(state: &Arc<AppState>, p: &HostProfile) -> HostItem {
 /// mutasi parsial per-item, lebih gampang dijaga konsistensinya untuk
 /// ukuran data yang wajar (daftar host personal, bukan ribuan baris).
 fn refresh_hosts_model(ui: &AppWindow, state: &Arc<AppState>) {
+    // Baca dari CACHE (`refresh_vault_cache`), BUKAN vault langsung —
+    // fungsi ini TETAP SINKRON (dipanggil dari banyak tempat, termasuk
+    // dari dalam closure sinkron `invoke_from_event_loop`) — lihat
+    // komentar panjang `refresh_vault_cache` soal kenapa pola ini
+    // dipilih.
     let (ungrouped, groups, all, identities) = {
-        let vault = state.vault.lock().unwrap();
-        (
-            vault.list_ungrouped_profiles().unwrap_or_default(),
-            vault.list_groups().unwrap_or_default(),
-            vault.list_all_profiles().unwrap_or_default(),
-            vault.list_identities().unwrap_or_default(),
-        )
+        let all = state.profiles_cache.lock().unwrap().clone();
+        let groups = state.groups_cache.lock().unwrap().clone();
+        let identities = state.identities_cache.lock().unwrap().clone();
+        let ungrouped: Vec<HostProfile> = all.iter().filter(|p| p.group_id.is_none()).cloned().collect();
+        (ungrouped, groups, all, identities)
     };
 
     // Identity tersimpan — dua model SEJAJAR index-nya (lihat komentar
@@ -3764,6 +3862,17 @@ mod tests {
         VaultStore::open_at(path).unwrap()
     }
 
+    /// Bungkus `VaultStore` sementara jadi `VaultBackend::Local` — dipakai
+    /// test yang manggil fungsi `async` (`import_parsed_hosts_into_vault`/
+    /// `export_hosts_from_vault`/`build_json_backup`/`wire_callbacks`).
+    /// `initialize`/`unlock` (lifecycle Local-only) dipanggil SEBELUM
+    /// dibungkus di sini, lewat `VaultStore` langsung.
+    fn temp_vault_backend_initialized(master_password: &str) -> VaultBackend {
+        let mut store = temp_vault();
+        store.initialize(master_password).unwrap();
+        VaultBackend::Local(Arc::new(Mutex::new(store)))
+    }
+
     /// Sample XML SecureCRT kecil: dua host share satu folder path
     /// bertingkat (buat nguji dedup grup), satu host di root (ungrouped),
     /// satu sesi Serial (harus kehitung skipped, bukan diimpor).
@@ -3810,24 +3919,23 @@ mod tests {
     /// (4) TIDAK ADA password ter-import (credential_id sengaja tanpa
     /// secret — baca ulang harus gagal); (5) import file yang SAMA dua
     /// kali TIDAK menduplikasi grup (dedup by name).
-    #[test]
-    fn import_securecrt_flatten_group_path_dan_dedup_grup() {
-        let mut vault = temp_vault();
-        vault.initialize("master-password-test").unwrap();
+    #[tokio::test]
+    async fn import_securecrt_flatten_group_path_dan_dedup_grup() {
+        let vault = temp_vault_backend_initialized("master-password-test");
 
         let parsed = terminus_core::import::securecrt::parse(IMPORT_SAMPLE_XML).unwrap();
         assert_eq!(parsed.hosts.len(), 3);
         assert_eq!(parsed.skipped, 1, "sesi Serial harus kehitung skipped");
 
-        let summary = import_parsed_hosts_into_vault(&mut vault, parsed).unwrap();
+        let summary = import_parsed_hosts_into_vault(&vault, parsed).await.unwrap();
         assert_eq!(summary.imported, 3);
         assert_eq!(summary.skipped, 1);
 
-        let groups = vault.list_groups().unwrap();
+        let groups = vault.list_groups().await.unwrap();
         assert_eq!(groups.len(), 1, "rtr-01 & rtr-02 di folder yang sama harus dapat SATU grup, bukan dua");
         assert_eq!(groups[0].name, "ROUTER / BAROKAH");
 
-        let profiles = vault.list_all_profiles().unwrap();
+        let profiles = vault.list_all_profiles().await.unwrap();
         assert_eq!(profiles.len(), 3);
         let rtr01 = profiles.iter().find(|p| p.label == "rtr-01").unwrap();
         let rtr02 = profiles.iter().find(|p| p.label == "rtr-02").unwrap();
@@ -3842,7 +3950,7 @@ mod tests {
         // TIDAK ADA password yang ke-import — baca secret manapun harus gagal.
         for p in &profiles {
             let AuthMethod::Password { credential_id } = p.auth else { panic!("harus AuthMethod::Password") };
-            assert!(vault.read_secret(credential_id).is_err(), "host hasil import TIDAK BOLEH punya secret tersimpan");
+            assert!(vault.read_secret(credential_id).await.is_err(), "host hasil import TIDAK BOLEH punya secret tersimpan");
         }
 
         // Import ULANG file yang sama -> grup TIDAK boleh terduplikasi
@@ -3850,8 +3958,8 @@ mod tests {
         // baru (id beda) tetap kebuat lagi (itu ekspektasi wajar untuk
         // import naif tanpa dedup-by-hostname — di luar scope v1 ini).
         let parsed_again = terminus_core::import::securecrt::parse(IMPORT_SAMPLE_XML).unwrap();
-        import_parsed_hosts_into_vault(&mut vault, parsed_again).unwrap();
-        let groups_after = vault.list_groups().unwrap();
+        import_parsed_hosts_into_vault(&vault, parsed_again).await.unwrap();
+        let groups_after = vault.list_groups().await.unwrap();
         assert_eq!(groups_after.len(), 1, "import ulang TIDAK BOLEH bikin grup 'ROUTER / BAROKAH' dobel");
     }
 
@@ -3862,15 +3970,14 @@ mod tests {
     /// `terminus_core::import::securecrt::parse`, punya host & folder
     /// path yang SAMA seperti file aslinya (round-trip penuh: vault ->
     /// export -> import lagi).
-    #[test]
-    fn export_hosts_from_vault_round_trip_dengan_import() {
-        let mut vault = temp_vault();
-        vault.initialize("master-password-test").unwrap();
+    #[tokio::test]
+    async fn export_hosts_from_vault_round_trip_dengan_import() {
+        let vault = temp_vault_backend_initialized("master-password-test");
 
         let parsed = terminus_core::import::securecrt::parse(IMPORT_SAMPLE_XML).unwrap();
-        import_parsed_hosts_into_vault(&mut vault, parsed).unwrap();
+        import_parsed_hosts_into_vault(&vault, parsed).await.unwrap();
 
-        let export_hosts = export_hosts_from_vault(&vault).unwrap();
+        let export_hosts = export_hosts_from_vault(&vault).await.unwrap();
         assert_eq!(export_hosts.len(), 3);
 
         let rtr01 = export_hosts.iter().find(|h| h.label == "rtr-01").unwrap();
@@ -3892,11 +3999,10 @@ mod tests {
     /// harus balikin `Ok(vec![])`, BUKAN error — validasi "tidak ada
     /// yang di-export" itu tanggung jawab caller (`on_export_xml_requested`),
     /// bukan fungsi murni ini, supaya gampang dites terpisah.
-    #[test]
-    fn export_hosts_from_vault_kosong_kalau_belum_ada_host() {
-        let mut vault = temp_vault();
-        vault.initialize("master-password-test").unwrap();
-        assert_eq!(export_hosts_from_vault(&vault).unwrap(), vec![]);
+    #[tokio::test]
+    async fn export_hosts_from_vault_kosong_kalau_belum_ada_host() {
+        let vault = temp_vault_backend_initialized("master-password-test");
+        assert_eq!(export_hosts_from_vault(&vault).await.unwrap(), vec![]);
     }
 
     /// Membuktikan `build_json_backup` (dipakai `on_export_json_requested`):
@@ -3907,20 +4013,20 @@ mod tests {
     /// cocok); (3) host tanpa secret tersimpan dapat
     /// `encrypted_password: None`, bukan error; (4) `group_path`
     /// ke-resolve benar dari `group_id`.
-    #[test]
-    fn build_json_backup_enkripsi_password_dan_bisa_didekripsi_ulang() {
-        let mut vault = temp_vault();
-        vault.initialize("master-password-vault-test").unwrap();
+    #[tokio::test]
+    async fn build_json_backup_enkripsi_password_dan_bisa_didekripsi_ulang() {
+        let vault = temp_vault_backend_initialized("master-password-vault-test");
 
         let group_id = Uuid::new_v4();
         vault
-            .save_group(&HostGroup { id: group_id, name: "ROUTER".to_string(), subtitle: None, parent_id: None })
+            .save_group(HostGroup { id: group_id, name: "ROUTER".to_string(), subtitle: None, parent_id: None })
+            .await
             .unwrap();
 
         let cred_dengan_password = Uuid::new_v4();
-        vault.store_secret(cred_dengan_password, b"password-ssh-rahasia").unwrap();
+        vault.store_secret(cred_dengan_password, b"password-ssh-rahasia".to_vec()).await.unwrap();
         vault
-            .save_profile(&HostProfile {
+            .save_profile(HostProfile {
                 id: Uuid::new_v4(),
                 label: "rtr-fwd".to_string(),
                 host: "192.168.1.1".to_string(),
@@ -3932,12 +4038,13 @@ mod tests {
                 tags: vec![],
                 terminal_theme: None,
             })
+            .await
             .unwrap();
 
         // Host TANPA secret tersimpan (credential_id "menggantung") —
         // sama seperti host hasil Import SecureCRT yang belum diisi.
         vault
-            .save_profile(&HostProfile {
+            .save_profile(HostProfile {
                 id: Uuid::new_v4(),
                 label: "belum-diisi".to_string(),
                 host: "10.0.0.9".to_string(),
@@ -3949,9 +4056,10 @@ mod tests {
                 tags: vec!["imported".to_string()],
                 terminal_theme: None,
             })
+            .await
             .unwrap();
 
-        let backup = build_json_backup(&vault, "passphrase-backup-terpisah").unwrap();
+        let backup = build_json_backup(&vault, "passphrase-backup-terpisah").await.unwrap();
         assert_eq!(backup.hosts.len(), 2);
 
         let with_pw = backup.hosts.iter().find(|h| h.label == "rtr-fwd").unwrap();
@@ -3993,7 +4101,7 @@ mod tests {
         let _guard = rt.enter();
 
         let ui = AppWindow::new().unwrap();
-        let state = wire_callbacks(&ui, temp_vault());
+        let state = wire_callbacks(&ui, VaultBackend::Local(Arc::new(Mutex::new(temp_vault()))));
         let ui_weak = ui.as_weak();
 
         slint::spawn_local(async move {
@@ -4164,9 +4272,8 @@ mod tests {
             // — dicek langsung ke vault, bukan lewat Slint. ---
             let original_credential_id = match state
                 .vault
-                .lock()
-                .unwrap()
                 .list_all_profiles()
+                .await
                 .unwrap()
                 .into_iter()
                 .find(|p| p.id.to_string() == host_a_id.as_str())
@@ -4196,9 +4303,8 @@ mod tests {
 
             let duplicate_credential_id = match state
                 .vault
-                .lock()
-                .unwrap()
                 .list_all_profiles()
+                .await
                 .unwrap()
                 .into_iter()
                 .find(|p| p.id.to_string() == duplicate_id.as_str())
@@ -4312,10 +4418,16 @@ mod tests {
             assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "", "field harus kosong sebelum dipilih");
 
             ui.global::<HostsModel>().invoke_identity_picked(identity_item.id.clone());
-            // Sinkron (bukan `tokio::spawn`, lihat komentar handler-nya) —
-            // efeknya harus LANGSUNG kelihatan tanpa `wait_until`.
+            // ASYNC (baca password lewat vault — lihat komentar
+            // handler-nya di `wire_hosts_callbacks`), BEDA dari
+            // `group_opened`/`search_requested`/`host_selected` yang
+            // baca dari cache & tetap sinkron — perlu `wait_until`.
+            wait_until(
+                || ui.global::<HostsModel>().get_panel_host_password() == "secret-identity-pw",
+                "identity_picked mengisi username+password dari vault",
+            )
+            .await;
             assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "bro-noc");
-            assert_eq!(ui.global::<HostsModel>().get_panel_host_password(), "secret-identity-pw");
 
             ui.global::<HostsModel>().invoke_identity_delete_requested(identity_item.id.clone());
             wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 0, "identity terhapus").await;

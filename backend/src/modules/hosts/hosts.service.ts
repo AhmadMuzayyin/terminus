@@ -8,6 +8,8 @@ import { prisma } from "../../db/client.js";
 import { NotFoundError } from "../../errors.js";
 
 export interface HostInput {
+  // Lihat komentar `id` di hosts.schema.ts.
+  id?: string;
   label: string;
   host: string;
   port: number;
@@ -104,6 +106,9 @@ export async function getHost(vaultId: string, id: string): Promise<HostResponse
 export async function createHost(vaultId: string, input: HostInput): Promise<HostResponse> {
   const host = await prisma.hostProfile.create({
     data: {
+      // `input.id` undefined -> Prisma pakai default `@default(uuid())`
+      // (perilaku LAMA, tidak berubah). Diisi -> dipakai APA ADANYA.
+      id: input.id,
       vaultId,
       label: input.label,
       host: input.host,

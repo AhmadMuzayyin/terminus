@@ -47,7 +47,10 @@ export async function getIdentity(vaultId: string, id: string): Promise<Identity
 
 export async function createIdentity(
   vaultId: string,
-  input: { label: string; username: string; password: string },
+  // `id` opsional: lihat komentar sama di hosts.schema.ts
+  // `createHostSchema.id` — kosongkan -> Prisma auto-generate seperti
+  // sebelumnya.
+  input: { id?: string; label: string; username: string; password: string },
 ): Promise<IdentityResponse> {
   const credentialId = randomUUID();
   const encrypted = encryptSecret(input.password);
@@ -55,7 +58,7 @@ export async function createIdentity(
   const identity = await prisma.$transaction(async (tx) => {
     await tx.secret.create({ data: { credentialId, vaultId, encryptedData: encrypted } });
     return tx.identity.create({
-      data: { vaultId, label: input.label, username: input.username, credentialId },
+      data: { id: input.id, vaultId, label: input.label, username: input.username, credentialId },
     });
   });
 

@@ -289,6 +289,20 @@ Self-hosted) didokumentasikan terpisah di
 `../docs/desktop-selfhosted-integration.md` — ikuti pola yang sama:
 desain dulu sebelum nulis kode Rust.
 
+**Addendum (ditambah waktu Milestone 2 integrasi desktop app)**:
+`POST /vaults/:vaultId/hosts`, `.../groups`, `.../identities` sekarang
+terima field `id` OPSIONAL di body (UUID) — kalau dikirim, dipakai APA
+ADANYA sebagai primary key (bukan di-generate server); kosongkan ->
+perilaku LAMA (auto-generate) tidak berubah. Alasan: desktop app
+generate `id` sendiri SEBELUM create (model client-authoritative, demi
+konsistensi Local/Self-hosted — lihat
+`../docs/desktop-selfhosted-integration.md` bagian 2.1 & 2.6), jadi
+server perlu bisa "diajak" pakai id yang sama, bukan bikin id-nya
+sendiri lalu client harus rekonsiliasi belakangan. Backward compatible
+— test lama tidak berubah, 3 test baru ditambah (satu per modul)
+mengonfirmasi `id` custom dipakai apa adanya. Total test SEKARANG 56
+(dari 53).
+
 ## 7. Sengaja DI LUAR SCOPE sekarang (jangan dikerjakan tanpa diminta)
 
 - Integrasi ke desktop app (`crates/app`) supaya bisa pilih Local vs

@@ -1,5 +1,7 @@
 // Self-contained (lihat pola sama di vaults.test.ts/hosts.test.ts).
 
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 
@@ -61,6 +63,17 @@ describe("Identities CRUD + secret", () => {
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ id: expect.any(String), label: "NOC Router", username: "bro-noc" });
     identityId = res.body.id;
+  });
+
+  it("create identity DENGAN id yang dikirim client -> id itu dipakai apa adanya", async () => {
+    const clientId = randomUUID();
+    const res = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/identities`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ id: clientId, label: "NOC Switch", username: "bro-noc-2", password: "secret-identity-pw-2" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(clientId);
   });
 
   it("get identity by id", async () => {

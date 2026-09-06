@@ -12,6 +12,15 @@ export const listHostsSchema = z.object({
 export const createHostSchema = z.object({
   params: z.object({ vaultId: z.string().uuid("vaultId tidak valid") }),
   body: z.object({
+    // Opsional — kalau diisi, dipakai APA ADANYA sebagai primary key
+    // (bukan di-generate server). Dibutuhkan client yang SUDAH generate
+    // ID sendiri SEBELUM create (mis. desktop app mode Self-hosted,
+    // lihat docs/desktop-selfhosted-integration.md) supaya id lokal &
+    // id server SELALU sama, tidak perlu rekonsiliasi belakangan.
+    // Kosongkan -> tetap auto-generate seperti sebelumnya (default
+    // Prisma `@default(uuid())` cuma berlaku kalau field ini TIDAK
+    // dikirim ke `prisma.hostProfile.create`, lihat hosts.service.ts).
+    id: z.string().uuid("id tidak valid").optional(),
     label: z.string().min(1, "Label wajib diisi"),
     host: z.string().min(1, "Host/IP wajib diisi"),
     port: z.coerce.number().int().min(1).max(65535).default(22),

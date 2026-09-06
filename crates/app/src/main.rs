@@ -17,7 +17,13 @@ fn main() -> anyhow::Result<()> {
     let tokio_rt = tokio::runtime::Runtime::new()?;
     let _guard = tokio_rt.enter();
 
+    // Milestone 2b: `state.rs` sudah pakai `VaultBackend` (abstraksi
+    // Local/Self-hosted), TAPI startup di sini MASIH SELALU buka mode
+    // Local — toggle mode beneran (baca `app_config.rs`, tampilkan
+    // layar login Self-hosted) itu Milestone 3, lihat
+    // docs/desktop-selfhosted-integration.md.
     let vault = terminus_vault::VaultStore::open_default()?;
+    let vault = terminus_vault::VaultBackend::Local(std::sync::Arc::new(std::sync::Mutex::new(vault)));
 
     let ui = AppWindow::new()?;
     state::wire_callbacks(&ui, vault);

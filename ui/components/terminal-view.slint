@@ -34,59 +34,195 @@ export component TerminalRowView inherits HorizontalLayout {
     }
 }
 
-// Area terminal interaktif beneran: nangkep keyboard lewat FocusScope,
-// terjemahin tombol khusus (Enter/Backspace/panah/Ctrl+huruf umum) jadi
-// byte control yang benar, sisanya (teks biasa) diteruskan apa adanya
-// ke `TerminalTabsModel.pty-input-requested` — TIDAK ada local echo di
-// sini, karakter yang kelihatan datang balik dari server lewat PTY
-// (server echo), persis terminal sungguhan. Dipakai satu instance per
-// tab AKTIF (lihat `ui/pages/page-terminal.slint`) — tab yang tidak
-// ditampilkan tidak me-render `TerminalView`, tapi sesinya tetap hidup
-// di background (state-nya dipegang Rust, bukan di sini).
-export component TerminalView inherits Rectangle {
-    background: TerminalTabsModel.terminal-bg-color;
+// Area terminal interaktif, dipakai BERSAMA tab SSH (`TerminalView`) &
+// Console serial (`ConsoleView`, console-view.slint) — yang beda cuma
+// SUMBER `rows`, tujuan `input`, dan background-nya.
+//
+// Keyboard: FocusScope nerjemahin tombol khusus (Enter/Backspace/panah/
+// Ctrl+huruf umum) jadi byte control yang benar, sisanya (teks biasa)
+// diteruskan apa adanya lewat `input` — TIDAK ada local echo, karakter
+// yang kelihatan datang balik dari server/device.
+//
+// Seleksi & clipboard: drag mouse kiri = seleksi (per sel, gaya
+// terminal: baris pertama dari kolom awal sampai ujung, baris tengah
+// penuh, baris terakhir sampai kolom akhir). Ctrl+Shift+C = copy,
+// Ctrl+Shift+V = paste (Ctrl+C TETAP dikirim sebagai ^C ke server).
+// Posisi piksel -> (baris, kolom) dihitung dari ukuran SATU sel font
+// monospace aktif (`cell-w`/`cell-h`, diukur dari teks sampel), jadi
+// karakter lebar (CJK/emoji) bisa sedikit meleset — batasan yang sama
+// seperti rendering grid-nya sendiri.
+export component TerminalSurface inherits Rectangle {
+    in property <[TermRow]> rows;
+    callback input(string);
+
+    // Diukur dari 10 karakter supaya pembulatan sub-piksel tidak
+    // numpuk jadi meleset di kolom-kolom kanan.
+    property <length> cell-w: measure.preferred-width / 10;
+    property <length> cell-h: measure.preferred-height;
+    // Titik (0,0) grid relatif ke `root` — lewat `absolute-position`
+    // supaya scroll `ScrollView` & border/padding style ikut
+    // terhitung otomatis.
+    property <length> origin-x: grid.absolute-position.x - root.absolute-position.x + Tokens.gutter-md;
+    property <length> origin-y: grid.absolute-position.y - root.absolute-position.y + Tokens.gutter-md;
+    property <length> line-w: grid.width - 2 * Tokens.gutter-md;
+
+    property <bool> selecting: false;
+    property <bool> has-selection: false;
+    property <int> anchor-row;
+    property <int> anchor-col;
+    property <int> cur-row;
+    property <int> cur-col;
+    property <bool> anchor-first: root.anchor-row < root.cur-row || (root.anchor-row == root.cur-row && root.anchor-col <= root.cur-col);
+    property <int> start-row: root.anchor-first ? root.anchor-row : root.cur-row;
+    property <int> start-col: root.anchor-first ? root.anchor-col : root.cur-col;
+    property <int> end-row: root.anchor-first ? root.cur-row : root.anchor-row;
+    property <int> end-col: root.anchor-first ? root.cur-col : root.anchor-col;
+
+    pure function row-at(y: length) -> int {
+        max(0, min(root.rows.length - 1, floor((y - root.origin-y) / root.cell-h)))
+    }
+    pure function col-at(x: length) -> int {
+        max(0, floor((x - root.origin-x) / root.cell-w))
+    }
+
+    function copy-selection() {
+        if root.has-selection {
+            clipboard.text = TerminalTabsModel.selection-text(root.rows, root.start-row, root.start-col, root.end-row, root.end-col);
+            clipboard.select-all();
+            clipboard.copy();
+            clipboard.text = "";
+        }
+    }
+    function paste-clipboard() {
+        clipboard.text = "";
+        clipboard.paste();
+        if clipboard.text != "" {
+            root.input(TerminalTabsModel.normalize-paste(clipboard.text));
+        }
+        clipboard.text = "";
+    }
 
     focus-scope := FocusScope {
         key-pressed(event) => {
-            if (event.modifiers.control && event.text != "") {
-                if (event.text == "c") { TerminalTabsModel.pty-input-requested("\u{3}"); return accept; }
-                if (event.text == "d") { TerminalTabsModel.pty-input-requested("\u{4}"); return accept; }
-                if (event.text == "z") { TerminalTabsModel.pty-input-requested("\u{1a}"); return accept; }
-                if (event.text == "l") { TerminalTabsModel.pty-input-requested("\u{c}"); return accept; }
-                if (event.text == "a") { TerminalTabsModel.pty-input-requested("\u{1}"); return accept; }
-                if (event.text == "e") { TerminalTabsModel.pty-input-requested("\u{5}"); return accept; }
-                if (event.text == "u") { TerminalTabsModel.pty-input-requested("\u{15}"); return accept; }
-                if (event.text == "w") { TerminalTabsModel.pty-input-requested("\u{17}"); return accept; }
-                if (event.text == "r") { TerminalTabsModel.pty-input-requested("\u{12}"); return accept; }
+            if (event.modifiers.control && event.modifiers.shift) {
+                if (event.text == "C" || event.text == "c") { root.copy-selection(); return accept; }
+                if (event.text == "V" || event.text == "v") { root.paste-clipboard(); return accept; }
             }
-            if (event.text == Key.Return) { TerminalTabsModel.pty-input-requested("\u{d}"); return accept; }
-            if (event.text == Key.Backspace) { TerminalTabsModel.pty-input-requested("\u{7f}"); return accept; }
-            if (event.text == Key.Tab) { TerminalTabsModel.pty-input-requested("\u{9}"); return accept; }
-            if (event.text == Key.Escape) { TerminalTabsModel.pty-input-requested("\u{1b}"); return accept; }
-            if (event.text == Key.UpArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[A"); return accept; }
-            if (event.text == Key.DownArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[B"); return accept; }
-            if (event.text == Key.RightArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[C"); return accept; }
-            if (event.text == Key.LeftArrow) { TerminalTabsModel.pty-input-requested("\u{1b}[D"); return accept; }
-            if (event.text == Key.Delete) { TerminalTabsModel.pty-input-requested("\u{1b}[3~"); return accept; }
-            if (event.text == Key.Home) { TerminalTabsModel.pty-input-requested("\u{1b}[H"); return accept; }
-            if (event.text == Key.End) { TerminalTabsModel.pty-input-requested("\u{1b}[F"); return accept; }
-            TerminalTabsModel.pty-input-requested(event.text);
+            if (event.modifiers.control && event.text != "") {
+                if (event.text == "c") { root.input("\u{3}"); return accept; }
+                if (event.text == "d") { root.input("\u{4}"); return accept; }
+                if (event.text == "z") { root.input("\u{1a}"); return accept; }
+                if (event.text == "l") { root.input("\u{c}"); return accept; }
+                if (event.text == "a") { root.input("\u{1}"); return accept; }
+                if (event.text == "e") { root.input("\u{5}"); return accept; }
+                if (event.text == "u") { root.input("\u{15}"); return accept; }
+                if (event.text == "w") { root.input("\u{17}"); return accept; }
+                if (event.text == "r") { root.input("\u{12}"); return accept; }
+            }
+            if (event.text == Key.Return) { root.input("\u{d}"); return accept; }
+            if (event.text == Key.Backspace) { root.input("\u{7f}"); return accept; }
+            if (event.text == Key.Tab) { root.input("\u{9}"); return accept; }
+            if (event.text == Key.Escape) { root.input("\u{1b}"); return accept; }
+            if (event.text == Key.UpArrow) { root.input("\u{1b}[A"); return accept; }
+            if (event.text == Key.DownArrow) { root.input("\u{1b}[B"); return accept; }
+            if (event.text == Key.RightArrow) { root.input("\u{1b}[C"); return accept; }
+            if (event.text == Key.LeftArrow) { root.input("\u{1b}[D"); return accept; }
+            if (event.text == Key.Delete) { root.input("\u{1b}[3~"); return accept; }
+            if (event.text == Key.Home) { root.input("\u{1b}[H"); return accept; }
+            if (event.text == Key.End) { root.input("\u{1b}[F"); return accept; }
+            root.input(event.text);
             accept
         }
 
-        // Fokus otomatis begitu tab ini dirender (biar bisa langsung
-        // ngetik tanpa klik dulu — termasuk waktu pindah tab), DAN
-        // klik ulang di mana saja di dalam area ini buat balikin fokus
-        // kalau sempat kepindah.
+        // Fokus otomatis begitu dirender (biar bisa langsung ngetik
+        // tanpa klik dulu — termasuk waktu pindah tab).
         init => { focus-scope.focus(); }
-        TouchArea { clicked => { focus-scope.focus(); } }
 
         ScrollView {
-            VerticalLayout {
+            grid := VerticalLayout {
                 padding: Tokens.gutter-md;
                 alignment: start;
-                for r in TerminalTabsModel.rows : TerminalRowView { term-row: r; }
+                for r in root.rows : TerminalRowView { term-row: r; }
             }
         }
+
+        // Highlight seleksi — satu persegi per baris terseleksi.
+        Rectangle {
+            clip: true;
+            for i in (root.has-selection ? root.end-row - root.start-row + 1 : 0) : Rectangle {
+                property <int> line: root.start-row + i;
+                property <length> x0: self.line == root.start-row ? root.start-col * root.cell-w : 0px;
+                property <length> x1: self.line == root.end-row ? min(root.line-w, (root.end-col + 1) * root.cell-w) : root.line-w;
+                x: root.origin-x + self.x0;
+                y: root.origin-y + self.line * root.cell-h;
+                width: max(0px, self.x1 - self.x0);
+                height: root.cell-h;
+                background: Tokens.primary.with-alpha(35%);
+            }
+        }
+
+        // Di ATAS `ScrollView` supaya drag mouse jadi seleksi, bukan
+        // diambil alih Flickable-nya ScrollView. Scroll wheel tidak
+        // ditangani di sini, jadi tetap diteruskan ke ScrollView.
+        TouchArea {
+            mouse-cursor: text;
+            pointer-event(event) => {
+                if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                    focus-scope.focus();
+                    root.anchor-row = root.row-at(self.mouse-y);
+                    root.anchor-col = root.col-at(self.mouse-x);
+                    root.cur-row = root.anchor-row;
+                    root.cur-col = root.anchor-col;
+                    root.selecting = true;
+                    // Klik tanpa drag = hapus seleksi lama.
+                    root.has-selection = false;
+                }
+                if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                    root.selecting = false;
+                }
+            }
+            moved => {
+                if (root.selecting) {
+                    root.cur-row = root.row-at(self.mouse-y);
+                    root.cur-col = root.col-at(self.mouse-x);
+                    root.has-selection = root.cur-row != root.anchor-row || root.cur-col != root.anchor-col;
+                }
+            }
+        }
+
+        // Pengukur ukuran sel — font & ukuran HARUS sama dengan
+        // `TerminalRowView`. Tidak kelihatan, cuma dibaca preferred-*.
+        measure := Text {
+            x: 0px;
+            y: 0px;
+            opacity: 0;
+            text: "MMMMMMMMMM";
+            font-family: TerminalTabsModel.terminal-font-family;
+            font-size: TerminalTabsModel.terminal-font-size * 1px;
+            wrap: no-wrap;
+        }
+
+        // Jembatan ke clipboard sistem lewat fungsi bawaan `TextInput`
+        // (`copy()`/`paste()`) — tidak perlu dependency clipboard
+        // tambahan di Rust. Tidak kelihatan & tidak pernah difokus.
+        clipboard := TextInput {
+            x: 0px;
+            y: 0px;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            single-line: false;
+            enabled: true;
+        }
     }
+}
+
+// Tab SSH yang lagi aktif. Dipakai satu instance per tab AKTIF (lihat
+// `ui/pages/page-terminal.slint`) — tab yang tidak ditampilkan tidak
+// me-render ini, tapi sesinya tetap hidup di background (state-nya
+// dipegang Rust, bukan di sini).
+export component TerminalView inherits TerminalSurface {
+    background: TerminalTabsModel.terminal-bg-color;
+    rows: TerminalTabsModel.rows;
+    input(text) => { TerminalTabsModel.pty-input-requested(text); }
 }

@@ -1792,6 +1792,15 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     //     — tidak perlu balik ke UI thread sama sekali. ---
     {
         let state = state.clone();
+        // Seleksi & paste (Ctrl+Shift+C/V di `TerminalSurface`) — murni
+        // fungsi data, dipakai tab SSH MAUPUN Console serial.
+        let tm = ui.global::<TerminalTabsModel>();
+        tm.on_selection_text(|rows, start_row, start_col, end_row, end_col| {
+            let lines = console::slint_rows_to_lines(&rows);
+            console::selection_text(&lines, (start_row, start_col), (end_row, end_col)).into()
+        });
+        tm.on_normalize_paste(|text| console::normalize_paste(&text).into());
+
         ui.global::<TerminalTabsModel>().on_pty_input_requested(move |text: slint::SharedString| {
             let Some(host_id) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) else { return };
             let bytes = text.as_bytes().to_vec();

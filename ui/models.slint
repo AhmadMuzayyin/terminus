@@ -469,6 +469,14 @@ export global TerminalTabsModel {
     // khusus ke escape sequence). TIDAK ada local echo di sisi Slint —
     // echo datang dari server lewat PTY, persis terminal sungguhan.
     callback pty-input-requested(string);
+    // Dipakai `TerminalSurface` (terminal-view.slint) buat tab SSH MAUPUN
+    // Console serial — `rows` dioper eksplisit supaya satu implementasi
+    // Rust (`console::selection_text`) melayani dua-duanya. Koordinat
+    // (baris, kolom) inklusif, sudah dinormalisasi awal <= akhir.
+    pure callback selection-text([TermRow], int /* baris awal */, int /* kolom awal */, int /* baris akhir */, int /* kolom akhir */) -> string;
+    // Teks clipboard -> byte yang dikirim ke PTY/serial (newline jadi
+    // `\r`, persis Enter), lihat `console::normalize_paste`.
+    pure callback normalize-paste(string) -> string;
     // Klik satu tab di tab bar -> pindah tampilan ke situ (sesi lain
     // TETAP hidup, tidak diputus).
     callback tab-selected(string);

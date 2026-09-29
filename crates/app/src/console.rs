@@ -105,6 +105,45 @@ pub fn plain_rows_to_slint(rows: Vec<PlainRow>) -> ModelRc<TermRow> {
     ModelRc::new(VecModel::from(out))
 }
 
+/// Teks polos tiap baris model yang lagi DITAMPILKAN (gabungan `text`
+/// semua run) — sumber seleksi = persis apa yang user lihat.
+pub fn slint_rows_to_lines(rows: &ModelRc<TermRow>) -> Vec<String> {
+    use slint::Model;
+    rows.iter().map(|row| row.runs.iter().map(|run| run.text.to_string()).collect()).collect()
+}
+
+/// Teks yang diseleksi di grid (koordinat sel, inklusif) — gaya
+/// terminal: baris pertama dari `start_col` sampai ujung, baris tengah
+/// penuh, baris terakhir sampai `end_col`. Spasi di ujung tiap baris
+/// dibuang (sel kosong grid itu spasi, bukan isi yang disalin user).
+/// Koordinat di luar grid di-clamp, urutan terbalik ditukar.
+pub fn selection_text(lines: &[String], start: (i32, i32), end: (i32, i32)) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    let (start, end) = if start <= end { (start, end) } else { (end, start) };
+    let last_line = lines.len() as i32 - 1;
+    let first_row = start.0.clamp(0, last_line) as usize;
+    let last_row = end.0.clamp(0, last_line) as usize;
+
+    let mut out: Vec<String> = Vec::with_capacity(last_row - first_row + 1);
+    for row in first_row..=last_row {
+        let chars: Vec<char> = lines[row].chars().collect();
+        let from = if row == first_row { start.1.max(0) as usize } else { 0 };
+        let to = if row == last_row { (end.1.max(0) as usize + 1).min(chars.len()) } else { chars.len() };
+        let piece: String = if from < to { chars[from..to].iter().collect() } else { String::new() };
+        out.push(piece.trim_end().to_string());
+    }
+    out.join("\n")
+}
+
+/// Teks clipboard -> byte yang dikirim ke PTY/serial. Newline apa pun
+/// (`\r\n`/`\n`) jadi `\r`, persis tombol Enter — shell di sisi server
+/// yang menerjemahkan sendiri.
+pub fn normalize_paste(text: &str) -> String {
+    text.replace("\r\n", "\r").replace('\n', "\r")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +200,38 @@ mod tests {
         let plain = grid_to_plain_rows(&term.snapshot(&terminus_term_emulator::palette::terminus_dark()));
         let model = plain_rows_to_slint(plain);
         assert_eq!(slint::Model::row_count(&model), 3);
+    }
+
+    fn lines(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn seleksi_satu_baris_inklusif_dan_buang_spasi_ujung() {
+        let grid = lines(&["$ ls -la   ", "total 0    "]);
+        assert_eq!(selection_text(&grid, (0, 2), (0, 3)), "ls");
+        // Seleksi sampai lewat ujung teks -> spasi sel kosong dibuang.
+        assert_eq!(selection_text(&grid, (0, 2), (0, 50)), "ls -la");
+    }
+
+    #[test]
+    fn seleksi_banyak_baris_gaya_terminal_dan_urutan_terbalik() {
+        let grid = lines(&["abc def   ", "ghi jkl   ", "mno pqr   "]);
+        let expected = "def\nghi jkl\nmno";
+        assert_eq!(selection_text(&grid, (0, 4), (2, 2)), expected);
+        // Drag dari bawah ke atas hasilnya harus sama.
+        assert_eq!(selection_text(&grid, (2, 2), (0, 4)), expected);
+    }
+
+    #[test]
+    fn seleksi_di_luar_grid_di_clamp() {
+        let grid = lines(&["halo"]);
+        assert_eq!(selection_text(&grid, (-3, -1), (9, 99)), "halo");
+        assert_eq!(selection_text(&[], (0, 0), (0, 0)), "");
+    }
+
+    #[test]
+    fn paste_newline_jadi_carriage_return() {
+        assert_eq!(normalize_paste("ls\npwd\r\nwhoami"), "ls\rpwd\rwhoami");
     }
 }

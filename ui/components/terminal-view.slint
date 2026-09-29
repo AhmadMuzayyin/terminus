@@ -104,6 +104,18 @@ export component TerminalSurface inherits Rectangle {
 
     focus-scope := FocusScope {
         key-pressed(event) => {
+            // Tombol modifier yang ditekan SENDIRIAN juga memicu event
+            // ini, dengan `text` berupa kode kontrol Slint (Shift =
+            // \u{10}, Control = \u{11}, dst). Kalau ikut diteruskan,
+            // server menerima ^P/^Q — mis. Shift di Ctrl+Shift+C jadi
+            // Ctrl+P = "perintah sebelumnya" di bash.
+            if (event.text == Key.Shift || event.text == Key.ShiftR
+                || event.text == Key.Control || event.text == Key.ControlR
+                || event.text == Key.Alt || event.text == Key.AltGr
+                || event.text == Key.Meta || event.text == Key.MetaR
+                || event.text == Key.CapsLock) {
+                return reject;
+            }
             if (event.modifiers.control && event.modifiers.shift) {
                 if (event.text == "C" || event.text == "c") { root.copy-selection(); return accept; }
                 if (event.text == "V" || event.text == "v") { root.paste-clipboard(); return accept; }

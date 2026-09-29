@@ -54,6 +54,8 @@ export component TerminalRowView inherits HorizontalLayout {
 export component TerminalSurface inherits Rectangle {
     in property <[TermRow]> rows;
     callback input(string);
+    // Roda mouse, dalam satuan BARIS (> 0 = naik ke riwayat).
+    callback scroll-lines(int);
 
     // Diukur dari 10 karakter supaya pembulatan sub-piksel tidak
     // numpuk jadi meleset di kolom-kolom kanan.
@@ -174,10 +176,25 @@ export component TerminalSurface inherits Rectangle {
         }
 
         // Di ATAS `ScrollView` supaya drag mouse jadi seleksi, bukan
-        // diambil alih Flickable-nya ScrollView. Scroll wheel tidak
-        // ditangani di sini, jadi tetap diteruskan ke ScrollView.
+        // diambil alih Flickable-nya ScrollView. Roda mouse JUGA
+        // ditangani di sini (geser riwayat scrollback terminal, bukan
+        // scroll piksel `ScrollView` yang isinya cuma satu layar).
         TouchArea {
             mouse-cursor: text;
+            scroll-event(event) => {
+                if (event.delta-y == 0) {
+                    return reject;
+                }
+                // Minimal 1 baris per notch, sisanya proporsional ke
+                // jarak piksel (touchpad kirim delta kecil & sering).
+                root.scroll-lines(event.delta-y > 0
+                    ? max(1, round(event.delta-y / root.cell-h))
+                    : min(-1, round(event.delta-y / root.cell-h)));
+                // Seleksi menunjuk posisi LAYAR — setelah digeser sudah
+                // bukan teks yang sama lagi.
+                root.has-selection = false;
+                accept
+            }
             pointer-event(event) => {
                 if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
                     focus-scope.focus();
@@ -237,4 +254,5 @@ export component TerminalView inherits TerminalSurface {
     background: TerminalTabsModel.terminal-bg-color;
     rows: TerminalTabsModel.rows;
     input(text) => { TerminalTabsModel.pty-input-requested(text); }
+    scroll-lines(lines) => { TerminalTabsModel.scroll-requested(lines); }
 }

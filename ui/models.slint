@@ -477,6 +477,10 @@ export global TerminalTabsModel {
     // Teks clipboard -> byte yang dikirim ke PTY/serial (newline jadi
     // `\r`, persis Enter), lihat `console::normalize_paste`.
     pure callback normalize-paste(string) -> string;
+    // Roda mouse di tab aktif: geser riwayat scrollback (> 0 = naik ke
+    // baris lama, < 0 = turun), atau tombol panah di program layar
+    // penuh — Rust yang putuskan, lihat `on_scroll_requested`.
+    callback scroll-requested(int /* baris */);
     // Klik satu tab di tab bar -> pindah tampilan ke situ (sesi lain
     // TETAP hidup, tidak diputus).
     callback tab-selected(string);
@@ -605,6 +609,9 @@ export global ConsoleModel {
     // port serial (kalau device-nya echo — sebagian CLI Cisco memang
     // echo sendiri).
     callback console-input-requested(string);
+    // Roda mouse di `ConsoleView` — sama persis dengan
+    // `TerminalTabsModel.scroll-requested`.
+    callback scroll-requested(int /* baris, > 0 = naik ke riwayat */);
 }
 
 // Layar "Connecting" — pengganti FULL area konten (NavRail + halaman,

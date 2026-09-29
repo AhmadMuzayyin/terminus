@@ -7,8 +7,8 @@
 //! di-render oleh layer manapun (Slint di crate `app`).
 
 use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::{Config as TermConfig, Term};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use thiserror::Error;
 
@@ -25,8 +25,9 @@ pub enum TermEmulatorError {
 
 /// Ukuran terminal buat `Term::new`/`Term::resize` — `alacritty_terminal`
 /// butuh implementasi trait `Dimensions`-nya sendiri, bukan tuple biasa.
-/// Sengaja TIDAK ada scrollback (`total_lines == screen_lines`): v1 cuma
-/// render viewport aktif, riwayat scroll-up belum didukung.
+/// `total_lines == screen_lines` di sini cuma ukuran LAYAR — riwayat
+/// scrollback diatur terpisah oleh `TermConfig::scrolling_history`
+/// (default alacritty 10.000 baris), lihat `scroll_view`.
 struct Size {
     cols: usize,
     rows: usize,
@@ -76,6 +77,49 @@ impl TerminalInstance {
         self.term.resize(Size { cols: cols as usize, rows: rows as usize });
     }
 
+    /// Geser tampilan ke riwayat scrollback: `lines` > 0 = naik (baris
+    /// lebih lama), < 0 = turun. Otomatis di-clamp alacritty ke batas
+    /// riwayat. Output baru yang datang selama tampilan digeser TIDAK
+    /// menarik tampilan ke bawah (sama seperti terminal native).
+    pub fn scroll_view(&mut self, lines: i32) {
+        self.term.scroll_display(Scroll::Delta(lines));
+    }
+
+    /// Balik ke paling bawah (layar aktif). `true` kalau tadinya memang
+    /// lagi digeser — caller cuma perlu render ulang di kasus itu.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        if self.display_offset() == 0 {
+            return false;
+        }
+        self.term.scroll_display(Scroll::Bottom);
+        true
+    }
+
+    /// Berapa baris tampilan lagi digeser ke atas (0 = paling bawah).
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    /// Program layar penuh (`less`, `vim`, `htop`, `man`) jalan di
+    /// "alternate screen" yang TIDAK punya scrollback — di situ roda
+    /// mouse dikirim sebagai tombol panah (perilaku "alternate scroll"
+    /// terminal native). `None` = bukan alternate screen, geser
+    /// riwayat biasa lewat `scroll_view`.
+    pub fn alternate_scroll_bytes(&self, lines: i32) -> Option<Vec<u8>> {
+        let mode = self.term.mode();
+        if !mode.contains(TermMode::ALT_SCREEN) || lines == 0 {
+            return None;
+        }
+        let app_cursor = mode.contains(TermMode::APP_CURSOR);
+        let seq: &[u8] = match (lines > 0, app_cursor) {
+            (true, true) => b"\x1bOA",
+            (true, false) => b"\x1b[A",
+            (false, true) => b"\x1bOB",
+            (false, false) => b"\x1b[B",
+        };
+        Some(seq.repeat(lines.unsigned_abs() as usize))
+    }
+
     /// Snapshot grid saat ini untuk di-render UI. Warna sel diresolusi ke
     /// RGB konkret lewat `palette::resolve` (lihat modul itu buat
     /// kenapa perlu — `Term` sendiri cuma nyimpen warna abstrak).
@@ -92,12 +136,15 @@ impl TerminalInstance {
         let cursor_shape = content.cursor.shape;
         let cursor_point = content.cursor.point;
         let colors = content.colors;
+        // Saat digeser ke riwayat, `display_iter` memberi nomor baris
+        // negatif (-offset..) — digeser balik jadi 0-based layar.
+        let offset = self.display_offset() as i32;
 
         for indexed in content.display_iter {
-            let row = indexed.point.line.0;
+            let row = indexed.point.line.0 + offset;
             let col = indexed.point.column.0;
             if row < 0 || row as usize >= self.rows as usize || col >= self.cols as usize {
-                continue; // di luar viewport (seharusnya tidak pernah terjadi, display_offset selalu 0)
+                continue; // di luar viewport
             }
             let idx = (row as usize) * (self.cols as usize) + col;
             let cell = &indexed.cell;
@@ -117,8 +164,12 @@ impl TerminalInstance {
             };
         }
 
-        out.cursor = (cursor_point.column.0 as u16, cursor_point.line.0.max(0) as u16);
-        out.cursor_visible = cursor_shape != alacritty_terminal::vte::ansi::CursorShape::Hidden;
+        // Kursor ikut bergeser; kalau sudah keluar layar (digeser jauh
+        // ke atas) disembunyikan.
+        let cursor_row = cursor_point.line.0 + offset;
+        let cursor_on_screen = (0..self.rows as i32).contains(&cursor_row);
+        out.cursor = (cursor_point.column.0 as u16, cursor_row.max(0) as u16);
+        out.cursor_visible = cursor_on_screen && cursor_shape != alacritty_terminal::vte::ansi::CursorShape::Hidden;
         out
     }
 }
@@ -185,6 +236,51 @@ mod tests {
         assert_ne!(dark_fg, light_fg, "tema beda harus resolve ke RGB beda untuk index ANSI yang SAMA");
         assert_ne!(dark_fg, mono_fg);
         assert_ne!(light_fg, mono_fg);
+    }
+
+    fn first_row_text(term: &TerminalInstance) -> String {
+        let snap = term.snapshot(&palette::terminus_dark());
+        snap.cells[0..snap.cols as usize].iter().map(|c| c.ch).collect::<String>().trim_end().to_string()
+    }
+
+    #[test]
+    fn scrollback_bisa_digeser_ke_atas_dan_balik_ke_bawah() {
+        let mut term = TerminalInstance::new(10, 5);
+        let output: Vec<String> = (0..50).map(|i| format!("L{i}")).collect();
+        term.feed(output.join("\r\n").as_bytes());
+        assert_eq!(first_row_text(&term), "L45", "layar aktif = 5 baris terakhir");
+
+        term.scroll_view(3);
+        assert_eq!(term.display_offset(), 3);
+        assert_eq!(first_row_text(&term), "L42");
+
+        // Geser jauh melewati awal riwayat -> di-clamp ke baris paling awal.
+        term.scroll_view(1000);
+        assert_eq!(first_row_text(&term), "L0");
+
+        assert!(term.scroll_to_bottom());
+        assert_eq!(first_row_text(&term), "L45");
+        assert!(!term.scroll_to_bottom(), "sudah di bawah, tidak perlu render ulang");
+    }
+
+    #[test]
+    fn kursor_disembunyikan_kalau_tergeser_keluar_layar() {
+        let mut term = TerminalInstance::new(10, 3);
+        term.feed((0..20).map(|i| format!("L{i}")).collect::<Vec<_>>().join("\r\n").as_bytes());
+        assert!(term.snapshot(&palette::terminus_dark()).cursor_visible);
+        term.scroll_view(10);
+        assert!(!term.snapshot(&palette::terminus_dark()).cursor_visible);
+    }
+
+    #[test]
+    fn alternate_screen_scroll_jadi_tombol_panah() {
+        let mut term = TerminalInstance::new(10, 3);
+        assert_eq!(term.alternate_scroll_bytes(2), None, "layar biasa -> geser riwayat, bukan panah");
+        term.feed(b"\x1b[?1049h"); // masuk alternate screen (seperti less/vim)
+        assert_eq!(term.alternate_scroll_bytes(2).unwrap(), b"\x1b[A\x1b[A");
+        assert_eq!(term.alternate_scroll_bytes(-1).unwrap(), b"\x1b[B");
+        term.feed(b"\x1b[?1h"); // application cursor keys
+        assert_eq!(term.alternate_scroll_bytes(1).unwrap(), b"\x1bOA");
     }
 
     #[test]

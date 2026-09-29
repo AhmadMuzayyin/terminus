@@ -1798,9 +1798,11 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
 
     // --- Keyboard -> stdin sesi AKTIF. Tidak ada local echo (lihat
     //     komentar di `TerminalView`), jadi ini murni "kirim byte ini"
-    //     — tidak perlu balik ke UI thread sama sekali. ---
+    //     — cuma render ulang kalau tampilan harus balik dari riwayat
+    //     scrollback ke paling bawah (sama seperti terminal native). ---
     {
         let state = state.clone();
+        let ui_weak = ui.as_weak();
         // Seleksi & paste (Ctrl+Shift+C/V di `TerminalSurface`) — murni
         // fungsi data, dipakai tab SSH MAUPUN Console serial.
         let tm = ui.global::<TerminalTabsModel>();
@@ -1812,6 +1814,15 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
 
         ui.global::<TerminalTabsModel>().on_pty_input_requested(move |text: slint::SharedString| {
             let Some(host_id) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+            let scrolled_back = state
+                .terminals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&host_id)
+                .is_some_and(|t| t.scroll_to_bottom());
+            if scrolled_back {
+                render_and_cache_tab(&ui_weak, &state, host_id);
+            }
             let bytes = text.as_bytes().to_vec();
             let state = state.clone();
             tokio::spawn(async move {
@@ -1819,6 +1830,37 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     let _ = session.write(&bytes).await;
                 }
             });
+        });
+    }
+
+    // --- Roda mouse -> geser riwayat scrollback tab AKTIF, atau kirim
+    //     tombol panah kalau program layar penuh (less/vim/htop) lagi
+    //     jalan (lihat `TerminalInstance::alternate_scroll_bytes`). ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<TerminalTabsModel>().on_scroll_requested(move |lines: i32| {
+            let Some(host_id) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+            let arrow_keys = {
+                let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(term) = terminals.get_mut(&host_id) else { return };
+                let bytes = term.alternate_scroll_bytes(lines);
+                if bytes.is_none() {
+                    term.scroll_view(lines);
+                }
+                bytes
+            };
+            match arrow_keys {
+                Some(bytes) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        if let Some(session) = state.sessions.lock().await.get(&host_id) {
+                            let _ = session.write(&bytes).await;
+                        }
+                    });
+                }
+                None => render_and_cache_tab(&ui_weak, &state, host_id),
+            }
         });
     }
 
@@ -2914,10 +2956,50 @@ fn wire_console_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
-    // --- Input keyboard -> tulis ke port. ---
+    // --- Roda mouse -> geser riwayat / tombol panah (sama seperti tab
+    //     SSH, lihat `on_scroll_requested` di `wire_terminal_callbacks`). ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ConsoleModel>().on_scroll_requested(move |lines: i32| {
+            let arrow_keys = {
+                let mut terminal = state.console_terminal.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(term) = terminal.as_mut() else { return };
+                let bytes = term.alternate_scroll_bytes(lines);
+                if bytes.is_none() {
+                    term.scroll_view(lines);
+                }
+                bytes
+            };
+            match arrow_keys {
+                Some(bytes) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        if let Some(session) = state.console_session.lock().await.as_mut() {
+                            let _ = session.write(&bytes).await;
+                        }
+                    });
+                }
+                None => render_and_push_console(&ui_weak, &state),
+            }
+        });
+    }
+
+    // --- Input keyboard -> tulis ke port. Balik ke paling bawah dulu
+    //     kalau tampilan lagi digeser ke riwayat. ---
     {
         let state = state.clone();
+        let ui_weak = ui.as_weak();
         ui.global::<ConsoleModel>().on_console_input_requested(move |text: slint::SharedString| {
+            let scrolled_back = state
+                .console_terminal
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_mut()
+                .is_some_and(|t| t.scroll_to_bottom());
+            if scrolled_back {
+                render_and_push_console(&ui_weak, &state);
+            }
             let bytes = text.as_bytes().to_vec();
             let state = state.clone();
             tokio::spawn(async move {

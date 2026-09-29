@@ -26,4 +26,5 @@ export component ConsoleView inherits TerminalSurface {
     background: Tokens.surface-container-lowest;
     rows: ConsoleModel.rows;
     input(text) => { ConsoleModel.console-input-requested(text); }
+    scroll-lines(lines) => { ConsoleModel.scroll-requested(lines); }
 }

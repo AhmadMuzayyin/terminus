@@ -481,6 +481,9 @@ export global TerminalTabsModel {
     // baris lama, < 0 = turun), atau tombol panah di program layar
     // penuh — Rust yang putuskan, lihat `on_scroll_requested`.
     callback scroll-requested(int /* baris */);
+    // Jumlah kolom × baris yang muat di area terminal (dihitung
+    // `TerminalSurface` dari ukuran sel font) — Rust resize grid & PTY.
+    callback grid-resized(int /* kolom */, int /* baris */);
     // Klik satu tab di tab bar -> pindah tampilan ke situ (sesi lain
     // TETAP hidup, tidak diputus).
     callback tab-selected(string);
@@ -612,6 +615,7 @@ export global ConsoleModel {
     // Roda mouse di `ConsoleView` — sama persis dengan
     // `TerminalTabsModel.scroll-requested`.
     callback scroll-requested(int /* baris, > 0 = naik ke riwayat */);
+    callback grid-resized(int /* kolom */, int /* baris */);
 }
 
 // Layar "Connecting" — pengganti FULL area konten (NavRail + halaman,

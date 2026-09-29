@@ -17,10 +17,20 @@ use terminus_term_emulator::grid::Rgb;
 use terminus_term_emulator::TerminalGrid;
 use slint::{ModelRc, VecModel};
 
-/// Ukuran PTY tetap buat v1 — belum ada reflow dinamis mengikuti ukuran
-/// jendela (lihat catatan di README bagian "Batasan v1 terminal").
-pub const TERM_COLS: u16 = 100;
-pub const TERM_ROWS: u16 = 32;
+/// Ukuran grid AWAL, dipakai cuma sampai `TerminalSurface` melaporkan
+/// ukuran sebenarnya yang muat di area terminal (`grid-resized`, lihat
+/// `AppState.term_size`).
+pub const DEFAULT_TERM_COLS: u16 = 100;
+pub const DEFAULT_TERM_ROWS: u16 = 32;
+
+/// Validasi ukuran dari UI (bisa 0/negatif sesaat waktu layout belum
+/// jadi) — `None` = abaikan, jangan resize ke ukuran rusak.
+pub fn valid_term_size(cols: i32, rows: i32) -> Option<(u16, u16)> {
+    if cols < 2 || rows < 1 {
+        return None;
+    }
+    Some((cols.min(1000) as u16, rows.min(500) as u16))
+}
 
 /// Satu "run" dalam representasi ANTARA yang murni data (`Send`), belum
 /// jadi tipe Slint (`TermRun` membungkus `slint::Color`, tapi `TermRow`

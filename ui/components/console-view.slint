@@ -27,4 +27,5 @@ export component ConsoleView inherits TerminalSurface {
     rows: ConsoleModel.rows;
     input(text) => { ConsoleModel.console-input-requested(text); }
     scroll-lines(lines) => { ConsoleModel.scroll-requested(lines); }
+    grid-resized(cols, rows) => { ConsoleModel.grid-resized(cols, rows); }
 }

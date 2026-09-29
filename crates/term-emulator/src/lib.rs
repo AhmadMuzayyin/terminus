@@ -71,6 +71,11 @@ impl TerminalInstance {
         self.parser.advance(&mut self.term, bytes);
     }
 
+    /// (kolom, baris) saat ini.
+    pub fn size(&self) -> (u16, u16) {
+        (self.cols, self.rows)
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.cols = cols;
         self.rows = rows;

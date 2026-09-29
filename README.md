@@ -395,8 +395,10 @@ cargo build --workspace   # pastikan hijau lagi
 
 **Batasan saat ini:**
 
-- ⏳ Ukuran PTY terminal masih tetap (100×32), belum reflow mengikuti
-  ukuran jendela; belum ada scrollback (hanya viewport aktif).
+- ✅ Ukuran grid & PTY terminal mengikuti ukuran area terminal (resize
+  jendela ikut dikirim ke server lewat `window_change`); scrollback
+  10.000 baris lewat roda mouse (di `less`/`vim`/`htop` roda mouse jadi
+  tombol panah); seleksi mouse + Ctrl+Shift+C/Ctrl+Shift+V.
 - ⏳ Console (serial) belum punya konsep "saved device profile" — port
   dipilih ulang tiap sesi (disengaja, lihat komentar di
   `ui/pages/page-console.slint`).

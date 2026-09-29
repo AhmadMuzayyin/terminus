@@ -56,6 +56,10 @@ export component TerminalSurface inherits Rectangle {
     callback input(string);
     // Roda mouse, dalam satuan BARIS (> 0 = naik ke riwayat).
     callback scroll-lines(int);
+    // Kolom × baris yang muat di area ini — dipancarkan waktu pertama
+    // tampil & tiap ukuran berubah, supaya grid (dan PTY server) mengisi
+    // penuh area, bukan ukuran tetap dengan ruang kosong di sisinya.
+    callback grid-resized(int, int);
 
     // Diukur dari 10 karakter supaya pembulatan sub-piksel tidak
     // numpuk jadi meleset di kolom-kolom kanan.
@@ -67,6 +71,14 @@ export component TerminalSurface inherits Rectangle {
     property <length> origin-x: grid.absolute-position.x - root.absolute-position.x + Tokens.gutter-md;
     property <length> origin-y: grid.absolute-position.y - root.absolute-position.y + Tokens.gutter-md;
     property <length> line-w: grid.width - 2 * Tokens.gutter-md;
+
+    // Sisa 4px buat jaga-jaga pembulatan/border ScrollView — tanpa ini
+    // grid bisa lebih besar 1 px dari area & scrollbar muncul.
+    property <int> fit-cols: root.cell-w > 0 ? floor((root.width - 2 * Tokens.gutter-md - 4px) / root.cell-w) : 0;
+    property <int> fit-rows: root.cell-h > 0 ? floor((root.height - 2 * Tokens.gutter-md - 4px) / root.cell-h) : 0;
+    changed fit-cols => { root.grid-resized(root.fit-cols, root.fit-rows); }
+    changed fit-rows => { root.grid-resized(root.fit-cols, root.fit-rows); }
+    init => { root.grid-resized(root.fit-cols, root.fit-rows); }
 
     property <bool> selecting: false;
     property <bool> has-selection: false;
@@ -255,4 +267,5 @@ export component TerminalView inherits TerminalSurface {
     rows: TerminalTabsModel.rows;
     input(text) => { TerminalTabsModel.pty-input-requested(text); }
     scroll-lines(lines) => { TerminalTabsModel.scroll-requested(lines); }
+    grid-resized(cols, rows) => { TerminalTabsModel.grid-resized(cols, rows); }
 }

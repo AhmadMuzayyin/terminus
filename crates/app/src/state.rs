@@ -103,6 +103,10 @@ pub struct AppState {
     /// perlu nunggu byte baru dari SSH buat re-render tampilan yang
     /// sudah ada.
     terminals: Arc<Mutex<HashMap<Uuid, TerminalInstance>>>,
+    /// Ukuran grid (kolom, baris) yang TERAKHIR dilaporkan
+    /// `TerminalSurface` (`grid-resized`) — dipakai semua tab SSH &
+    /// Console (area tampilnya sama), termasuk koneksi baru.
+    term_size: Arc<Mutex<(u16, u16)>>,
     /// Nama color theme (lihat `terminus_term_emulator::palette::
     /// built_in_themes()`) PER HOST — diubah lewat panel pengaturan (⚙
     /// di halaman Terminal), disimpan keyed by `HostProfile::id` (atas
@@ -217,6 +221,7 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
         tab_meta: Arc::new(Mutex::new(Vec::new())),
         tab_cache: Arc::new(Mutex::new(HashMap::new())),
         terminals: Arc::new(Mutex::new(HashMap::new())),
+        term_size: Arc::new(Mutex::new((console::DEFAULT_TERM_COLS, console::DEFAULT_TERM_ROWS))),
         terminal_themes: Arc::new(Mutex::new(HashMap::new())),
         selected_hosts: Arc::new(Mutex::new(std::collections::HashSet::new())),
         selected_groups: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -1864,6 +1869,37 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
+    // --- Area terminal berubah ukuran (jendela di-resize / pertama
+    //     kali tampil) -> resize SEMUA tab (area tampilnya sama) + kabari
+    //     server lewat `window_change` supaya less/apt/htop ikut lebar
+    //     & tinggi baru. ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<TerminalTabsModel>().on_grid_resized(move |cols: i32, rows: i32| {
+            let Some((cols, rows)) = console::valid_term_size(cols, rows) else { return };
+            {
+                let mut size = state.term_size.lock().unwrap_or_else(|e| e.into_inner());
+                if *size == (cols, rows) && state.terminals.lock().unwrap_or_else(|e| e.into_inner()).values().all(|t| t.size() == (cols, rows)) {
+                    return;
+                }
+                *size = (cols, rows);
+            }
+            for term in state.terminals.lock().unwrap_or_else(|e| e.into_inner()).values_mut() {
+                term.resize(cols, rows);
+            }
+            let state_task = state.clone();
+            tokio::spawn(async move {
+                for session in state_task.sessions.lock().await.values() {
+                    let _ = session.resize_pty(cols, rows).await;
+                }
+            });
+            if let Some(host_id) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) {
+                render_and_cache_tab(&ui_weak, &state, host_id);
+            }
+        });
+    }
+
     // --- Klik badan tab -> pindah tampilan (sesi lain TETAP hidup). ---
     {
         let ui_weak = ui.as_weak();
@@ -2911,8 +2947,9 @@ fn wire_console_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     // beberapa kali Enter").
                     Ok((session, rx)) => {
                         *state_task.console_session.lock().await = Some(session);
+                        let (cols, rows) = *state_task.term_size.lock().unwrap_or_else(|e| e.into_inner());
                         *state_task.console_terminal.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some(TerminalInstance::new(console::TERM_COLS, console::TERM_ROWS));
+                            Some(TerminalInstance::new(cols, rows));
                         spawn_console_reader(ui_weak_task.clone(), state_task.clone(), rx);
                         None
                     }
@@ -2981,6 +3018,27 @@ fn wire_console_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     });
                 }
                 None => render_and_push_console(&ui_weak, &state),
+            }
+        });
+    }
+
+    // --- Area Console berubah ukuran -> resize grid. Serial TIDAK punya
+    //     konsep ukuran jendela di sisi device, cuma tampilan lokal. ---
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ConsoleModel>().on_grid_resized(move |cols: i32, rows: i32| {
+            let Some((cols, rows)) = console::valid_term_size(cols, rows) else { return };
+            *state.term_size.lock().unwrap_or_else(|e| e.into_inner()) = (cols, rows);
+            let changed = match state.console_terminal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                Some(term) if term.size() != (cols, rows) => {
+                    term.resize(cols, rows);
+                    true
+                }
+                _ => false,
+            };
+            if changed {
+                render_and_push_console(&ui_weak, &state);
             }
         });
     }
@@ -3602,9 +3660,10 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
     let notice: Option<String> = match result {
         Ok(session) => {
             // Selaraskan ukuran PTY server dengan grid `TerminalInstance`
-            // di bawah (lihat `console::TERM_COLS/ROWS`) — best-effort,
-            // gagal resize TIDAK menggagalkan koneksi.
-            let _ = session.resize_pty(console::TERM_COLS, console::TERM_ROWS).await;
+            // (`state.term_size`) — best-effort, gagal resize TIDAK
+            // menggagalkan koneksi.
+            let (cols, rows) = *state.term_size.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = session.resize_pty(cols, rows).await;
             let rx = session.subscribe_output();
             state.sessions.lock().await.insert(uuid, session);
             set_status(&state, uuid, "online");
@@ -3663,7 +3722,8 @@ fn spawn_terminal_reader(
     const IDLE_GAP: Duration = Duration::from_millis(5);
     const MAX_BATCH: Duration = Duration::from_millis(40);
 
-    state.terminals.lock().unwrap_or_else(|e| e.into_inner()).insert(host_id, TerminalInstance::new(console::TERM_COLS, console::TERM_ROWS));
+    let (cols, rows) = *state.term_size.lock().unwrap_or_else(|e| e.into_inner());
+    state.terminals.lock().unwrap_or_else(|e| e.into_inner()).insert(host_id, TerminalInstance::new(cols, rows));
 
     tokio::spawn(async move {
         // Kunci `state.terminals` cuma sebentar per panggilan `feed`

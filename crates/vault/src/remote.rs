@@ -33,6 +33,16 @@ pub struct AuthTokens {
     pub refresh_token: String,
 }
 
+/// Data akun yang login (`GET/PATCH /auth/me`). `full_name` `None` =
+/// akun lama yang dibuat sebelum kolom itu ada (backend/DESIGN.md
+/// Milestone 6) — UI pakai email sebagai fallback tampilan.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInfo {
+    pub email: String,
+    pub full_name: Option<String>,
+}
+
 /// Satu baris `GET /api/v1/vaults` (role sengaja tidak dibaca — v1
 /// desktop tidak membedakan owner/member, lihat doc bagian 4).
 #[derive(Debug, Clone, Deserialize)]
@@ -134,8 +144,9 @@ impl RemoteVaultClient {
 
     /// `POST /auth/register` — backend cuma menerima kalau tabel `users`
     /// masih kosong (admin pertama), error-nya diteruskan apa adanya.
-    pub async fn register(base_url: &str, email: &str, password: &str) -> Result<AuthTokens, VaultError> {
-        Self::auth_call(base_url, "register", json!({ "email": email, "password": password })).await
+    /// `full_name` wajib (backend/DESIGN.md Milestone 6).
+    pub async fn register(base_url: &str, email: &str, password: &str, full_name: &str) -> Result<AuthTokens, VaultError> {
+        Self::auth_call(base_url, "register", json!({ "email": email, "password": password, "fullName": full_name })).await
     }
 
     /// Login diam-diam pakai refresh token tersimpan. Status 401 dari
@@ -158,21 +169,56 @@ impl RemoteVaultClient {
         Self::tokens_from_response(resp).await
     }
 
-    /// Email akun yang lagi login (`GET /auth/me`) — ditampilkan di
-    /// sidebar di samping tombol Logout, juga waktu login diam-diam (di
-    /// situ email tidak diketik user).
-    pub async fn me(base_url: &str, access_token: &str) -> Result<String, VaultError> {
-        #[derive(Deserialize)]
-        struct Me {
-            email: String,
-        }
+    /// Akun yang lagi login (`GET /auth/me`) — nama/email di sidebar,
+    /// juga waktu login diam-diam (di situ email tidak diketik user).
+    pub async fn me(base_url: &str, access_token: &str) -> Result<AccountInfo, VaultError> {
         let resp = Self::auth_http()?
             .get(format!("{base_url}/api/v1/auth/me"))
             .bearer_auth(access_token)
             .send()
             .await
             .map_err(Self::network_err)?;
-        Ok(Self::json_or_err::<Me>(resp).await?.email)
+        Self::json_or_err(resp).await
+    }
+
+    /// `PATCH /auth/me`. `current_password` WAJIB kalau email berubah —
+    /// salah -> server balas 403 (SENGAJA bukan 401, jadi tidak memicu
+    /// refresh-on-401 di `send_url`).
+    pub async fn update_profile(
+        &self,
+        full_name: Option<&str>,
+        email: Option<&str>,
+        current_password: Option<&str>,
+    ) -> Result<AccountInfo, VaultError> {
+        let mut body = json!({});
+        if let Some(name) = full_name {
+            body["fullName"] = json!(name);
+        }
+        if let Some(email) = email {
+            body["email"] = json!(email);
+        }
+        if let Some(pw) = current_password {
+            body["currentPassword"] = json!(pw);
+        }
+        let resp = self.send_url(Method::PATCH, &format!("{}/api/v1/auth/me", self.base_url), Some(body)).await?;
+        Self::json_or_err(resp).await
+    }
+
+    /// `PUT /auth/me/password`. Server mencabut SEMUA refresh token akun
+    /// ini lalu memberi pasangan baru — dipasang langsung ke client ini
+    /// DAN dipersist (token tersimpan yang lama sudah mati), supaya
+    /// perangkat ini tetap login termasuk setelah restart.
+    pub async fn change_password(&self, current_password: &str, new_password: &str) -> Result<(), VaultError> {
+        let resp = self
+            .send_url(
+                Method::PUT,
+                &format!("{}/api/v1/auth/me/password", self.base_url),
+                Some(json!({ "currentPassword": current_password, "newPassword": new_password })),
+            )
+            .await?;
+        let tokens = Self::tokens_from_response(resp).await?;
+        self.install_tokens(tokens.access_token, tokens.refresh_token).await;
+        Ok(())
     }
 
     /// Stop persist token hasil rotasi mulai SEKARANG (sinkron). Dipanggil
@@ -235,7 +281,13 @@ impl RemoteVaultClient {
     /// error, lihat bagian 2.6 doc). Cuma kegagalan JARINGAN (timeout/
     /// connection refused/dst) yang jadi `Err` di sini.
     async fn send(&self, method: Method, path: &str, body: Option<Value>) -> Result<reqwest::Response, VaultError> {
-        let url = self.vault_url(path);
+        self.send_url(method, &self.vault_url(path), body).await
+    }
+
+    /// Sama seperti `send` tapi URL lengkap — buat endpoint ber-auth di
+    /// luar `/vaults/:id` (mis. `/auth/me`).
+    async fn send_url(&self, method: Method, url: &str, body: Option<Value>) -> Result<reqwest::Response, VaultError> {
+        let url = url.to_string();
         let access_token = self.tokens.lock().await.access_token.clone();
         let resp = self.build_request(&method, &url, &body, &access_token).send().await.map_err(Self::network_err)?;
 
@@ -289,10 +341,17 @@ impl RemoteVaultClient {
             other => other,
         })?;
 
+        self.install_tokens(result.access_token, result.refresh_token).await;
+        Ok(())
+    }
+
+    /// Pasang pasangan token baru (hasil refresh ATAU ganti password) &
+    /// persist refresh token-nya — kecuali client sudah ditandai logout.
+    async fn install_tokens(&self, access_token: String, refresh_token: String) {
         let new_refresh_token = {
             let mut tokens = self.tokens.lock().await;
-            tokens.access_token = result.access_token;
-            tokens.refresh_token = result.refresh_token;
+            tokens.access_token = access_token;
+            tokens.refresh_token = refresh_token;
             tokens.refresh_token.clone()
         };
         let logged_out = self.logged_out.load(std::sync::atomic::Ordering::SeqCst);
@@ -303,7 +362,6 @@ impl RemoteVaultClient {
             // (persister sendiri yang log error-nya).
             let _ = tokio::task::spawn_blocking(move || persist(new_refresh_token)).await;
         }
-        Ok(())
     }
 
     async fn error_from_response(resp: reqwest::Response) -> VaultError {

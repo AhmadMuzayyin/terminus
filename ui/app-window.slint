@@ -15,16 +15,17 @@ import { PageHosts } from "./pages/page-hosts.slint";
 import { PageSftp } from "./pages/page-sftp.slint";
 import { PageConsole } from "./pages/page-console.slint";
 import { PageTerminal } from "./pages/page-terminal.slint";
+import { PageProfile } from "./pages/page-profile.slint";
 import { TerminalTabBar } from "./components/terminal-tabs-bar.slint";
 import { VaultDialog, NewGroupDialog, ExportJsonDialog, IdentitiesDialog } from "./components/dialogs.slint";
 import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog, ConfirmLogoutDialog } from "./components/confirm-dialog.slint";
 import { ConnectingView } from "./components/connecting-view.slint";
-import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel } from "./models.slint";
+import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel } from "./models.slint";
 // Re-export eksplisit: `import` doang cuma bikin visible LOKAL di file
 // ini, Rust codegen (`slint::include_modules!()`) cuma expose global
 // yang benar-benar di-`export` dari file root (app-window.slint) ini —
 // makanya butuh baris `export` terpisah, bukan cuma `import`.
-export { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel }
+export { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel }
 
 export component AppWindow inherits Window {
     title: "Terminus";
@@ -56,6 +57,7 @@ export component AppWindow inherits Window {
     property <string> page-title: root.current-page == 0 ? "Hosts"
         : root.current-page == 1 ? "SFTP"
         : root.current-page == 2 ? "Console"
+        : root.current-page == 7 ? "Profile"
         : "Terminal";
 
     // SELALU diinstansiasi — `window-bar` di dalamnya butuh bisa
@@ -111,6 +113,7 @@ export component AppWindow inherits Window {
                     // (bukan handle) global `HostsModel.documentation-
                     // requested()` supaya Rust yang urus buka browser-nya.
                     documentation-clicked => { HostsModel.documentation-requested(); }
+                    profile-clicked => { root.current-page = 7; }
                 }
 
                 VerticalLayout {
@@ -118,6 +121,7 @@ export component AppWindow inherits Window {
                     if root.current-page == 1 : PageSftp { }
                     if root.current-page == 2 : PageConsole { }
                     if root.current-page == 6 : PageTerminal { }
+                    if root.current-page == 7 : PageProfile { }
                 }
             }
         }

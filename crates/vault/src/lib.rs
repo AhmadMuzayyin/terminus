@@ -24,7 +24,7 @@ pub mod crypto;
 pub mod remote;
 pub mod store;
 
-pub use remote::{AuthTokens, RemoteVaultClient, VaultSummary};
+pub use remote::{AccountInfo, AuthTokens, RemoteVaultClient, VaultSummary};
 pub use store::VaultStore;
 
 #[derive(Debug, Error)]

@@ -38,6 +38,11 @@ export component DialogField inherits Rectangle {
     // tanpa perlu klik tombol). Dilewatkan apa adanya dari `TextInput`
     // bawaan Slint (`accepted` cuma nembak waktu `single-line: true`).
     callback accepted <=> input.accepted;
+    // Kosongkan isi field (mis. field password setelah simpan sukses,
+    // lihat `page-profile.slint`).
+    public function clear() {
+        input.text = "";
+    }
     // Dipancarkan tiap ketukan (bukan cuma waktu submit) — dipakai
     // form yang butuh nilai field-nya TERUS sinkron ke property lain
     // sambil ngetik (mis. `SftpModel.manual-*` di page-sftp.slint).
@@ -429,6 +434,7 @@ export component VaultDialog inherits DialogScrim {
                     if !VaultModel.busy {
                         VaultModel.register-requested(
                             VaultModel.server-url,
+                            reg-name-field.value,
                             reg-email-field.value,
                             reg-password-field.value,
                             reg-confirm-field.value);
@@ -443,10 +449,15 @@ export component VaultDialog inherits DialogScrim {
                     auto-focus: VaultModel.server-url == "";
                     accepted => { submit(); }
                 }
+                reg-name-field := DialogField {
+                    label-text: "Nama Lengkap";
+                    placeholder: "Nama kamu";
+                    auto-focus: VaultModel.server-url != "";
+                    accepted => { submit(); }
+                }
                 reg-email-field := DialogField {
                     label-text: "Email";
                     placeholder: "admin@contoh.com";
-                    auto-focus: VaultModel.server-url != "";
                     accepted => { submit(); }
                 }
                 reg-password-field := DialogField {

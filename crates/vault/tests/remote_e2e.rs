@@ -29,7 +29,7 @@ fn env_or(key: &str, default: &str) -> String {
 async fn login_or_register(url: &str) -> terminus_vault::AuthTokens {
     let email = env_or("TERMINUS_E2E_EMAIL", "e2e@terminus.local");
     let password = env_or("TERMINUS_E2E_PASSWORD", "e2e-password-123");
-    match RemoteVaultClient::register(url, &email, &password).await {
+    match RemoteVaultClient::register(url, &email, &password, "Akun E2E").await {
         Ok(tokens) => tokens,
         Err(_) => RemoteVaultClient::login(url, &email, &password).await.expect("login akun uji"),
     }
@@ -137,7 +137,7 @@ async fn alur_lengkap_lawan_backend_sungguhan() {
     let fresh = RemoteVaultClient::refresh_session(&url, &latest).await.expect("refresh token terbaru harus valid");
 
     // --- Email akun (sidebar) + logout mencabut token TERBARU ---
-    let email = RemoteVaultClient::me(&url, &fresh.access_token).await.expect("GET /auth/me");
+    let email = RemoteVaultClient::me(&url, &fresh.access_token).await.expect("GET /auth/me").email;
     assert_eq!(email, env_or("TERMINUS_E2E_EMAIL", "e2e@terminus.local"));
     let session = RemoteVaultClient::new(url.clone(), "tidak-dipakai".into(), fresh.access_token, fresh.refresh_token.clone());
     session.logout().await.expect("logout");
@@ -157,4 +157,44 @@ async fn alur_lengkap_lawan_backend_sungguhan() {
         Err(VaultError::SessionExpired(_)) => {}
         other => panic!("token yang sudah di-logout harus ditolak, dapat: {:?}", other.map(|_| ())),
     }
+
+    profil_akun(&url, &email).await;
+}
+
+/// Profil (backend/DESIGN.md Milestone 6): ganti nama, ganti email (wajib
+/// password), ganti password (token lama mati, client tetap jalan pakai
+/// token baru yang dipersist). Email & password DIKEMBALIKAN di akhir
+/// supaya test bisa diulang.
+async fn profil_akun(url: &str, email: &str) {
+    let password = env_or("TERMINUS_E2E_PASSWORD", "e2e-password-123");
+    let tokens = RemoteVaultClient::login(url, email, &password).await.unwrap();
+    let vault_id = RemoteVaultClient::list_vaults(url, &tokens.access_token).await.unwrap()[0].id.clone();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = persisted.clone();
+    let client = RemoteVaultClient::new(url.into(), vault_id, tokens.access_token, tokens.refresh_token.clone())
+        .with_token_persister(move |t| sink.lock().unwrap().push(t));
+
+    let info = client.update_profile(Some("  Nama E2E  "), None, None).await.expect("ganti nama");
+    assert_eq!(info.full_name.as_deref(), Some("Nama E2E"), "nama di-trim server");
+
+    let temp_email = "e2e-ganti@terminus.local";
+    match client.update_profile(None, Some(temp_email), None).await {
+        Err(VaultError::Remote(_)) => {}
+        other => panic!("ganti email tanpa password harus ditolak, dapat: {:?}", other.map(|_| ())),
+    }
+    let info = client.update_profile(None, Some(temp_email), Some(&password)).await.expect("ganti email");
+    assert_eq!(info.email, temp_email);
+
+    let temp_password = "password-sementara-e2e";
+    client.change_password(&password, temp_password).await.expect("ganti password");
+    assert_eq!(persisted.lock().unwrap().len(), 1, "token baru hasil ganti password harus dipersist");
+    match RemoteVaultClient::refresh_session(url, &tokens.refresh_token).await {
+        Err(VaultError::SessionExpired(_)) => {}
+        other => panic!("refresh token sebelum ganti password harus dicabut, dapat: {:?}", other.map(|_| ())),
+    }
+    client.list_groups().await.expect("client tetap jalan pakai token baru");
+
+    // Kembalikan seperti semula.
+    client.change_password(temp_password, &password).await.expect("kembalikan password");
+    client.update_profile(None, Some(email), Some(&password)).await.expect("kembalikan email");
 }

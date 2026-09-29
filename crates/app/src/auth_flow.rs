@@ -10,10 +10,10 @@
 
 use crate::app_config::{self, AppConfig, SelfHostedConfig, StorageMode};
 use crate::state::{close_remote_sessions_for_logout, refresh_hosts_model, refresh_vault_cache, AppState};
-use crate::{session_store, AppWindow, VaultModel};
+use crate::{session_store, AppWindow, ProfileModel, VaultModel};
 use slint::ComponentHandle;
 use std::sync::Arc;
-use terminus_vault::{AuthTokens, RemoteVaultClient, VaultBackend, VaultError};
+use terminus_vault::{AccountInfo, AuthTokens, RemoteVaultClient, VaultBackend, VaultError};
 
 /// Nama vault yang otomatis dibuat kalau user belum jadi anggota vault
 /// mana pun (bagian 4 doc — mirror "vault.db baru otomatis dibikin"
@@ -86,16 +86,183 @@ pub fn wire_auth_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.global::<VaultModel>().on_register_requested(move |url, email, password, confirm| {
+        ui.global::<VaultModel>().on_register_requested(move |url, full_name, email, password, confirm| {
             let Some(ui) = ui_weak.upgrade() else { return };
+            let full_name = full_name.trim().to_string();
+            if full_name.is_empty() {
+                ui.global::<VaultModel>().set_error_message("Nama lengkap wajib diisi.".into());
+                return;
+            }
             if password != confirm {
                 ui.global::<VaultModel>().set_error_message("Konfirmasi password tidak sama.".into());
                 return;
             }
-            let request = AuthRequest::Register { email: email.to_string(), password: password.to_string() };
+            let request = AuthRequest::Register { full_name, email: email.to_string(), password: password.to_string() };
             start_auth(&ui_weak, &state, url.as_str(), request);
         });
     }
+    wire_profile_callbacks(ui, state);
+}
+
+/// Pesan error buat user — `VaultError::Remote` sudah berisi pesan server
+/// yang bisa dibaca langsung ("Password saat ini salah"), tanpa awalan
+/// "server error: " dari `Display`.
+fn user_message(e: VaultError) -> String {
+    match e {
+        VaultError::Remote(msg) => msg,
+        other => other.to_string(),
+    }
+}
+
+/// Isi request `PATCH /auth/me` dari form Akun, atau pesan kenapa tidak
+/// dikirim. `Ok(None)` = tidak ada yang berubah. Ganti email WAJIB
+/// password saat ini (backend/DESIGN.md Milestone 6) — dicek di sini juga
+/// supaya pesannya jelas tanpa round-trip ke server.
+#[derive(Debug, PartialEq)]
+struct AccountUpdate {
+    full_name: Option<String>,
+    email: Option<String>,
+    current_password: Option<String>,
+}
+
+fn plan_account_update(
+    current_name: &str,
+    current_email: &str,
+    name_input: &str,
+    email_input: &str,
+    password_input: &str,
+) -> Result<Option<AccountUpdate>, String> {
+    let name = name_input.trim();
+    let email = email_input.trim();
+    if name.is_empty() {
+        return Err("Nama lengkap wajib diisi.".into());
+    }
+    if email.is_empty() {
+        return Err("Email wajib diisi.".into());
+    }
+    let full_name = (name != current_name).then(|| name.to_string());
+    let email_changed = email != current_email;
+    if email_changed && password_input.is_empty() {
+        return Err("Masukkan password saat ini untuk mengganti email.".into());
+    }
+    if full_name.is_none() && !email_changed {
+        return Ok(None);
+    }
+    Ok(Some(AccountUpdate {
+        full_name,
+        email: email_changed.then(|| email.to_string()),
+        current_password: email_changed.then(|| password_input.to_string()),
+    }))
+}
+
+/// Halaman Profile (`ui/pages/page-profile.slint`). Cuma berlaku di mode
+/// Self-hosted — backend `Local` tidak punya akun (tombol menuju halaman
+/// ini memang tidak tampil di situ).
+fn wire_profile_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ProfileModel>().on_account_save_requested(move |name, email, password| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let pm = ui.global::<ProfileModel>();
+            let vm = ui.global::<VaultModel>();
+            if pm.get_saving_account() {
+                return;
+            }
+            pm.set_account_message("".into());
+            pm.set_account_error("".into());
+            let plan = plan_account_update(&vm.get_account_name(), &vm.get_account_email(), &name, &email, &password);
+            let update = match plan {
+                Ok(Some(update)) => update,
+                Ok(None) => {
+                    pm.set_account_message("Tidak ada perubahan.".into());
+                    return;
+                }
+                Err(msg) => {
+                    pm.set_account_error(msg.into());
+                    return;
+                }
+            };
+            let VaultBackend::Remote(client) = state.vault() else { return };
+            pm.set_saving_account(true);
+            let ui_weak = ui_weak.clone();
+            tokio::spawn(async move {
+                let result = client
+                    .update_profile(update.full_name.as_deref(), update.email.as_deref(), update.current_password.as_deref())
+                    .await;
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    let pm = ui.global::<ProfileModel>();
+                    pm.set_saving_account(false);
+                    match result {
+                        Ok(info) => {
+                            apply_account_info(&ui, &info);
+                            pm.set_account_message("Profil tersimpan.".into());
+                            pm.set_account_form_generation(pm.get_account_form_generation() + 1);
+                        }
+                        Err(e) => pm.set_account_error(user_message(e).into()),
+                    }
+                });
+            });
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ProfileModel>().on_password_change_requested(move |current, new, confirm| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let pm = ui.global::<ProfileModel>();
+            if pm.get_saving_password() {
+                return;
+            }
+            pm.set_password_message("".into());
+            pm.set_password_error("".into());
+            let error = if current.is_empty() {
+                Some("Password saat ini wajib diisi.")
+            } else if new.chars().count() < 8 {
+                Some("Password baru minimal 8 karakter.")
+            } else if new != confirm {
+                Some("Konfirmasi password baru tidak sama.")
+            } else {
+                None
+            };
+            if let Some(msg) = error {
+                pm.set_password_error(msg.into());
+                return;
+            }
+            let VaultBackend::Remote(client) = state.vault() else { return };
+            pm.set_saving_password(true);
+            let (current, new) = (current.to_string(), new.to_string());
+            let ui_weak = ui_weak.clone();
+            tokio::spawn(async move {
+                // Token baru dari server langsung dipasang & dipersist di
+                // dalam `change_password` (perangkat ini tetap login).
+                let result = client.change_password(&current, &new).await;
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    let pm = ui.global::<ProfileModel>();
+                    pm.set_saving_password(false);
+                    match result {
+                        Ok(()) => {
+                            pm.set_password_message(
+                                "Password diganti. Perangkat lain akan logout paling lambat ±15 menit.".into(),
+                            );
+                            pm.set_password_form_generation(pm.get_password_form_generation() + 1);
+                        }
+                        Err(e) => pm.set_password_error(user_message(e).into()),
+                    }
+                });
+            });
+        });
+    }
+}
+
+/// Nama & email akun ke sidebar/halaman Profile. Nama kosong (akun lama)
+/// -> sidebar menampilkan email.
+fn apply_account_info(ui: &AppWindow, info: &AccountInfo) {
+    let vm = ui.global::<VaultModel>();
+    vm.set_account_email(info.email.as_str().into());
+    vm.set_account_name(info.full_name.clone().unwrap_or_default().into());
 }
 
 /// Logout eksplisit (tombol di sidebar). Refresh token tersimpan dihapus
@@ -131,6 +298,12 @@ fn logout(ui: &AppWindow, state: &Arc<AppState>) {
     let vm = ui.global::<VaultModel>();
     vm.set_self_hosted_session(false);
     vm.set_account_email("".into());
+    vm.set_account_name("".into());
+    let pm = ui.global::<ProfileModel>();
+    pm.set_account_message("".into());
+    pm.set_account_error("".into());
+    pm.set_password_message("".into());
+    pm.set_password_error("".into());
     vm.set_self_hosted_tab(true);
     vm.set_register_mode(false);
     vm.set_busy(false);
@@ -141,7 +314,7 @@ fn logout(ui: &AppWindow, state: &Arc<AppState>) {
 
 enum AuthRequest {
     Login { email: String, password: String },
-    Register { email: String, password: String },
+    Register { full_name: String, email: String, password: String },
 }
 
 fn start_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>, raw_url: &str, request: AuthRequest) {
@@ -166,7 +339,9 @@ fn start_auth(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>, raw_url: 
     tokio::spawn(async move {
         let tokens = match &request {
             AuthRequest::Login { email, password } => RemoteVaultClient::login(&server_url, email, password).await,
-            AuthRequest::Register { email, password } => RemoteVaultClient::register(&server_url, email, password).await,
+            AuthRequest::Register { full_name, email, password } => {
+                RemoteVaultClient::register(&server_url, email, password, full_name).await
+            }
         };
         let result = match tokens {
             Ok(tokens) => finish_login(&state, &server_url, tokens).await,
@@ -191,9 +366,9 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-/// `Ok` berisi email akun (buat sidebar) — kosong kalau `/auth/me` gagal
-/// (tidak menggagalkan login).
-async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthTokens) -> Result<String, String> {
+/// `Ok` berisi data akun (nama/email buat sidebar) — `None` kalau
+/// `/auth/me` gagal (tidak menggagalkan login).
+async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthTokens) -> Result<Option<AccountInfo>, String> {
     persist_refresh_token(tokens.refresh_token.clone()).await;
 
     let previous = tokio::task::spawn_blocking(app_config::load)
@@ -209,10 +384,13 @@ async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthToken
     let vault_id = resolve_vault_id(server_url, &tokens.access_token, preferred_vault_id.as_deref())
         .await
         .map_err(|e| e.to_string())?;
-    let email = RemoteVaultClient::me(server_url, &tokens.access_token).await.unwrap_or_else(|e| {
-        tracing::warn!("gagal ambil email akun: {e}");
-        String::new()
-    });
+    let account = match RemoteVaultClient::me(server_url, &tokens.access_token).await {
+        Ok(info) => Some(info),
+        Err(e) => {
+            tracing::warn!("gagal ambil data akun: {e}");
+            None
+        }
+    };
 
     let config = AppConfig {
         mode: StorageMode::SelfHosted,
@@ -234,7 +412,7 @@ async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthToken
         });
     state.set_vault(VaultBackend::Remote(client));
     refresh_vault_cache(state).await;
-    Ok(email)
+    Ok(account)
 }
 
 /// Bagian 4 doc. Vault di `app_config.json` dipakai lagi SELAMA user
@@ -265,17 +443,19 @@ async fn persist_refresh_token(token: String) {
     }
 }
 
-fn deliver_result(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, result: Result<String, String>) {
+fn deliver_result(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, result: Result<Option<AccountInfo>, String>) {
     let _ = slint::invoke_from_event_loop(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
         let vm = ui.global::<VaultModel>();
         vm.set_busy(false);
         vm.set_status_message("".into());
         match result {
-            Ok(email) => {
+            Ok(account) => {
                 vm.set_error_message("".into());
                 vm.set_self_hosted_session(true);
-                vm.set_account_email(email.into());
+                if let Some(info) = &account {
+                    apply_account_info(&ui, info);
+                }
                 vm.set_is_unlocked(true);
                 refresh_hosts_model(&ui, &state);
             }
@@ -286,7 +466,25 @@ fn deliver_result(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, result:
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_server_url;
+    use super::{normalize_server_url, plan_account_update, AccountUpdate};
+
+    #[test]
+    fn rencana_update_akun() {
+        // Tidak ada yang berubah (spasi di ujung tidak dihitung perubahan).
+        assert_eq!(plan_account_update("Budi", "b@x.id", " Budi ", "b@x.id", ""), Ok(None));
+        // Ganti nama saja: tanpa password.
+        assert_eq!(
+            plan_account_update("", "b@x.id", "Budi", "b@x.id", ""),
+            Ok(Some(AccountUpdate { full_name: Some("Budi".into()), email: None, current_password: None }))
+        );
+        // Ganti email tanpa password -> ditolak lokal.
+        assert!(plan_account_update("Budi", "b@x.id", "Budi", "baru@x.id", "").is_err());
+        assert_eq!(
+            plan_account_update("Budi", "b@x.id", "Budi", "baru@x.id", "rahasia"),
+            Ok(Some(AccountUpdate { full_name: None, email: Some("baru@x.id".into()), current_password: Some("rahasia".into()) }))
+        );
+        assert!(plan_account_update("Budi", "b@x.id", "   ", "b@x.id", "").is_err(), "nama kosong");
+    }
 
     #[test]
     fn normalize_server_url_buang_slash_akhir_dan_wajib_skema() {

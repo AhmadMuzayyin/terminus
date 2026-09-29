@@ -1,6 +1,6 @@
 import { Tokens } from "../tokens.slint";
 import { VaultModel } from "../models.slint";
-import { IconServer, IconFolder, IconTerminal, IconBook, IconLogout } from "./icons.slint";
+import { IconServer, IconFolder, IconTerminal, IconBook, IconLogout, IconUser } from "./icons.slint";
 
 // Ikon nav — LINE ICON monokrom (`Path` di `icons.slint`), GANTI emoji
 // berwarna (🖥/📁/⌨/📖) sebelumnya atas permintaan eksplisit user
@@ -9,7 +9,7 @@ import { IconServer, IconFolder, IconTerminal, IconBook, IconLogout } from "./ic
 // (bukan lewat parameter tipe komponen — Slint tidak punya itu) yang
 // nentuin `Path` mana yang dirender.
 component NavBadge inherits Rectangle {
-    in property <string> icon-kind: "server"; // "server" | "folder" | "terminal" | "book" | "logout"
+    in property <string> icon-kind: "server"; // "server" | "folder" | "terminal" | "book" | "logout" | "user"
     in property <bool> active: false;
 
     width: 28px;
@@ -22,6 +22,7 @@ component NavBadge inherits Rectangle {
     if root.icon-kind == "terminal" : IconTerminal { color: root.icon-color; }
     if root.icon-kind == "book" : IconBook { color: root.icon-color; }
     if root.icon-kind == "logout" : IconLogout { color: root.icon-color; }
+    if root.icon-kind == "user" : IconUser { color: root.icon-color; }
 }
 
 // Satu baris nav: badge + label, highlight hijau saat aktif (meniru
@@ -79,6 +80,9 @@ export component NavRail inherits Rectangle {
     // crate `open`) — cuma mancarin callback ini ke atas
     // (`app-window.slint`), yang teruskan ke Rust.
     callback documentation-clicked();
+    // Menu akun -> "Profile" (mode Self-hosted). Halaman-nya bukan item
+    // nav (`current-page` 7), jadi app-window yang pindah halaman.
+    callback profile-clicked();
 
     width: Tokens.sidebar-width;
     background: Tokens.surface-container-lowest;
@@ -188,25 +192,41 @@ export component NavRail inherits Rectangle {
 
         // Cuma waktu login ke server Self-hosted (mode Local tidak punya
         // konsep "akun" — di situ kunci-nya master password lokal).
-        // Konfirmasi dulu: logout menutup semua tab SSH & sesi SFTP.
-        if VaultModel.self-hosted-session : VerticalLayout {
-            spacing: 4px;
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                Text {
-                    text: VaultModel.account-email;
-                    color: Tokens.on-surface-variant;
-                    font-family: Tokens.font-mono;
-                    font-size: 11px;
-                    overflow: elide;
+        // Tombol berisi NAMA saja (fallback email buat akun lama tanpa
+        // nama); klik -> menu popup Profile / Logout DI ATAS tombol.
+        // Logout tetap lewat dialog konfirmasi (menutup tab SSH & SFTP).
+        if VaultModel.self-hosted-session : account-button := NavItem {
+            icon-kind: "user";
+            label: VaultModel.account-name != "" ? VaultModel.account-name : VaultModel.account-email;
+            active: root.current-page == 7;
+            clicked => { account-menu.show(); }
+
+            account-menu := PopupWindow {
+                x: 0;
+                y: -self.height - 4px;
+                width: account-button.width;
+                height: 2 * 40px + 2 * 4px;
+
+                Rectangle {
+                    border-radius: Tokens.radius-default;
+                    background: Tokens.surface-container-high;
+                    border-width: 1px;
+                    border-color: Tokens.outline-variant;
+
+                    VerticalLayout {
+                        padding: 4px;
+                        NavItem {
+                            icon-kind: "user";
+                            label: "Profile";
+                            clicked => { root.profile-clicked(); }
+                        }
+                        NavItem {
+                            icon-kind: "logout";
+                            label: "Logout";
+                            clicked => { VaultModel.logout-confirm-open = true; }
+                        }
+                    }
                 }
-            }
-            NavItem {
-                icon-kind: "logout";
-                label: "Logout";
-                active: false;
-                clicked => { VaultModel.logout-confirm-open = true; }
             }
         }
     }

@@ -537,7 +537,7 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
    lagi (refresh token jalan), ganti balik ke mode Local (data lokal
    lama tidak keganggu).
 
-7. ⏳ **Profil akun di desktop** (SETELAH backend Milestone 6 di
+7. ✅ **Profil akun di desktop** (SETELAH backend Milestone 6 di
    `backend/DESIGN.md` selesai — kontrak API-nya di sana):
    - Form Daftar admin pertama: field **Full Name** (wajib).
    - `RemoteVaultClient`: `register(.., full_name)`, `me()` ->
@@ -555,6 +555,15 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
      (Password saat ini, Password baru, Konfirmasi) + tombol Ganti
      Password, dengan penjelasan bahwa perangkat lain akan logout.
      Pesan sukses/error per bagian.
+   - **Selesai**: `RemoteVaultClient::{register(.., full_name), me() ->
+     AccountInfo, update_profile, change_password}` + `send_url`
+     (request ber-auth di luar `/vaults/:id`, tetap refresh-on-401) +
+     `install_tokens` (dipakai refresh & ganti password, menghormati
+     `logged_out`). `auth_flow::plan_account_update` (fungsi murni, ada
+     unit test) memutuskan isi PATCH & menolak ganti email tanpa password
+     sebelum round-trip. Menu akun = `PopupWindow` di atas tombol nama.
+     E2E (`tests/remote_e2e.rs`) mencakup ganti nama/email/password &
+     mengembalikannya di akhir. Build/test workspace hijau.
 
 ## 7. Sengaja DI LUAR SCOPE (jangan dikerjakan tanpa diminta)
 

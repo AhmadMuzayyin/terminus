@@ -691,12 +691,35 @@ export global VaultModel {
     in-out property <string> status-message: "";
 
     callback login-requested(string /* server url */, string /* email */, string /* password */);
-    callback register-requested(string /* server url */, string /* email */, string /* password */, string /* konfirmasi */);
+    callback register-requested(string /* server url */, string /* nama lengkap */, string /* email */, string /* password */, string /* konfirmasi */);
 
     // --- Sesi Self-hosted yang lagi AKTIF (sudah login) — di-set Rust
     // (`auth_flow`). Tombol Logout di sidebar cuma tampil kalau `true`.
     in-out property <bool> self-hosted-session: false;
     in-out property <string> account-email: "";
+    // Kosong = akun lama tanpa nama (backend/DESIGN.md Milestone 6) —
+    // sidebar menampilkan email sebagai gantinya.
+    in-out property <string> account-name: "";
     in-out property <bool> logout-confirm-open: false;
     callback logout-requested();
+}
+
+// Halaman Profile (mode Self-hosted, `current-page` 7) — lihat
+// `ui/pages/page-profile.slint` & `auth_flow::wire_profile_callbacks`.
+// Dua form terpisah (Akun & Keamanan) dengan status masing-masing.
+export global ProfileModel {
+    in-out property <bool> saving-account: false;
+    in-out property <string> account-message: "";
+    in-out property <string> account-error: "";
+    in-out property <bool> saving-password: false;
+    in-out property <string> password-message: "";
+    in-out property <string> password-error: "";
+    // Dinaikkan Rust setelah simpan SUKSES -> halaman mengosongkan
+    // field password form itu (`changed` di page-profile.slint).
+    in-out property <int> account-form-generation: 0;
+    in-out property <int> password-form-generation: 0;
+
+    // Password saat ini cuma wajib kalau email diubah (dicek Rust juga).
+    callback account-save-requested(string /* nama lengkap */, string /* email */, string /* password saat ini */);
+    callback password-change-requested(string /* saat ini */, string /* baru */, string /* konfirmasi */);
 }

@@ -65,6 +65,24 @@ export component IconBook inherits Path {
         + " M12 6.5 v13.4";
 }
 
+// Kepala + bahu — tombol akun di sidebar (mode Self-hosted). Lingkaran
+// kepala pakai kurva cubic (bukan perintah arc) supaya konsisten dengan
+// ikon lain di file ini.
+export component IconUser inherits Path {
+    in property <color> color: black;
+    width: 100%;
+    height: 100%;
+    viewbox-width: 24;
+    viewbox-height: 24;
+    stroke: root.color;
+    stroke-width: 1.8px;
+    stroke-line-join: round;
+    stroke-line-cap: round;
+    fill: transparent;
+    commands: "M8 8 C8 5.8 9.8 4 12 4 C14.2 4 16 5.8 16 8 C16 10.2 14.2 12 12 12 C9.8 12 8 10.2 8 8 Z"
+        + " M4 20 C4 16.5 7.5 14.5 12 14.5 C16.5 14.5 20 16.5 20 20";
+}
+
 // Pintu + panah keluar — tombol Logout (sidebar, mode Self-hosted).
 export component IconLogout inherits Path {
     in property <color> color: black;

@@ -1,0 +1,203 @@
+import { ScrollView } from "std-widgets.slint";
+import { Tokens } from "../tokens.slint";
+import { DialogField, DialogButton } from "../components/dialogs.slint";
+import { VaultModel, ProfileModel } from "../models.slint";
+
+// Halaman Profile akun server Self-hosted (`current-page` 7, dibuka dari
+// menu akun di sidebar — bukan item nav). Dua form TERPISAH dengan status
+// masing-masing: Akun (nama, email) & Keamanan (password). Aturan
+// (backend/DESIGN.md Milestone 6): ganti email wajib password saat ini;
+// ganti password membuat semua perangkat lain logout.
+
+component SectionCard inherits Rectangle {
+    border-radius: Tokens.radius-lg;
+    background: Tokens.surface-container;
+    border-width: 1px;
+    border-color: Tokens.outline-variant;
+}
+
+component SectionTitle inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    spacing: 4px;
+    Text {
+        text: root.title;
+        color: Tokens.on-surface;
+        font-family: Tokens.font-headline;
+        font-size: Tokens.text-headline-sm;
+        font-weight: 700;
+    }
+    Text {
+        text: root.subtitle;
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+// Pesan sukses (hijau) / error (merah) di bawah form.
+component FormStatus inherits VerticalLayout {
+    in property <string> message;
+    in property <string> error;
+    if root.message != "" : Text {
+        text: root.message;
+        color: Tokens.success;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    if root.error != "" : Text {
+        text: root.error;
+        color: Tokens.error;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+export component PageProfile inherits Rectangle {
+    background: Tokens.surface;
+
+    // Rust menaikkan generation setelah simpan SUKSES -> kosongkan field
+    // password form itu (nama/email tetap, sudah jadi nilai terbaru).
+    property <int> account-generation: ProfileModel.account-form-generation;
+    changed account-generation => { account-password.clear(); }
+    property <int> password-generation: ProfileModel.password-form-generation;
+    changed password-generation => {
+        current-password.clear();
+        new-password.clear();
+        confirm-password.clear();
+    }
+
+    function save-account() {
+        if !ProfileModel.saving-account {
+            ProfileModel.account-save-requested(name-field.value, email-field.value, account-password.value);
+        }
+    }
+    function change-password() {
+        if !ProfileModel.saving-password {
+            ProfileModel.password-change-requested(current-password.value, new-password.value, confirm-password.value);
+        }
+    }
+
+    scroll := ScrollView {
+        VerticalLayout {
+            width: scroll.visible-width;
+            padding: Tokens.container-padding;
+            alignment: start;
+
+            HorizontalLayout {
+                alignment: center;
+
+                VerticalLayout {
+                    width: min(520px, scroll.visible-width - 2 * Tokens.container-padding);
+                    spacing: Tokens.stack-gap;
+
+                    Text {
+                        text: "Profile";
+                        color: Tokens.on-surface;
+                        font-family: Tokens.font-headline;
+                        font-size: Tokens.text-headline-md;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: "Akun di server " + VaultModel.server-url;
+                        color: Tokens.on-surface-variant;
+                        font-family: Tokens.font-mono;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+
+                    // --- Akun ---
+                    SectionCard {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: Tokens.stack-gap;
+                            SectionTitle {
+                                title: "Akun";
+                                subtitle: "Nama tampil di sidebar. Mengganti email (identitas login) wajib memasukkan password saat ini.";
+                            }
+                            name-field := DialogField {
+                                label-text: "Nama Lengkap";
+                                placeholder: "Nama kamu";
+                                initial-value: VaultModel.account-name;
+                                accepted => { root.save-account(); }
+                            }
+                            email-field := DialogField {
+                                label-text: "Email";
+                                placeholder: "email@contoh.com";
+                                initial-value: VaultModel.account-email;
+                                accepted => { root.save-account(); }
+                            }
+                            account-password := DialogField {
+                                label-text: "Password saat ini (wajib kalau email diganti)";
+                                placeholder: "••••••••";
+                                is-password: true;
+                                accepted => { root.save-account(); }
+                            }
+                            FormStatus {
+                                message: ProfileModel.account-message;
+                                error: ProfileModel.account-error;
+                            }
+                            HorizontalLayout {
+                                alignment: end;
+                                DialogButton {
+                                    width: 160px;
+                                    label-text: ProfileModel.saving-account ? "Menyimpan..." : "Simpan";
+                                    filled: true;
+                                    enabled: !ProfileModel.saving-account;
+                                    clicked => { root.save-account(); }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Keamanan ---
+                    SectionCard {
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: Tokens.stack-gap;
+                            SectionTitle {
+                                title: "Keamanan";
+                                subtitle: "Setelah password diganti, semua perangkat lain (desktop lain, mobile app) otomatis logout paling lambat ±15 menit. Perangkat ini tetap login.";
+                            }
+                            current-password := DialogField {
+                                label-text: "Password saat ini";
+                                placeholder: "••••••••";
+                                is-password: true;
+                                accepted => { root.change-password(); }
+                            }
+                            new-password := DialogField {
+                                label-text: "Password baru (minimal 8 karakter)";
+                                placeholder: "••••••••";
+                                is-password: true;
+                                accepted => { root.change-password(); }
+                            }
+                            confirm-password := DialogField {
+                                label-text: "Konfirmasi password baru";
+                                placeholder: "••••••••";
+                                is-password: true;
+                                accepted => { root.change-password(); }
+                            }
+                            FormStatus {
+                                message: ProfileModel.password-message;
+                                error: ProfileModel.password-error;
+                            }
+                            HorizontalLayout {
+                                alignment: end;
+                                DialogButton {
+                                    width: 160px;
+                                    label-text: ProfileModel.saving-password ? "Mengganti..." : "Ganti Password";
+                                    filled: true;
+                                    enabled: !ProfileModel.saving-password;
+                                    clicked => { root.change-password(); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -5,9 +5,14 @@
 //! `store_secret` SEBELUM `save_profile`/`save_identity`), karena justru
 //! kontrak itulah yang diuji bagian 2.6 doc.
 //!
-//! `#[ignore]` — butuh server jalan. Jalankan:
-//! `TERMINUS_E2E_URL=http://localhost:4000 cargo test -p terminus-vault
-//! --test remote_e2e -- --ignored --nocapture`
+//! `#[ignore]` — butuh server jalan. JANGAN arahkan ke database yang
+//! berisi akun sungguhan (registrasi publik tertutup begitu ada user,
+//! dan test ini meninggalkan akun uji). Pakai instance TERPISAH dengan
+//! database sendiri, mis. `terminus_e2e`:
+//! `cd backend && PORT=4100 DATABASE_URL=mysql://…/terminus_e2e npx tsx
+//! src/index.ts` (sekali: `DATABASE_URL=… npx prisma migrate deploy`),
+//! lalu `TERMINUS_E2E_URL=http://localhost:4100 cargo test -p
+//! terminus-vault --test remote_e2e -- --ignored --nocapture`
 //!
 //! Akun uji: `TERMINUS_E2E_EMAIL`/`TERMINUS_E2E_PASSWORD` (default
 //! `e2e@terminus.local`/`e2e-password-123`) — dicoba register dulu
@@ -129,5 +134,27 @@ async fn alur_lengkap_lawan_backend_sungguhan() {
         other => panic!("refresh token lama harus SessionExpired, dapat: {:?}", other.map(|_| ())),
     }
     let latest = client.current_refresh_token().await;
-    RemoteVaultClient::refresh_session(&url, &latest).await.expect("refresh token terbaru harus valid");
+    let fresh = RemoteVaultClient::refresh_session(&url, &latest).await.expect("refresh token terbaru harus valid");
+
+    // --- Email akun (sidebar) + logout mencabut token TERBARU ---
+    let email = RemoteVaultClient::me(&url, &fresh.access_token).await.expect("GET /auth/me");
+    assert_eq!(email, env_or("TERMINUS_E2E_EMAIL", "e2e@terminus.local"));
+    let session = RemoteVaultClient::new(url.clone(), "tidak-dipakai".into(), fresh.access_token, fresh.refresh_token.clone());
+    session.logout().await.expect("logout");
+
+    // Race logout vs refresh di background: setelah ditandai logout,
+    // token hasil rotasi TIDAK BOLEH dipersist lagi.
+    let after_logout = RemoteVaultClient::login(&url, &email, &env_or("TERMINUS_E2E_PASSWORD", "e2e-password-123")).await.unwrap();
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = persisted.clone();
+    let vaults = RemoteVaultClient::list_vaults(&url, &after_logout.access_token).await.unwrap();
+    let racing = RemoteVaultClient::new(url.clone(), vaults[0].id.clone(), "token-rusak".into(), after_logout.refresh_token)
+        .with_token_persister(move |t| sink.lock().unwrap().push(t));
+    racing.mark_logged_out();
+    racing.list_groups().await.expect("request tetap jalan (refresh-on-401)");
+    assert!(persisted.lock().unwrap().is_empty(), "token hasil rotasi setelah logout tidak boleh dipersist");
+    match RemoteVaultClient::refresh_session(&url, &fresh.refresh_token).await {
+        Err(VaultError::SessionExpired(_)) => {}
+        other => panic!("token yang sudah di-logout harus ditolak, dapat: {:?}", other.map(|_| ())),
+    }
 }

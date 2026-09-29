@@ -363,6 +363,17 @@ sama sekali di app ini sekarang).
   adanya kalau sudah ada admin).
 - Tab yang aktif TERAKHIR KALI dipakai diingat lewat `app_config.json`
   (`mode`), jadi user tidak perlu pilih ulang tiap buka app.
+- **Logout** (ditambah setelah Milestone 6, atas permintaan user):
+  tombol di footer sidebar + email akun, CUMA tampil kalau login
+  Self-hosted, pakai dialog konfirmasi. Tanpa logout, login otomatis
+  saat start tetap jalan (refresh token tersimpan). Logout: tandai
+  client `logged_out` (token hasil rotasi di background tidak dipersist
+  lagi) -> hapus `session.db` SINKRON (app ditutup langsung pun start
+  berikutnya tidak masuk otomatis) -> `POST /auth/logout` best-effort
+  di background -> tutup SEMUA tab SSH & sesi SFTP + batalkan connect
+  yang lagi jalan (Console serial tidak disentuh, murni lokal) ->
+  kosongkan cache -> backend balik `Local` -> `VaultDialog` tab
+  Self-hosted, URL tetap ter-prefill (`app_config.json` tidak diubah).
 - **Ganti mode** (Local→Self-hosted atau sebaliknya): user klik tab
   lain lagi di layar ini — TAPI cuma bisa dilakukan dari layar
   VaultDialog ini sendiri, artinya harus dalam keadaan "belum unlock/
@@ -505,8 +516,9 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
    `TODO(Milestone 5)` di `auth_flow::resolve_vault_id`).
 6. ⏳ **Verifikasi end-to-end** — BAGIAN OTOMATIS ✅: test integrasi
    `crates/vault/tests/remote_e2e.rs` (`#[ignore]`, butuh `npm run dev`;
-   jalankan `TERMINUS_E2E_URL=http://localhost:4000 cargo test -p
-   terminus-vault --test remote_e2e -- --ignored`) meniru urutan panggilan
+   jalankan terhadap instance backend TERPISAH ber-database
+   `terminus_e2e` — lihat komentar kepala file test itu; JANGAN ke DB
+   yang berisi akun sungguhan) meniru urutan panggilan
    `state.rs` apa adanya lawan backend sungguhan: register/login, list/
    create vault, refresh-on-401 + persist token hasil rotasi, grup/host/
    identity create-update-delete + password, cascade hapus grup, token

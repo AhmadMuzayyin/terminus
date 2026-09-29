@@ -692,4 +692,11 @@ export global VaultModel {
 
     callback login-requested(string /* server url */, string /* email */, string /* password */);
     callback register-requested(string /* server url */, string /* email */, string /* password */, string /* konfirmasi */);
+
+    // --- Sesi Self-hosted yang lagi AKTIF (sudah login) — di-set Rust
+    // (`auth_flow`). Tombol Logout di sidebar cuma tampil kalau `true`.
+    in-out property <bool> self-hosted-session: false;
+    in-out property <string> account-email: "";
+    in-out property <bool> logout-confirm-open: false;
+    callback logout-requested();
 }

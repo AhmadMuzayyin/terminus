@@ -382,6 +382,42 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     }
 }
 
+/// Logout Self-hosted (dipanggil `auth_flow`, di UI thread): tutup SEMUA
+/// tab SSH & sesi SFTP — datanya dari server yang baru ditinggalkan —,
+/// batalkan proses connect yang lagi jalan, kosongkan cache vault, lalu
+/// backend balik ke `Local` (belum di-unlock; `VaultDialog` muncul lagi).
+/// Console serial TIDAK disentuh (murni lokal, tidak ada hubungannya
+/// dengan akun server).
+pub(crate) fn close_remote_sessions_for_logout(ui: &AppWindow, state: &Arc<AppState>) {
+    if let Some((_, handle)) = state.active_connect.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        handle.abort();
+    }
+    *state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    ui.global::<ConnectingModel>().set_visible(false);
+
+    let tab_ids: Vec<Uuid> = state.tab_meta.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|t| t.id).collect();
+    for id in tab_ids {
+        finalize_tab_closed(ui, state, id);
+    }
+    ui.global::<SftpModel>().invoke_sftp_disconnect_requested();
+    let state_task = state.clone();
+    tokio::spawn(async move {
+        let sessions: Vec<SshSession> = state_task.sessions.lock().await.drain().map(|(_, s)| s).collect();
+        for mut session in sessions {
+            let _ = session.disconnect().await;
+        }
+    });
+
+    state.profiles_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    state.groups_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    state.identities_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    state.selected_hosts.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    state.selected_groups.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    state.set_vault(VaultBackend::Local(Arc::clone(&state.local)));
+    refresh_hosts_model(ui, state);
+    ui.set_current_page(0);
+}
+
 impl AppState {
     /// Snapshot backend aktif SAAT INI (Local atau Remote). Dipanggil
     /// per-operasi, bukan disimpan lama — backend bisa berganti sekali

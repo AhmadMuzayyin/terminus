@@ -1,5 +1,5 @@
 import { Tokens } from "../tokens.slint";
-import { HostsModel } from "../models.slint";
+import { HostsModel, VaultModel } from "../models.slint";
 import { DialogScrim, DialogButton } from "./dialogs.slint";
 
 // Konfirmasi hapus host — lihat komentar panjang di `HostsModel
@@ -189,6 +189,63 @@ export component ConfirmBulkDeleteDialog inherits DialogScrim {
                         } else {
                             HostsModel.bulk-delete-hosts-requested();
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Konfirmasi logout mode Self-hosted (tombol di sidebar, `NavRail`).
+// Refresh token tersimpan DIHAPUS — start app berikutnya harus login lagi.
+export component ConfirmLogoutDialog inherits DialogScrim {
+    card := Rectangle {
+        width: 360px;
+        height: 210px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 3;
+        border-radius: Tokens.radius-xl;
+        background: Tokens.surface-container-low;
+        border-width: 1px;
+        border-color: Tokens.outline-variant;
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: Tokens.stack-gap;
+
+            Text {
+                text: "Logout dari server?";
+                color: Tokens.on-surface;
+                font-family: Tokens.font-headline;
+                font-size: Tokens.text-headline-md;
+                font-weight: 700;
+            }
+            Text {
+                text: "Semua tab SSH & sesi SFTP akan ditutup, dan waktu membuka aplikasi berikutnya kamu perlu login lagi ke "
+                    + VaultModel.server-url + ".";
+                color: Tokens.on-surface-variant;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: Tokens.inline-gap;
+                DialogButton {
+                    label-text: "Batal";
+                    horizontal-stretch: 1;
+                    clicked => { VaultModel.logout-confirm-open = false; }
+                }
+                DialogButton {
+                    label-text: "Logout";
+                    filled: true;
+                    danger: true;
+                    horizontal-stretch: 1;
+                    clicked => {
+                        VaultModel.logout-confirm-open = false;
+                        VaultModel.logout-requested();
                     }
                 }
             }

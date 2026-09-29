@@ -1,5 +1,6 @@
 import { Tokens } from "../tokens.slint";
-import { IconServer, IconFolder, IconTerminal, IconBook } from "./icons.slint";
+import { VaultModel } from "../models.slint";
+import { IconServer, IconFolder, IconTerminal, IconBook, IconLogout } from "./icons.slint";
 
 // Ikon nav — LINE ICON monokrom (`Path` di `icons.slint`), GANTI emoji
 // berwarna (🖥/📁/⌨/📖) sebelumnya atas permintaan eksplisit user
@@ -8,7 +9,7 @@ import { IconServer, IconFolder, IconTerminal, IconBook } from "./icons.slint";
 // (bukan lewat parameter tipe komponen — Slint tidak punya itu) yang
 // nentuin `Path` mana yang dirender.
 component NavBadge inherits Rectangle {
-    in property <string> icon-kind: "server"; // "server" | "folder" | "terminal" | "book"
+    in property <string> icon-kind: "server"; // "server" | "folder" | "terminal" | "book" | "logout"
     in property <bool> active: false;
 
     width: 28px;
@@ -20,6 +21,7 @@ component NavBadge inherits Rectangle {
     if root.icon-kind == "folder" : IconFolder { color: root.icon-color; }
     if root.icon-kind == "terminal" : IconTerminal { color: root.icon-color; }
     if root.icon-kind == "book" : IconBook { color: root.icon-color; }
+    if root.icon-kind == "logout" : IconLogout { color: root.icon-color; }
 }
 
 // Satu baris nav: badge + label, highlight hijau saat aktif (meniru
@@ -182,6 +184,30 @@ export component NavRail inherits Rectangle {
             label: "Documentation";
             active: false;
             clicked => { root.documentation-clicked(); }
+        }
+
+        // Cuma waktu login ke server Self-hosted (mode Local tidak punya
+        // konsep "akun" — di situ kunci-nya master password lokal).
+        // Konfirmasi dulu: logout menutup semua tab SSH & sesi SFTP.
+        if VaultModel.self-hosted-session : VerticalLayout {
+            spacing: 4px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                Text {
+                    text: VaultModel.account-email;
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-mono;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+            NavItem {
+                icon-kind: "logout";
+                label: "Logout";
+                active: false;
+                clicked => { VaultModel.logout-confirm-open = true; }
+            }
         }
     }
 }

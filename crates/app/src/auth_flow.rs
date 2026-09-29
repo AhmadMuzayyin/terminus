@@ -9,7 +9,7 @@
 //! `app_config.json` -> ganti `AppState.vault` jadi `Remote` -> buka UI.
 
 use crate::app_config::{self, AppConfig, SelfHostedConfig, StorageMode};
-use crate::state::{refresh_hosts_model, refresh_vault_cache, AppState};
+use crate::state::{close_remote_sessions_for_logout, refresh_hosts_model, refresh_vault_cache, AppState};
 use crate::{session_store, AppWindow, VaultModel};
 use slint::ComponentHandle;
 use std::sync::Arc;
@@ -70,6 +70,14 @@ pub fn wire_auth_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        ui.global::<VaultModel>().on_logout_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            logout(&ui, &state);
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
         ui.global::<VaultModel>().on_login_requested(move |url, email, password| {
             let request = AuthRequest::Login { email: email.to_string(), password: password.to_string() };
             start_auth(&ui_weak, &state, url.as_str(), request);
@@ -88,6 +96,47 @@ pub fn wire_auth_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             start_auth(&ui_weak, &state, url.as_str(), request);
         });
     }
+}
+
+/// Logout eksplisit (tombol di sidebar). Refresh token tersimpan dihapus
+/// SINKRON di sini, bukan di task background: kalau app langsung ditutup
+/// setelah klik Logout, start berikutnya TIDAK BOLEH masuk otomatis.
+/// Pencabutan token di server (`POST /auth/logout`) best-effort di
+/// background — gagal (server mati) cuma di-log, token itu tetap tidak
+/// bisa dipakai lagi dari mesin ini karena salinannya sudah dihapus.
+/// `app_config.json` TIDAK diubah: mode tetap Self-hosted & URL tetap
+/// ter-prefill di form login.
+fn logout(ui: &AppWindow, state: &Arc<AppState>) {
+    let remote = match state.vault() {
+        VaultBackend::Remote(client) => Some(client),
+        VaultBackend::Local(_) => None,
+    };
+    // Tandai logout SEBELUM hapus token tersimpan — lihat `logged_out`
+    // di `RemoteVaultClient` (race dengan refresh token di background).
+    if let Some(client) = &remote {
+        client.mark_logged_out();
+    }
+    if let Err(e) = session_store::clear() {
+        tracing::warn!("gagal hapus refresh token tersimpan waktu logout: {e}");
+    }
+    if let Some(client) = remote {
+        tokio::spawn(async move {
+            if let Err(e) = client.logout().await {
+                tracing::warn!("gagal cabut refresh token di server waktu logout: {e}");
+            }
+        });
+    }
+    close_remote_sessions_for_logout(ui, state);
+
+    let vm = ui.global::<VaultModel>();
+    vm.set_self_hosted_session(false);
+    vm.set_account_email("".into());
+    vm.set_self_hosted_tab(true);
+    vm.set_register_mode(false);
+    vm.set_busy(false);
+    vm.set_error_message("".into());
+    vm.set_status_message("Kamu sudah logout.".into());
+    vm.set_is_unlocked(false);
 }
 
 enum AuthRequest {
@@ -142,7 +191,9 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthTokens) -> Result<(), String> {
+/// `Ok` berisi email akun (buat sidebar) — kosong kalau `/auth/me` gagal
+/// (tidak menggagalkan login).
+async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthTokens) -> Result<String, String> {
     persist_refresh_token(tokens.refresh_token.clone()).await;
 
     let previous = tokio::task::spawn_blocking(app_config::load)
@@ -158,6 +209,10 @@ async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthToken
     let vault_id = resolve_vault_id(server_url, &tokens.access_token, preferred_vault_id.as_deref())
         .await
         .map_err(|e| e.to_string())?;
+    let email = RemoteVaultClient::me(server_url, &tokens.access_token).await.unwrap_or_else(|e| {
+        tracing::warn!("gagal ambil email akun: {e}");
+        String::new()
+    });
 
     let config = AppConfig {
         mode: StorageMode::SelfHosted,
@@ -179,7 +234,7 @@ async fn finish_login(state: &Arc<AppState>, server_url: &str, tokens: AuthToken
         });
     state.set_vault(VaultBackend::Remote(client));
     refresh_vault_cache(state).await;
-    Ok(())
+    Ok(email)
 }
 
 /// Bagian 4 doc. Vault di `app_config.json` dipakai lagi SELAMA user
@@ -210,15 +265,17 @@ async fn persist_refresh_token(token: String) {
     }
 }
 
-fn deliver_result(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, result: Result<(), String>) {
+fn deliver_result(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, result: Result<String, String>) {
     let _ = slint::invoke_from_event_loop(move || {
         let Some(ui) = ui_weak.upgrade() else { return };
         let vm = ui.global::<VaultModel>();
         vm.set_busy(false);
         vm.set_status_message("".into());
         match result {
-            Ok(()) => {
+            Ok(email) => {
                 vm.set_error_message("".into());
+                vm.set_self_hosted_session(true);
+                vm.set_account_email(email.into());
                 vm.set_is_unlocked(true);
                 refresh_hosts_model(&ui, &state);
             }

@@ -69,6 +69,11 @@ pub struct RemoteVaultClient {
     /// `save_profile`/`save_identity` berikutnya. Lihat bagian 2.6 doc.
     pending_secrets: Arc<TokioMutex<HashMap<Uuid, Vec<u8>>>>,
     on_tokens_rotated: Option<TokenPersister>,
+    /// Di-set `logout()` PALING AWAL — request yang lagi jalan di
+    /// background bisa saja me-refresh token SETELAH logout; hasil
+    /// rotasinya TIDAK BOLEH dipersist lagi (kalau dipersist, start app
+    /// berikutnya malah masuk otomatis padahal user sudah logout).
+    logged_out: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Timeout request auth (login/register/refresh/list vault) — tanpa ini
@@ -84,6 +89,7 @@ impl RemoteVaultClient {
             tokens: Arc::new(TokioMutex::new(TokenPair { access_token, refresh_token })),
             pending_secrets: Arc::new(TokioMutex::new(HashMap::new())),
             on_tokens_rotated: None,
+            logged_out: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -152,6 +158,44 @@ impl RemoteVaultClient {
         Self::tokens_from_response(resp).await
     }
 
+    /// Email akun yang lagi login (`GET /auth/me`) — ditampilkan di
+    /// sidebar di samping tombol Logout, juga waktu login diam-diam (di
+    /// situ email tidak diketik user).
+    pub async fn me(base_url: &str, access_token: &str) -> Result<String, VaultError> {
+        #[derive(Deserialize)]
+        struct Me {
+            email: String,
+        }
+        let resp = Self::auth_http()?
+            .get(format!("{base_url}/api/v1/auth/me"))
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        Ok(Self::json_or_err::<Me>(resp).await?.email)
+    }
+
+    /// Stop persist token hasil rotasi mulai SEKARANG (sinkron). Dipanggil
+    /// app sebelum menghapus token tersimpan; `logout()` juga memanggilnya.
+    pub fn mark_logged_out(&self) {
+        self.logged_out.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Cabut refresh token TERBARU di server (`POST /auth/logout`). Backend
+    /// selalu 204 walau token sudah dicabut duluan, jadi error di sini
+    /// praktis cuma jaringan — caller menganggapnya best-effort.
+    pub async fn logout(&self) -> Result<(), VaultError> {
+        self.mark_logged_out();
+        let refresh_token = self.current_refresh_token().await;
+        let resp = Self::auth_http()?
+            .post(format!("{}/api/v1/auth/logout", self.base_url))
+            .json(&json!({ "refreshToken": refresh_token }))
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        Self::empty_or_err(resp).await
+    }
+
     pub async fn list_vaults(base_url: &str, access_token: &str) -> Result<Vec<VaultSummary>, VaultError> {
         let resp = Self::auth_http()?
             .get(format!("{base_url}/api/v1/vaults"))
@@ -174,9 +218,8 @@ impl RemoteVaultClient {
     }
 
     /// Snapshot refresh token TERBARU (bisa sudah rotate dari nilai
-    /// awal waktu `new()`, lihat `refresh_access_token`) — dipanggil
-    /// Milestone 3 buat persist ulang ke `session_store` supaya login
-    /// diam-diam (silent) tetap valid di restart app berikutnya.
+    /// awal waktu `new()`, lihat `refresh_access_token`) — dipakai
+    /// `logout` (token yang dicabut harus yang TERBARU).
     pub async fn current_refresh_token(&self) -> String {
         self.tokens.lock().await.refresh_token.clone()
     }
@@ -252,7 +295,8 @@ impl RemoteVaultClient {
             tokens.refresh_token = result.refresh_token;
             tokens.refresh_token.clone()
         };
-        if let Some(persist) = &self.on_tokens_rotated {
+        let logged_out = self.logged_out.load(std::sync::atomic::Ordering::SeqCst);
+        if let (Some(persist), false) = (&self.on_tokens_rotated, logged_out) {
             let persist = Arc::clone(persist);
             // Hasil join diabaikan: gagal persist tidak boleh
             // menggagalkan request user yang refresh-nya SUDAH sukses

@@ -17,7 +17,7 @@ import { PageConsole } from "./pages/page-console.slint";
 import { PageTerminal } from "./pages/page-terminal.slint";
 import { TerminalTabBar } from "./components/terminal-tabs-bar.slint";
 import { VaultDialog, NewGroupDialog, ExportJsonDialog, IdentitiesDialog } from "./components/dialogs.slint";
-import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog } from "./components/confirm-dialog.slint";
+import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog, ConfirmLogoutDialog } from "./components/confirm-dialog.slint";
 import { ConnectingView } from "./components/connecting-view.slint";
 import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel } from "./models.slint";
 // Re-export eksplisit: `import` doang cuma bikin visible LOKAL di file
@@ -142,6 +142,7 @@ export component AppWindow inherits Window {
     if VaultModel.is-unlocked && HostsModel.show-export-json-dialog : ExportJsonDialog { }
     if VaultModel.is-unlocked && HostsModel.show-identities-dialog : IdentitiesDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-delete-open : ConfirmDeleteHostDialog { }
+    if VaultModel.is-unlocked && VaultModel.logout-confirm-open : ConfirmLogoutDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-delete-group-open : ConfirmDeleteGroupDialog { }
     if VaultModel.is-unlocked && HostsModel.confirm-bulk-delete-open : ConfirmBulkDeleteDialog { }
 

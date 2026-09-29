@@ -353,6 +353,15 @@ mengonfirmasi `id` custom dipakai apa adanya. Total test SEKARANG 56
      FK owner — TAPI refresh token semua user SUDAH terhapus duluan
      (semua sesi login ikut keluar).
 
+**Addendum (import config.xml di mode Self-hosted)**: `username` host
+sekarang BOLEH string kosong di `POST`/`PUT /hosts` (sebelumnya
+`min(1)`). Alasan: desktop mode Local sudah mengizinkan, dan sesi
+SecureCRT hasil import sering tanpa username (ditanyakan waktu connect)
+— dengan `min(1)`, import `config.xml` di mode Self-hosted berhenti di
+host pertama tanpa username (400). `label` & `host` TETAP wajib. Username
+Identity TIDAK diubah (identity memang kumpulan username+password).
+Test regresi di `tests/hosts.test.ts`; total 68 test.
+
 ## 7. Sengaja DI LUAR SCOPE sekarang (jangan dikerjakan tanpa diminta)
 
 - Integrasi ke desktop app (`crates/app`) supaya bisa pilih Local vs

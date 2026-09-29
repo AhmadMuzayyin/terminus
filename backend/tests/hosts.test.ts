@@ -215,4 +215,27 @@ describe("Hosts CRUD + secret", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe(clientId);
   });
+
+  // Regresi: sesi SecureCRT hasil import sering tanpa username — dulu
+  // ditolak 400 dan import config.xml di mode Self-hosted berhenti.
+  it("host dengan username KOSONG diterima (create & update), label/host tetap wajib", async () => {
+    const created = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/hosts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ id: randomUUID(), label: "imported-no-user", host: "10.0.0.10", username: "" });
+    expect(created.status).toBe(201);
+    expect(created.body.username).toBe("");
+
+    const updated = await request(app)
+      .put(`/api/v1/vaults/${vaultId}/hosts/${created.body.id}`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ username: "" });
+    expect(updated.status).toBe(200);
+
+    const noHost = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/hosts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ label: "x", host: "", username: "" });
+    expect(noHost.status).toBe(400);
+  });
 });

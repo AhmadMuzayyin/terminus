@@ -24,7 +24,11 @@ export const createHostSchema = z.object({
     label: z.string().min(1, "Label wajib diisi"),
     host: z.string().min(1, "Host/IP wajib diisi"),
     port: z.coerce.number().int().min(1).max(65535).default(22),
-    username: z.string().min(1, "Username wajib diisi"),
+    // Boleh kosong — SAMA dengan desktop mode Local: sesi SecureCRT yang
+    // di-import sering tidak menyimpan username (ditanyakan waktu
+    // connect). Dulu `min(1)` bikin import config.xml di mode
+    // Self-hosted berhenti di host pertama tanpa username.
+    username: z.string(),
     kind: kindSchema.default("ssh"),
     groupId: z.string().uuid("groupId tidak valid").nullable().optional(),
     tags: z.array(z.string()).default([]),
@@ -48,7 +52,7 @@ export const updateHostSchema = z.object({
     label: z.string().min(1).optional(),
     host: z.string().min(1).optional(),
     port: z.coerce.number().int().min(1).max(65535).optional(),
-    username: z.string().min(1).optional(),
+    username: z.string().optional(),
     kind: kindSchema.optional(),
     groupId: z.string().uuid("groupId tidak valid").nullable().optional(),
     tags: z.array(z.string()).optional(),

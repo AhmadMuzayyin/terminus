@@ -121,7 +121,8 @@ fn extract_host(node: Node, label: &str, path: &[String]) -> Option<ImportedHost
     let host = find_string(node, "Hostname").filter(|s| !s.is_empty())?;
     let username = find_string(node, "Username").unwrap_or_default();
     // Nama key port SecureCRT punya prefix protokol, mis. "[SSH2] Port".
-    let port = find_dword(node, "[SSH2] Port").and_then(|p| u16::try_from(p).ok()).unwrap_or(22);
+    // 0 (atau di luar u16) = tidak valid -> default 22.
+    let port = find_dword(node, "[SSH2] Port").and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0).unwrap_or(22);
 
     Some(ImportedHost { label: label.to_string(), host, port, username, group_path: path.to_vec() })
 }
@@ -205,6 +206,23 @@ mod tests {
         let root_level = result.hosts.iter().find(|h| h.label == "prod-web-01").unwrap();
         assert_eq!(root_level.host, "10.0.0.5");
         assert!(root_level.group_path.is_empty(), "sesi di root Sessions harus tanpa group_path");
+    }
+
+    #[test]
+    fn tanpa_username_tetap_diimpor_dan_port_nol_jadi_22() {
+        let xml = r#"<?xml version="1.0"?>
+        <VanDyke version="3.0"><key name="Sessions">
+            <key name="tanpa-user">
+                <dword name="Is Session">1</dword>
+                <string name="Protocol Name">SSH2</string>
+                <string name="Hostname">10.2.2.2</string>
+                <dword name="[SSH2] Port">0</dword>
+            </key>
+        </key></VanDyke>"#;
+        let result = parse(xml).unwrap();
+        assert_eq!(result.hosts.len(), 1);
+        assert_eq!(result.hosts[0].username, "");
+        assert_eq!(result.hosts[0].port, 22);
     }
 
     #[test]

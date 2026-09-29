@@ -96,6 +96,16 @@ async fn alur_lengkap_lawan_backend_sungguhan() {
     assert_eq!(server_cred, host.id, "credential_id dari server == id host (bagian 2.6)");
     assert_eq!(client.read_secret(server_cred).await.unwrap(), b"rahasia-host-1");
 
+    // --- Host hasil import SecureCRT: TANPA username & TANPA password
+    // (persis `import_parsed_hosts_into_vault` di state.rs) ---
+    let (mut imported, _) = new_host(None);
+    imported.username = String::new();
+    imported.tags = vec!["imported".into()];
+    client.save_profile(&imported).await.expect("host tanpa username harus bisa disimpan (import config.xml)");
+    let back = client.list_all_profiles().await.unwrap().into_iter().find(|p| p.id == imported.id).expect("host import ada");
+    assert_eq!(back.username, "");
+    client.delete_profile(imported.id).await.unwrap();
+
     // --- UPDATE host yang sudah ada: ganti label + password ---
     let mut edited = from_server.clone();
     edited.label = format!("{}-edit", edited.label);

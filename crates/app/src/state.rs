@@ -1894,7 +1894,12 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     let _ = session.resize_pty(cols, rows).await;
                 }
             });
-            if let Some(host_id) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) {
+            // Id disalin ke variabel DULU: guard sementara di kondisi
+            // `if let` baru dilepas di AKHIR blok, sedangkan
+            // `render_and_cache_tab` mengunci `active_terminal` lagi —
+            // deadlock (main thread membeku) kalau digabung satu baris.
+            let active = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(host_id) = active {
                 render_and_cache_tab(&ui_weak, &state, host_id);
             }
         });
@@ -4670,5 +4675,70 @@ mod tests {
         .unwrap();
 
         slint::run_event_loop_until_quit().unwrap();
+    }
+}
+
+/// Regresi: halaman terminal yang BENERAN dirender (`ui.show()`, beda dari
+/// test lain yang tidak pernah menampilkan jendela sehingga `init`/
+/// `grid-resized` di `TerminalSurface` tidak pernah jalan) sempat bikin
+/// main thread deadlock begitu SSH connect. `#[ignore]` karena butuh
+/// display sungguhan & winit cuma boleh satu event loop per proses —
+/// jalankan sendiri: `cargo test -p terminus-app terminal_page_tampil
+/// -- --ignored`.
+#[cfg(test)]
+mod terminal_page_render {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    #[ignore]
+    fn terminal_page_tampil_tidak_membeku_dan_grid_ikut_ukuran_area() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let ui = AppWindow::new().unwrap();
+        let store = VaultStore::open_at(std::env::temp_dir().join(format!("terminus-render-test-{}.db", Uuid::new_v4()))).unwrap();
+        let state = wire_callbacks(&ui, VaultBackend::Local(Arc::new(Mutex::new(store))));
+        ui.show().unwrap();
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_task = finished.clone();
+        let ui_weak = ui.as_weak();
+        slint::spawn_local(async move {
+            let ui = ui_weak.upgrade().unwrap();
+            ui.global::<VaultModel>().set_is_unlocked(true);
+            let id = Uuid::new_v4();
+            let mut term = TerminalInstance::new(console::DEFAULT_TERM_COLS, console::DEFAULT_TERM_ROWS);
+            term.feed((0..80).map(|i| format!("baris {i}")).collect::<Vec<_>>().join("\r\n").as_bytes());
+            state.terminals.lock().unwrap().insert(id, term);
+            state.tab_meta.lock().unwrap().push(TabMeta { id, label: "test".into(), address: "x:22".into() });
+            *state.active_terminal.lock().unwrap() = Some(id);
+            ui.set_current_page(6);
+            switch_to_tab(&ui, &state, id);
+
+            // Kalau main thread deadlock, future ini TIDAK PERNAH lanjut
+            // (spawn_local jalan di main thread) -> test timeout.
+            let default_size = (console::DEFAULT_TERM_COLS, console::DEFAULT_TERM_ROWS);
+            for _ in 0..300 {
+                if *state.term_size.lock().unwrap() != default_size {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let (cols, rows) = *state.term_size.lock().unwrap();
+            assert_ne!((cols, rows), default_size, "grid harus ikut ukuran area, bukan tetap 100x32");
+            assert_eq!(state.terminals.lock().unwrap().get(&id).unwrap().size(), (cols, rows));
+            // Baris dikirim ke UI lewat `invoke_from_event_loop` (async).
+            for _ in 0..300 {
+                if ui.global::<TerminalTabsModel>().get_rows().row_count() == rows as usize {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(ui.global::<TerminalTabsModel>().get_rows().row_count(), rows as usize);
+            finished_task.store(true, Ordering::SeqCst);
+            slint::quit_event_loop().unwrap();
+        })
+        .unwrap();
+        slint::run_event_loop_until_quit().unwrap();
+        assert!(finished.load(Ordering::SeqCst), "event loop berhenti sebelum pengecekan selesai");
     }
 }

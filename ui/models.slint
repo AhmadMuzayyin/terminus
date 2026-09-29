@@ -657,4 +657,20 @@ export global VaultModel {
 
     callback create-requested(string /* master password */);
     callback unlock-requested(string /* master password */);
+
+    // --- Mode Self-hosted (docs/desktop-selfhosted-integration.md
+    // bagian 5). Tab yang tampil duluan diisi Rust dari
+    // `app_config.json` (`mode`), pindah tab murni di sisi Slint.
+    in-out property <bool> self-hosted-tab: false;
+    // Form Daftar (admin pertama) vs form Masuk di tab Self-hosted.
+    in-out property <bool> register-mode: false;
+    // Di-prefill Rust dari `app_config.json`, DAN ditulis balik oleh
+    // field URL tiap ketukan — satu sumber buat form Masuk & Daftar.
+    in-out property <string> server-url: "";
+    // Pesan status netral (bukan error) — mis. "Masuk otomatis..." waktu
+    // login diam-diam pakai refresh token tersimpan.
+    in-out property <string> status-message: "";
+
+    callback login-requested(string /* server url */, string /* email */, string /* password */);
+    callback register-requested(string /* server url */, string /* email */, string /* password */, string /* konfirmasi */);
 }

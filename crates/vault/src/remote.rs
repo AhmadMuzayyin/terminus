@@ -24,6 +24,29 @@ use uuid::Uuid;
 
 use crate::VaultError;
 
+/// Pasangan token hasil login/register/refresh. Publik (beda dari
+/// `TokenPair` internal) karena layer app perlu menyimpan
+/// `refresh_token`-nya (`session_store`) sebelum membangun client.
+#[derive(Debug, Clone)]
+pub struct AuthTokens {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+/// Satu baris `GET /api/v1/vaults` (role sengaja tidak dibaca — v1
+/// desktop tidak membedakan owner/member, lihat doc bagian 4).
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultSummary {
+    pub id: String,
+    pub name: String,
+}
+
+/// Dipanggil (di `spawn_blocking`) tiap refresh token BARU keluar dari
+/// rotasi otomatis di `refresh_access_token` — backend mencabut token
+/// lama begitu dipakai, jadi kalau yang baru tidak dipersist, login
+/// diam-diam di restart berikutnya pasti gagal.
+type TokenPersister = Arc<dyn Fn(String) + Send + Sync>;
+
 #[derive(Clone)]
 struct TokenPair {
     access_token: String,
@@ -45,7 +68,12 @@ pub struct RemoteVaultClient {
     /// (host/identity) BELUM ADA di server — dikirim beneran waktu
     /// `save_profile`/`save_identity` berikutnya. Lihat bagian 2.6 doc.
     pending_secrets: Arc<TokioMutex<HashMap<Uuid, Vec<u8>>>>,
+    on_tokens_rotated: Option<TokenPersister>,
 }
+
+/// Timeout request auth (login/register/refresh/list vault) — tanpa ini
+/// server yang hang bikin dialog login `busy` selamanya.
+const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 impl RemoteVaultClient {
     pub fn new(base_url: String, vault_id: String, access_token: String, refresh_token: String) -> Self {
@@ -55,7 +83,94 @@ impl RemoteVaultClient {
             vault_id,
             tokens: Arc::new(TokioMutex::new(TokenPair { access_token, refresh_token })),
             pending_secrets: Arc::new(TokioMutex::new(HashMap::new())),
+            on_tokens_rotated: None,
         }
+    }
+
+    /// Pasang callback persist refresh token hasil rotasi otomatis.
+    pub fn with_token_persister(mut self, persister: impl Fn(String) + Send + Sync + 'static) -> Self {
+        self.on_tokens_rotated = Some(Arc::new(persister));
+        self
+    }
+
+    fn auth_http() -> Result<reqwest::Client, VaultError> {
+        reqwest::Client::builder()
+            .timeout(AUTH_TIMEOUT)
+            .build()
+            .map_err(|e| VaultError::Remote(format!("gagal menyiapkan HTTP client: {e}")))
+    }
+
+    async fn auth_call(base_url: &str, endpoint: &str, body: Value) -> Result<AuthTokens, VaultError> {
+        let resp = Self::auth_http()?
+            .post(format!("{base_url}/api/v1/auth/{endpoint}"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        Self::tokens_from_response(resp).await
+    }
+
+    async fn tokens_from_response(resp: reqwest::Response) -> Result<AuthTokens, VaultError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body {
+            access_token: String,
+            refresh_token: String,
+        }
+        let body: Body = Self::json_or_err(resp).await?;
+        Ok(AuthTokens { access_token: body.access_token, refresh_token: body.refresh_token })
+    }
+
+    /// `POST /auth/login`. Respons juga memuat `user`, tidak dipakai.
+    pub async fn login(base_url: &str, email: &str, password: &str) -> Result<AuthTokens, VaultError> {
+        Self::auth_call(base_url, "login", json!({ "email": email, "password": password })).await
+    }
+
+    /// `POST /auth/register` — backend cuma menerima kalau tabel `users`
+    /// masih kosong (admin pertama), error-nya diteruskan apa adanya.
+    pub async fn register(base_url: &str, email: &str, password: &str) -> Result<AuthTokens, VaultError> {
+        Self::auth_call(base_url, "register", json!({ "email": email, "password": password })).await
+    }
+
+    /// Login diam-diam pakai refresh token tersimpan. Status 401 dari
+    /// server -> `SessionExpired` (token harus dibuang); kegagalan lain
+    /// (jaringan, 5xx) tetap `Remote` supaya token tersimpan TIDAK
+    /// dibuang cuma karena server sedang mati.
+    pub async fn refresh_session(base_url: &str, refresh_token: &str) -> Result<AuthTokens, VaultError> {
+        let resp = Self::auth_http()?
+            .post(format!("{base_url}/api/v1/auth/refresh"))
+            .json(&json!({ "refreshToken": refresh_token }))
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        if resp.status() == StatusCode::UNAUTHORIZED {
+            return Err(match Self::error_from_response(resp).await {
+                VaultError::Remote(msg) => VaultError::SessionExpired(msg),
+                other => other,
+            });
+        }
+        Self::tokens_from_response(resp).await
+    }
+
+    pub async fn list_vaults(base_url: &str, access_token: &str) -> Result<Vec<VaultSummary>, VaultError> {
+        let resp = Self::auth_http()?
+            .get(format!("{base_url}/api/v1/vaults"))
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        Self::json_or_err(resp).await
+    }
+
+    pub async fn create_vault(base_url: &str, access_token: &str, name: &str) -> Result<VaultSummary, VaultError> {
+        let resp = Self::auth_http()?
+            .post(format!("{base_url}/api/v1/vaults"))
+            .bearer_auth(access_token)
+            .json(&json!({ "name": name }))
+            .send()
+            .await
+            .map_err(Self::network_err)?;
+        Self::json_or_err(resp).await
     }
 
     /// Snapshot refresh token TERBARU (bisa sudah rotate dari nilai
@@ -131,9 +246,19 @@ impl RemoteVaultClient {
             other => other,
         })?;
 
-        let mut tokens = self.tokens.lock().await;
-        tokens.access_token = result.access_token;
-        tokens.refresh_token = result.refresh_token;
+        let new_refresh_token = {
+            let mut tokens = self.tokens.lock().await;
+            tokens.access_token = result.access_token;
+            tokens.refresh_token = result.refresh_token;
+            tokens.refresh_token.clone()
+        };
+        if let Some(persist) = &self.on_tokens_rotated {
+            let persist = Arc::clone(persist);
+            // Hasil join diabaikan: gagal persist tidak boleh
+            // menggagalkan request user yang refresh-nya SUDAH sukses
+            // (persister sendiri yang log error-nya).
+            let _ = tokio::task::spawn_blocking(move || persist(new_refresh_token)).await;
+        }
         Ok(())
     }
 

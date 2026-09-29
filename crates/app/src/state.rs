@@ -28,9 +28,7 @@ use terminus_serial_engine::{SerialOutputEvent, SerialPortEntry, SerialSession};
 use terminus_sftp_engine::{RemoteEntry, SftpBrowser, SftpError};
 use terminus_ssh_engine::{HostKeyStore, SecretMaterial, SshOutputEvent, SshSession};
 use terminus_term_emulator::TerminalInstance;
-use terminus_vault::VaultBackend;
-#[cfg(test)]
-use terminus_vault::VaultStore;
+use terminus_vault::{VaultBackend, VaultStore};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -56,9 +54,16 @@ struct TabMeta {
 pub struct AppState {
     /// Local: baca/tulis SQLite via `spawn_blocking`. Self-hosted: HTTP
     /// ke backend — lihat `docs/desktop-selfhosted-integration.md`.
-    /// `VaultBackend` sendiri `Clone` murah (isinya `Arc`), TIDAK ADA
-    /// `Arc<Mutex<...>>` lagi DI LUAR sini (beda dari sebelumnya).
-    vault: VaultBackend,
+    /// SELALU mulai `Local` (lihat `wire_callbacks`), diganti `Remote`
+    /// oleh `auth_flow` begitu login Self-hosted sukses. `Mutex` di sini
+    /// cuma dipegang sekejap buat clone (`AppState::vault()`), TIDAK
+    /// PERNAH lintas `.await` — `VaultBackend` sendiri `Clone` murah.
+    vault: Mutex<VaultBackend>,
+    /// `vault.db` lokal — dipakai lifecycle Local-only
+    /// (`is_initialized`/`initialize`/`unlock`, bagian 2.2 doc) yang
+    /// TIDAK lewat `VaultBackend`. Selalu ada walau mode Self-hosted
+    /// aktif, supaya tab Local di `VaultDialog` tetap bisa dipakai.
+    local: Arc<Mutex<VaultStore>>,
     /// Salinan TERBARU `list_all_profiles`/`list_groups`/
     /// `list_identities` — dipakai titik-titik BACA CEPAT yang HARUS
     /// tetap sinkron (klik kartu host, buka grup, pencarian, pilih
@@ -197,8 +202,12 @@ pub struct AppState {
 /// clone-nya sendiri buat tetap hidup) — dipakai test buat inspeksi
 /// vault langsung tanpa lewat Slint (mis. bandingkan `credential_id`).
 pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
+    // Startup SELALU Local — backend Remote baru bisa dibangun SETELAH
+    // login (butuh token), lihat `auth_flow`.
+    let local = vault.local_store().expect("wire_callbacks harus dimulai dengan VaultBackend::Local");
     let state = Arc::new(AppState {
-        vault,
+        vault: Mutex::new(vault),
+        local,
         profiles_cache: Arc::new(Mutex::new(Vec::new())),
         groups_cache: Arc::new(Mutex::new(Vec::new())),
         identities_cache: Arc::new(Mutex::new(Vec::new())),
@@ -228,12 +237,8 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
     });
 
     // `is_initialized` method lifecycle Local-only (lihat
-    // `docs/desktop-selfhosted-integration.md` bagian 2.2) — Milestone
-    // 2b ini BELUM mengimplementasikan toggle mode beneran, `main.rs`
-    // MASIH SELALU buka mode Local (Milestone 3 nanti nambah cabang
-    // Self-hosted di startup, TIDAK di sini).
-    let local_store = state.vault.local_store().expect("mode Self-hosted belum didukung startup-nya, lihat Milestone 3");
-    let is_first_run = !local_store.lock().unwrap().is_initialized().unwrap_or(false);
+    // `docs/desktop-selfhosted-integration.md` bagian 2.2).
+    let is_first_run = !state.local.lock().unwrap().is_initialized().unwrap_or(false);
     ui.global::<VaultModel>().set_is_first_run(is_first_run);
 
     // Font & tema terminal — SEKALI di sini (bukan tiap kali panel
@@ -291,9 +296,8 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             ui.global::<VaultModel>().set_busy(true);
 
             // `initialize` method lifecycle Local-only (lihat komentar
-            // `is_first_run` di `wire_callbacks`) — `.expect()` aman di
-            // sini, Milestone 2b belum ada cabang startup Self-hosted.
-            let store = state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3");
+            // `is_first_run` di `wire_callbacks`).
+            let store = Arc::clone(&state.local);
             let password = password.to_string();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
@@ -306,6 +310,7 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     .expect("blocking task panik");
 
                 if result.is_ok() {
+                    remember_local_mode().await;
                     refresh_vault_cache(&state_task).await;
                 }
                 let _ = slint::invoke_from_event_loop(move || {
@@ -333,7 +338,7 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<VaultModel>().set_busy(true);
 
-            let store = state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3");
+            let store = Arc::clone(&state.local);
             let password = password.to_string();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
@@ -343,6 +348,7 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     .expect("blocking task panik");
 
                 if result.is_ok() {
+                    remember_local_mode().await;
                     refresh_vault_cache(&state_task).await;
                 }
                 let _ = slint::invoke_from_event_loop(move || {
@@ -362,6 +368,38 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     }
 }
 
+impl AppState {
+    /// Snapshot backend aktif SAAT INI (Local atau Remote). Dipanggil
+    /// per-operasi, bukan disimpan lama — backend bisa berganti sekali
+    /// waktu login Self-hosted sukses.
+    pub(crate) fn vault(&self) -> VaultBackend {
+        self.vault.lock().unwrap().clone()
+    }
+
+    pub(crate) fn set_vault(&self, vault: VaultBackend) {
+        *self.vault.lock().unwrap() = vault;
+    }
+}
+
+/// Unlock/buat vault Local sukses -> ingat mode Local di
+/// `app_config.json` (bagian 5 doc: tab terakhir yang DIPAKAI diingat),
+/// TANPA membuang `self_hosted` (URL server tetap ter-prefill kalau user
+/// balik ke tab Self-hosted). Gagal simpan cuma di-log.
+async fn remember_local_mode() {
+    let result = tokio::task::spawn_blocking(|| {
+        let mut config = crate::app_config::load().unwrap_or_default();
+        if config.mode == crate::app_config::StorageMode::Local {
+            return Ok(());
+        }
+        config.mode = crate::app_config::StorageMode::Local;
+        crate::app_config::save(&config)
+    })
+    .await;
+    if let Ok(Err(e)) = result {
+        tracing::warn!("gagal simpan mode Local ke app_config.json: {e}");
+    }
+}
+
 /// Refresh cache in-memory (`profiles_cache`/`groups_cache`/
 /// `identities_cache`) dari vault — Local: baca SQLite (spawn_blocking
 /// di dalam `VaultBackend`); Self-hosted: HTTP call ke backend. WAJIB
@@ -374,10 +412,10 @@ fn wire_vault_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
 /// cache ini dipilih: menjaga titik baca cepat seperti
 /// `on_identity_picked`/`on_group_opened` TETAP SINKRON tanpa perlu
 /// jadi network call, tanpa mengubah kontrak yang sudah dites).
-async fn refresh_vault_cache(state: &Arc<AppState>) {
-    let profiles = state.vault.list_all_profiles().await.unwrap_or_default();
-    let groups = state.vault.list_groups().await.unwrap_or_default();
-    let identities = state.vault.list_identities().await.unwrap_or_default();
+pub(crate) async fn refresh_vault_cache(state: &Arc<AppState>) {
+    let profiles = state.vault().list_all_profiles().await.unwrap_or_default();
+    let groups = state.vault().list_groups().await.unwrap_or_default();
+    let identities = state.vault().list_identities().await.unwrap_or_default();
     *state.profiles_cache.lock().unwrap() = profiles;
     *state.groups_cache.lock().unwrap() = groups;
     *state.identities_cache.lock().unwrap() = identities;
@@ -442,7 +480,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             };
             let password_bytes = form.password.as_bytes().to_vec();
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             let profile_for_panel = profile.clone();
@@ -493,7 +531,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 parent_id: None,
             };
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -535,7 +573,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     Identity { id: Uuid::new_v4(), label: label.to_string(), username: username.to_string(), credential_id: Uuid::new_v4() };
                 let password_bytes = password.as_bytes().to_vec();
 
-                let vault = state.vault.clone();
+                let vault = state.vault();
                 let ui_weak_task = ui_weak.clone();
                 let state_task = state.clone();
                 tokio::spawn(async move {
@@ -571,7 +609,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<HostsModel>().set_identities_busy(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -614,7 +652,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let Some(identity) = state.identities_cache.lock().unwrap().iter().find(|i| i.id == uuid).cloned() else {
                 return;
             };
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             tokio::spawn(async move {
                 let Ok(password) = vault.read_secret(identity.credential_id).await else { return };
@@ -748,7 +786,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             };
             let new_password = if form.password.is_empty() { None } else { Some(form.password.as_bytes().to_vec()) };
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             let updated_for_task = updated.clone();
@@ -809,7 +847,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             };
 
             ui.global::<HostsModel>().set_panel_busy(true);
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -864,7 +902,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let Ok(uuid) = Uuid::parse_str(&host_id) else { return };
             ui.global::<HostsModel>().set_deleting_host(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -916,7 +954,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let Ok(uuid) = Uuid::parse_str(&group_id) else { return };
             ui.global::<HostsModel>().set_deleting_group(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -1053,7 +1091,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<HostsModel>().set_deleting_bulk(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             let ids_for_task = ids.clone();
@@ -1111,7 +1149,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<HostsModel>().set_deleting_bulk(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             let ids_for_task = ids.clone();
@@ -1186,7 +1224,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             // Baca password ASYNC (mode Self-hosted = network call, TIDAK
             // BOLEH block UI thread) — keputusan connect-langsung vs
             // minta-password diambil SETELAH ini selesai, lihat di bawah.
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -1271,7 +1309,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let password_bytes = password.clone().into_bytes();
 
             let new_host_id = profile.id;
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             let profile_for_connect = profile.clone();
@@ -1330,7 +1368,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<HostsModel>().set_importing(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
@@ -1405,7 +1443,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             }
             ui.global::<HostsModel>().set_exporting(true);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             tokio::spawn(async move {
                 let outcome: Result<Option<usize>, String> = async move {
@@ -1473,7 +1511,7 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             ui.global::<HostsModel>().set_exporting_json(true);
             let passphrase = passphrase.to_string();
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             tokio::spawn(async move {
                 let outcome: Result<Option<usize>, String> = async move {
@@ -1851,7 +1889,7 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     // ganti tema tetap kepakai buat sesi berjalan lewat
                     // cache in-memory di atas, cuma tidak "nempel" lintas
                     // restart, bukan kegagalan yang harus mengganggu user.
-                    let vault = state.vault.clone();
+                    let vault = state.vault();
                     let theme_name = name.to_string();
                     let cached_profile = state.profiles_cache.lock().unwrap().iter().find(|p| p.id == id).cloned();
                     if let Some(mut profile) = cached_profile {
@@ -1915,7 +1953,7 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             // Baca password ASYNC (mode Self-hosted = network call) —
             // dipindah ke dalam future connect-nya sendiri, TIDAK LAGI
             // sinkron di callback ini.
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             track_connect_task(&state, None, async move {
@@ -2957,7 +2995,7 @@ fn wire_connecting_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             let uuid = profile.id;
             ui.global::<ConnectingModel>().set_needs_password(false);
 
-            let vault = state.vault.clone();
+            let vault = state.vault();
             let password_bytes = password.clone().into_bytes();
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
@@ -3068,12 +3106,10 @@ async fn sftp_connect_and_refresh(
     profile: HostProfile,
     secret: SecretMaterial,
 ) {
-    // `local_store()` — lihat komentar `is_first_run` di `wire_callbacks`:
-    // `AppHostKeyStore` masih Local-only (belum ada `known_hosts` store
-    // yang always-local, lihat docs/desktop-selfhosted-integration.md
-    // bagian 2.7) — Milestone 2b belum ada cabang startup Self-hosted.
-    let host_key_store: Arc<dyn HostKeyStore> =
-        Arc::new(AppHostKeyStore::new(state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3")));
+    // `None` di mode Self-hosted — host key tidak diingat (belum ada
+    // `known_hosts` store yang always-local, lihat
+    // docs/desktop-selfhosted-integration.md bagian 2.7).
+    let host_key_store: Arc<dyn HostKeyStore> = Arc::new(AppHostKeyStore::new(state.vault().local_store()));
     let label = profile.label.clone();
     {
         let subtitle = format!("SFTP {}:{}", profile.host, profile.port);
@@ -3457,12 +3493,10 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
         });
     }
 
-    // `local_store()` — lihat komentar `is_first_run` di `wire_callbacks`:
-    // `AppHostKeyStore` masih Local-only (belum ada `known_hosts` store
-    // yang always-local, lihat docs/desktop-selfhosted-integration.md
-    // bagian 2.7) — Milestone 2b belum ada cabang startup Self-hosted.
-    let host_key_store: Arc<dyn HostKeyStore> =
-        Arc::new(AppHostKeyStore::new(state.vault.local_store().expect("mode Self-hosted belum didukung, lihat Milestone 3")));
+    // `None` di mode Self-hosted — host key tidak diingat (belum ada
+    // `known_hosts` store yang always-local, lihat
+    // docs/desktop-selfhosted-integration.md bagian 2.7).
+    let host_key_store: Arc<dyn HostKeyStore> = Arc::new(AppHostKeyStore::new(state.vault().local_store()));
     let result = terminus_ssh_engine::connect(&profile, SecretMaterial::Password(password), host_key_store).await;
 
     let notice: Option<String> = match result {
@@ -3758,7 +3792,7 @@ fn host_profile_to_item(state: &Arc<AppState>, p: &HostProfile) -> HostItem {
 /// connect) — pendekatan "rebuild semua" sengaja dipilih daripada
 /// mutasi parsial per-item, lebih gampang dijaga konsistensinya untuk
 /// ukuran data yang wajar (daftar host personal, bukan ribuan baris).
-fn refresh_hosts_model(ui: &AppWindow, state: &Arc<AppState>) {
+pub(crate) fn refresh_hosts_model(ui: &AppWindow, state: &Arc<AppState>) {
     // Baca dari CACHE (`refresh_vault_cache`), BUKAN vault langsung —
     // fungsi ini TETAP SINKRON (dipanggil dari banyak tempat, termasuk
     // dari dalam closure sinkron `invoke_from_event_loop`) — lihat
@@ -4271,7 +4305,7 @@ mod tests {
             // HARUS beda dari aslinya (deep copy, bukan berbagi referensi)
             // — dicek langsung ke vault, bukan lewat Slint. ---
             let original_credential_id = match state
-                .vault
+                .vault()
                 .list_all_profiles()
                 .await
                 .unwrap()
@@ -4302,7 +4336,7 @@ mod tests {
             );
 
             let duplicate_credential_id = match state
-                .vault
+                .vault()
                 .list_all_profiles()
                 .await
                 .unwrap()

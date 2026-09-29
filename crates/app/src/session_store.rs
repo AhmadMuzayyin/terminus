@@ -13,12 +13,6 @@
 //! - `session.db` — SQLite satu tabel satu baris, isinya blob hasil
 //!   `terminus_vault::crypto::encrypt` (TIDAK menulis crypto baru).
 
-// `dead_code` sementara: modul ini belum dipanggil dari `main.rs`/
-// `state.rs` (itu Milestone 3, wiring alur login mode Self-hosted di
-// `docs/desktop-selfhosted-integration.md`) — dihapus waktu wiring
-// itu dikerjakan.
-#![allow(dead_code)]
-
 use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
@@ -132,8 +126,8 @@ pub fn load_refresh_token() -> anyhow::Result<Option<String>> {
     }
 }
 
-/// Hapus refresh token tersimpan — dipanggil waktu logout eksplisit
-/// (lihat rencana wiring di Milestone 3).
+/// Hapus refresh token tersimpan — dipanggil waktu server menolak
+/// token itu (`VaultError::SessionExpired`), dan nanti waktu logout.
 pub fn clear() -> anyhow::Result<()> {
     let path = db_path()?;
     if !path.exists() {

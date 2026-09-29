@@ -275,9 +275,14 @@ bikin `AppHostKeyStore`.
 
 **Konsekuensi yang SENGAJA diterima (didokumentasikan, bukan
 disembunyikan)**: mode Self-hosted BELUM PUNYA persistensi
-known_hosts sama sekali — tiap sesi SSH baru akan tanya ulang trust
-host key (bukan lubang keamanan — tetap TOFU/trust-on-first-use yang
-benar per sesi, cuma tidak "diingat" lintas restart app). Perbaikan
+known_hosts sama sekali. **Koreksi (Milestone 4, setelah baca
+`ssh-engine/src/client.rs`)**: `lookup` = `None` TIDAK memunculkan
+pertanyaan apa pun — ssh-engine langsung MENERIMA host key itu
+(TOFU otomatis) di SETIAP koneksi. Artinya di mode Self-hosted
+perubahan host key (potensi MITM) TIDAK terdeteksi sama sekali, bukan
+cuma "tidak diingat". Ini makin menguatkan perlunya `known_hosts.db`
+always-local di bawah — prioritaskan sebelum mode Self-hosted dipakai
+di jaringan yang tidak dipercaya. Perbaikan
 (bikin `known_hosts.db` kecil TERPISAH yang always-local di kedua
 mode) DITUNDA ke milestone lain yang lebih kecil — supaya tidak
 menyentuh skema `vault.db` Local yang sudah stabil di tengah pekerjaan
@@ -460,11 +465,44 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
    **13/13 lulus** (termasuk test end-to-end besar: create/edit/
    duplicate/delete host & grup, drill-down, search, identity create/
    pick/delete, unlock salah/benar — tidak ada regresi).
-4. ⏳ **UI `VaultDialog` tab Local/Self-hosted** + wiring
-   login/register/refresh-token-silent-login di `main.rs`/`state.rs` +
-   adaptasi `AppHostKeyStore` jadi `Option<Arc<Mutex<VaultStore>>>`.
-5. ⏳ **Resolusi vault (bagian 4)**: auto-create/auto-select/pilih
-   vault sesudah login, simpan `vault_id` ke `app_config.json`.
+4. ✅ **UI `VaultDialog` tab Local/Self-hosted** + wiring
+   login/register/refresh-token-silent-login + `AppHostKeyStore` jadi
+   `Option<Arc<Mutex<VaultStore>>>`. Rincian:
+   - `terminus-vault`: `RemoteVaultClient::{login, register,
+     refresh_session, list_vaults, create_vault}` (fungsi asosiatif,
+     belum butuh instance; timeout 15 detik), `AuthTokens`/
+     `VaultSummary` publik, varian `VaultError::SessionExpired` (401
+     dari `/auth/refresh` -> token tersimpan DIBUANG; error jaringan/5xx
+     -> token DIPERTAHANKAN). `with_token_persister(..)`: tiap refresh
+     token hasil ROTASI otomatis (backend mencabut yang lama) langsung
+     dipersist ke `session_store` — tanpa ini login otomatis di restart
+     berikutnya pasti gagal setelah access token pertama kedaluwarsa.
+   - `AppState.vault` jadi `Mutex<VaultBackend>` + accessor
+     `vault()`/`set_vault()` (startup SELALU `Local`, diganti `Remote`
+     setelah login) + field `local` (vault.db selalu dibuka supaya tab
+     Local tetap jalan). Semua `.expect("…Milestone 3")` sementara
+     hilang.
+   - Modul baru `crates/app/src/auth_flow.rs`: prefill tab/URL dari
+     `app_config.json`, login diam-diam kalau mode terakhir Self-hosted
+     & ada refresh token, login/register manual, lalu `finish_login`
+     (simpan token -> pilih vault -> simpan config -> `set_vault` ->
+     refresh cache). Unlock Local sukses menyimpan `mode: local` TANPA
+     membuang `self_hosted` (URL tetap ter-prefill).
+   - `app_config::config_path()` versi `#[cfg(test)]` pakai temp dir —
+     test unlock tidak boleh menimpa config asli developer.
+   - **Ditarik maju dari Milestone 5** (login tidak bisa dipakai tanpa
+     `vault_id`): 0 vault -> buat "My Vault"; `vault_id` di config
+     dipakai lagi selama user masih anggotanya; selain itu vault
+     PERTAMA dipakai.
+   - **Belum**: tombol logout/lock di tengah sesi (sesuai bagian 5,
+     ganti mode = restart app; `session_store::clear` baru dipakai di
+     jalur `SessionExpired`). Diverifikasi: `cargo build --workspace`
+     bersih tanpa warning, `cargo test --workspace` hijau
+     (`terminus-app` 14/14). BELUM diuji ke backend sungguhan (itu
+     Milestone 6).
+5. ⏳ **Resolusi vault (bagian 4)** — sisa: >1 vault -> daftar pilihan
+   SEKALI waktu login (sekarang otomatis vault pertama, lihat
+   `TODO(Milestone 5)` di `auth_flow::resolve_vault_id`).
 6. ⏳ **Verifikasi end-to-end manual**: jalankan `backend/` lewat
    `npm run dev` + MySQL lokal, desktop app mode Self-hosted connect
    ke situ — create host/grup/identity, set/get password, lock+buka

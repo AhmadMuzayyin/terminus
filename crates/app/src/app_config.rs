@@ -6,12 +6,6 @@
 //! vault) sehingga file ini boleh plaintext. Refresh token (rahasia)
 //! TIDAK ADA di sini — itu di `session_store` (terenkripsi terpisah).
 
-// `dead_code` sementara: modul ini belum dipanggil dari `main.rs`/
-// `state.rs` (itu Milestone 3, wiring layar login/mode di
-// `docs/desktop-selfhosted-integration.md`) — dihapus waktu wiring
-// itu dikerjakan.
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -45,10 +39,18 @@ impl Default for AppConfig {
     }
 }
 
+#[cfg(not(test))]
 fn config_path() -> anyhow::Result<PathBuf> {
     let dirs = directories::ProjectDirs::from("com", "terminus", "terminus")
         .ok_or_else(|| anyhow::anyhow!("tidak bisa resolve config dir"))?;
     Ok(dirs.config_dir().join("app_config.json"))
+}
+
+/// Test (`state.rs` unlock/create sukses -> `save`) TIDAK BOLEH
+/// menimpa `~/.config/terminus/app_config.json` milik developer.
+#[cfg(test)]
+fn config_path() -> anyhow::Result<PathBuf> {
+    Ok(std::env::temp_dir().join(format!("terminus-test-app_config-{}.json", std::process::id())))
 }
 
 /// Baca `app_config.json`. File belum ada (instalasi lama ATAU

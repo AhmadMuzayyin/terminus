@@ -170,9 +170,101 @@ component DialogCard inherits Rectangle {
     border-color: Tokens.outline-variant;
 }
 
+// --- Komponen kecil khusus `VaultDialog` (tab mode + form login). ---
+
+// Satu segmen tab "Local"/"Self-hosted" di atas `VaultDialog`.
+component ModeTab inherits Rectangle {
+    in property <string> label-text;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback clicked <=> touch.clicked;
+
+    height: 32px;
+    horizontal-stretch: 1;
+    border-radius: Tokens.radius-default;
+    background: root.active ? Tokens.primary-container
+        : touch.has-hover ? Tokens.surface-container-high : Tokens.surface-container;
+    opacity: root.enabled || root.active ? 1.0 : 0.5;
+
+    Text {
+        text: root.label-text;
+        color: root.active ? Tokens.on-primary : Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { enabled: root.enabled && !root.active; }
+}
+
+component DialogTitle inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+    spacing: 4px;
+    Text {
+        text: root.title;
+        color: Tokens.on-surface;
+        font-family: Tokens.font-headline;
+        font-size: Tokens.text-headline-md;
+        font-weight: 700;
+    }
+    Text {
+        text: root.subtitle;
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+// Field URL server dipakai form Masuk & Daftar — nilainya disimpan di
+// `VaultModel.server-url` (bukan `value` lokal) supaya pindah form tidak
+// menghapus URL yang sudah diketik.
+component ServerUrlField inherits DialogField {
+    label-text: "Server URL";
+    placeholder: "https://vault.contoh.com";
+    initial-value: VaultModel.server-url;
+    edited(text) => { VaultModel.server-url = text; }
+}
+
+// Error (merah) + status netral (mis. login otomatis) di bawah form.
+component VaultMessages inherits VerticalLayout {
+    spacing: 4px;
+    if VaultModel.status-message != "" : Text {
+        text: VaultModel.status-message;
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    if VaultModel.error-message != "" : Text {
+        text: VaultModel.error-message;
+        color: Tokens.error;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
+component DialogLink inherits Text {
+    in property <string> label-text;
+    in property <bool> enabled: true;
+    callback clicked <=> touch.clicked;
+    text: root.label-text;
+    color: touch.has-hover ? Tokens.primary : Tokens.on-surface-variant;
+    font-family: Tokens.font-body;
+    font-size: 12px;
+    horizontal-alignment: center;
+    opacity: root.enabled ? 1.0 : 0.5;
+    touch := TouchArea { enabled: root.enabled; }
+}
+
 // Dialog set/unlock master password vault — gate seluruh window
-// selama `!VaultModel.is-unlocked` (lihat app-window.slint). Judul &
-// tombol berubah sesuai `VaultModel.is-first-run`.
+// selama `!VaultModel.is-unlocked` (lihat app-window.slint). Tab Local:
+// judul & tombol berubah sesuai `VaultModel.is-first-run`. Tab
+// Self-hosted: form Masuk/Daftar ke server (bagian 5
+// docs/desktop-selfhosted-integration.md).
 export component VaultDialog inherits DialogScrim {
     // Beda dari dialog lain yang inherit `DialogScrim` (scrim gelap
     // transparan menutupi KONTEN DI BELAKANGnya) — dialog ini SELALU
@@ -206,74 +298,183 @@ export component VaultDialog inherits DialogScrim {
         background: Tokens.success.with-alpha(8%);
     }
 
-    // Dipanggil dari tombol Buat&Unlock/Unlock MAUPUN dari Enter di
-    // field password (`password-field.accepted`, lihat di bawah) —
-    // satu tempat biar dua pemicu itu tidak duplikasi logic.
-    function submit() {
-        if !VaultModel.busy {
-            if VaultModel.is-first-run {
-                VaultModel.create-requested(password-field.value);
-            } else {
-                VaultModel.unlock-requested(password-field.value);
-            }
-        }
-    }
-
     card := DialogCard {
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 3;
-        height: 260px;
-        VerticalLayout {
+        y: max(16px, (parent.height - self.height) / 3);
+        height: content.preferred-height;
+        content := VerticalLayout {
             padding: 24px;
             spacing: Tokens.stack-gap;
 
-            Text {
-                text: VaultModel.is-first-run ? "Buat Master Password" : "Unlock Vault";
-                color: Tokens.on-surface;
-                font-family: Tokens.font-headline;
-                font-size: Tokens.text-headline-md;
-                font-weight: 700;
-            }
-            Text {
-                text: VaultModel.is-first-run
-                    ? "Password ini dipakai buat enkripsi semua kredensial host. Tidak bisa dipulihkan kalau lupa."
-                    : "Masukkan master password buat buka vault kredensial kamu.";
-                color: Tokens.on-surface-variant;
-                font-family: Tokens.font-body;
-                font-size: 12px;
-                wrap: word-wrap;
-            }
-
-            password-field := DialogField {
-                label-text: "Master Password";
-                placeholder: "••••••••";
-                is-password: true;
-                auto-focus: true;
-                accepted => { root.submit(); }
-            }
-
-            if VaultModel.error-message != "" : Text {
-                text: VaultModel.error-message;
-                color: Tokens.error;
-                font-family: Tokens.font-body;
-                font-size: 12px;
-                wrap: word-wrap;
-            }
-
-            Rectangle { vertical-stretch: 1; }
-
+            // Pilihan mode (bagian 5 doc). Dikunci selama `busy` supaya
+            // request yang lagi jalan tidak "pindah tab" di tengah jalan.
             HorizontalLayout {
+                spacing: 4px;
+                ModeTab {
+                    label-text: "Local";
+                    active: !VaultModel.self-hosted-tab;
+                    enabled: !VaultModel.busy;
+                    clicked => {
+                        VaultModel.self-hosted-tab = false;
+                        VaultModel.error-message = "";
+                    }
+                }
+                ModeTab {
+                    label-text: "Self-hosted";
+                    active: VaultModel.self-hosted-tab;
+                    enabled: !VaultModel.busy;
+                    clicked => {
+                        VaultModel.self-hosted-tab = true;
+                        VaultModel.error-message = "";
+                    }
+                }
+            }
+
+            // --- Tab Local: PERSIS perilaku lama (create/unlock). ---
+            if !VaultModel.self-hosted-tab : VerticalLayout {
+                spacing: Tokens.stack-gap;
+
+                // Dipanggil dari tombol Buat&Unlock/Unlock MAUPUN dari
+                // Enter di field password — satu tempat biar dua pemicu
+                // itu tidak duplikasi logic.
+                function submit() {
+                    if !VaultModel.busy {
+                        if VaultModel.is-first-run {
+                            VaultModel.create-requested(password-field.value);
+                        } else {
+                            VaultModel.unlock-requested(password-field.value);
+                        }
+                    }
+                }
+
+                DialogTitle {
+                    title: VaultModel.is-first-run ? "Buat Master Password" : "Unlock Vault";
+                    subtitle: VaultModel.is-first-run
+                        ? "Password ini dipakai buat enkripsi semua kredensial host. Tidak bisa dipulihkan kalau lupa."
+                        : "Masukkan master password buat buka vault kredensial kamu.";
+                }
+                password-field := DialogField {
+                    label-text: "Master Password";
+                    placeholder: "••••••••";
+                    is-password: true;
+                    auto-focus: true;
+                    accepted => { submit(); }
+                }
+                VaultMessages { }
                 DialogButton {
                     // Derive key Argon2id SENGAJA lambat (lihat komentar
-                    // `VaultModel.busy` di models.slint) — beda dari
-                    // dialog lain, ini genuinely butuh beberapa ratus ms
-                    // sampai detik, jadi state loading di sini paling
-                    // kelihatan gunanya.
+                    // `VaultModel.busy` di models.slint) — state loading
+                    // di sini paling kelihatan gunanya.
                     label-text: VaultModel.busy ? "Memproses..." : (VaultModel.is-first-run ? "Buat & Unlock" : "Unlock");
                     filled: true;
                     enabled: !VaultModel.busy;
-                    horizontal-stretch: 1;
-                    clicked => { root.submit(); }
+                    clicked => { submit(); }
+                }
+            }
+
+            // --- Tab Self-hosted, form Masuk. ---
+            if VaultModel.self-hosted-tab && !VaultModel.register-mode : VerticalLayout {
+                spacing: Tokens.stack-gap;
+
+                function submit() {
+                    if !VaultModel.busy {
+                        VaultModel.login-requested(VaultModel.server-url, email-field.value, login-password-field.value);
+                    }
+                }
+
+                DialogTitle {
+                    title: "Masuk ke Server";
+                    subtitle: "Host & kredensial disimpan langsung di server self-hosted kamu, tidak ada salinan lokal.";
+                }
+                ServerUrlField {
+                    auto-focus: VaultModel.server-url == "";
+                    accepted => { submit(); }
+                }
+                email-field := DialogField {
+                    label-text: "Email";
+                    placeholder: "admin@contoh.com";
+                    auto-focus: VaultModel.server-url != "";
+                    accepted => { submit(); }
+                }
+                login-password-field := DialogField {
+                    label-text: "Password";
+                    placeholder: "••••••••";
+                    is-password: true;
+                    accepted => { submit(); }
+                }
+                VaultMessages { }
+                DialogButton {
+                    label-text: VaultModel.busy ? "Memproses..." : "Masuk";
+                    filled: true;
+                    enabled: !VaultModel.busy;
+                    clicked => { submit(); }
+                }
+                DialogLink {
+                    label-text: "Server baru? Daftar admin pertama";
+                    enabled: !VaultModel.busy;
+                    clicked => {
+                        VaultModel.register-mode = true;
+                        VaultModel.error-message = "";
+                    }
+                }
+            }
+
+            // --- Tab Self-hosted, form Daftar (admin pertama). Backend
+            // cuma menerima selama tabel `users` masih kosong — error-nya
+            // ditampilkan apa adanya (backend/DESIGN.md 5.2). ---
+            if VaultModel.self-hosted-tab && VaultModel.register-mode : VerticalLayout {
+                spacing: Tokens.stack-gap;
+
+                function submit() {
+                    if !VaultModel.busy {
+                        VaultModel.register-requested(
+                            VaultModel.server-url,
+                            reg-email-field.value,
+                            reg-password-field.value,
+                            reg-confirm-field.value);
+                    }
+                }
+
+                DialogTitle {
+                    title: "Daftar Admin Pertama";
+                    subtitle: "Cuma bisa sekali, waktu server belum punya user sama sekali.";
+                }
+                ServerUrlField {
+                    auto-focus: VaultModel.server-url == "";
+                    accepted => { submit(); }
+                }
+                reg-email-field := DialogField {
+                    label-text: "Email";
+                    placeholder: "admin@contoh.com";
+                    auto-focus: VaultModel.server-url != "";
+                    accepted => { submit(); }
+                }
+                reg-password-field := DialogField {
+                    label-text: "Password (minimal 8 karakter)";
+                    placeholder: "••••••••";
+                    is-password: true;
+                    accepted => { submit(); }
+                }
+                reg-confirm-field := DialogField {
+                    label-text: "Konfirmasi Password";
+                    placeholder: "••••••••";
+                    is-password: true;
+                    accepted => { submit(); }
+                }
+                VaultMessages { }
+                DialogButton {
+                    label-text: VaultModel.busy ? "Memproses..." : "Daftar & Masuk";
+                    filled: true;
+                    enabled: !VaultModel.busy;
+                    clicked => { submit(); }
+                }
+                DialogLink {
+                    label-text: "Sudah punya akun? Masuk";
+                    enabled: !VaultModel.busy;
+                    clicked => {
+                        VaultModel.register-mode = false;
+                        VaultModel.error-message = "";
+                    }
                 }
             }
         }

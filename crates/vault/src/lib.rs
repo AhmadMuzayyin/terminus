@@ -24,7 +24,7 @@ pub mod crypto;
 pub mod remote;
 pub mod store;
 
-pub use remote::RemoteVaultClient;
+pub use remote::{AuthTokens, RemoteVaultClient, VaultSummary};
 pub use store::VaultStore;
 
 #[derive(Debug, Error)]
@@ -50,6 +50,13 @@ pub enum VaultError {
     /// jaringan).
     #[error("server error: {0}")]
     Remote(String),
+
+    /// Refresh token DITOLAK server (revoked/kedaluwarsa/tidak dikenal) —
+    /// BEDA dari `Remote` (mis. server mati) karena caller harus
+    /// membuang token tersimpan & minta login ulang, bukan sekadar
+    /// mencoba lagi nanti. Lihat `RemoteVaultClient::refresh_session`.
+    #[error("sesi berakhir: {0}")]
+    SessionExpired(String),
 }
 
 /// Satu titik masuk yang dipakai `crates/app/src/state.rs` TANPA perlu

@@ -17,6 +17,10 @@ model User {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String   @map("password_hash")
+  // NULL cuma buat akun yang dibuat SEBELUM kolom ini ada — register
+  // baru WAJIB isi (lihat DESIGN.md Milestone 6); client pakai email
+  // sebagai fallback tampilan.
+  fullName     String?  @map("full_name") @db.VarChar(100)
   createdAt    DateTime @default(now()) @map("created_at")
 
   ownedVaults   Vault[]        @relation("VaultOwner")

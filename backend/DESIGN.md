@@ -303,6 +303,56 @@ sendiri lalu client harus rekonsiliasi belakangan. Backward compatible
 mengonfirmasi `id` custom dipakai apa adanya. Total test SEKARANG 56
 (dari 53).
 
+6. ✅ **Profil akun** (diminta user setelah integrasi desktop jalan —
+   sidebar desktop menampilkan NAMA + dropdown Profile/Logout, halaman
+   Profile bisa ubah email, full name, password). Keputusan (dikonfirmasi
+   user):
+   - **Skema**: `users.full_name VARCHAR(100) NULL` (migrasi baru). NULL
+     cuma buat akun LAMA yang dibuat sebelum kolom ini ada — client
+     menampilkan email sebagai fallback sampai nama diisi di Profile.
+   - **Register**: body `{ email, password, fullName }`, `fullName`
+     WAJIB (trim, 1–100 karakter). Semua respons user (`register`,
+     `login`, `GET /me`) jadi `{ id, email, fullName }` (`fullName`
+     bisa `null` buat akun lama).
+   - **`PATCH /api/v1/auth/me`** (requireAuth) body `{ fullName?,
+     email?, currentPassword? }` -> `200 { id, email, fullName }`.
+     Ganti email WAJIB `currentPassword` benar (email = identitas login;
+     laptop yang tertinggal dalam keadaan login tidak boleh bisa dipakai
+     mengambil alih akun). Email sudah dipakai user lain -> 409. Ganti
+     `fullName` saja tidak butuh password.
+   - **`PUT /api/v1/auth/me/password`** (requireAuth) body
+     `{ currentPassword, newPassword }` (`newPassword` min 8, sama aturan
+     register) -> cabut SEMUA refresh token user ini (semua perangkat:
+     desktop lain, mobile app nanti, dst — berlaku di level akun, bukan
+     per jenis client), lalu terbitkan pasangan token BARU -> `200 {
+     accessToken, refreshToken }` supaya perangkat yang mengganti
+     password TETAP login. **Batasan jujur**: access token JWT (~15
+     menit) stateless, jadi perangkat lain baru benar-benar keluar
+     paling lambat 15 menit kemudian (saat refresh-nya ditolak) — kalau
+     suatu saat harus instan, perlu versi-token per user yang dicek tiap
+     request (DI LUAR scope v1).
+   - **Password saat ini salah -> 403** (`ForbiddenError`), SENGAJA
+     BUKAN 401: client desktop memperlakukan 401 sebagai "access token
+     kedaluwarsa" lalu refresh+retry otomatis (lihat
+     `docs/desktop-selfhosted-integration.md` bagian 2.5) — 401 di sini
+     akan memicu rotasi token yang tidak perlu & menyamarkan pesannya.
+   - Test baru di `tests/auth.test.ts` (fixture dibersihkan di
+     `afterAll`, aturan Milestone 3).
+   - **Selesai**: migrasi `20260929232618_add_user_full_name` (cuma
+     `ADD COLUMN full_name VARCHAR(100) NULL`), 67/67 test hijau (11
+     baru), lint + build bersih. Test "register kedua ditolak" diberi
+     `fullName` — tanpa itu body-nya gagal validasi (400) duluan dan tidak
+     lagi menguji 403 "registrasi tertutup".
+   - **PERINGATAN cara menjalankan test** (ditemukan di milestone ini):
+     `tests/auth.test.ts` `beforeAll` menghapus SEMUA `refresh_tokens` &
+     `users` di database yang ditunjuk `DATABASE_URL`. Jangan jalankan
+     `npm test` terhadap database yang berisi akun sungguhan — pakai
+     database terpisah, mis. `DATABASE_URL=mysql://…/terminus_e2e npm
+     test` (sekali: `npx prisma migrate deploy` ke DB itu). Kalau DB
+     sungguhan sudah punya vault, `deleteMany` user memang gagal karena
+     FK owner — TAPI refresh token semua user SUDAH terhapus duluan
+     (semua sesi login ikut keluar).
+
 ## 7. Sengaja DI LUAR SCOPE sekarang (jangan dikerjakan tanpa diminta)
 
 - Integrasi ke desktop app (`crates/app`) supaya bisa pilih Local vs

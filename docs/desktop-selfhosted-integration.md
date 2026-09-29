@@ -537,6 +537,25 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
    lagi (refresh token jalan), ganti balik ke mode Local (data lokal
    lama tidak keganggu).
 
+7. ⏳ **Profil akun di desktop** (SETELAH backend Milestone 6 di
+   `backend/DESIGN.md` selesai — kontrak API-nya di sana):
+   - Form Daftar admin pertama: field **Full Name** (wajib).
+   - `RemoteVaultClient`: `register(.., full_name)`, `me()` ->
+     `{ email, full_name }`, `update_profile(..)`, `change_password(..)`
+     (token BARU dari server menggantikan token client + langsung
+     dipersist ke `session_store`, karena semua token lama sudah
+     dicabut server).
+   - Sidebar (mode Self-hosted saja): GANTI baris email + tombol Logout
+     jadi SATU tombol akun berisi NAMA saja (fallback email kalau nama
+     kosong — akun lama). Klik -> menu popup **Profile** / **Logout**
+     (Logout tetap lewat dialog konfirmasi yang sudah ada).
+   - Halaman **Profile** (halaman baru, `current-page` 7, bukan item
+     nav): bagian *Akun* (Full name, Email, Password saat ini — cuma
+     wajib kalau email diubah) + tombol Simpan; bagian *Keamanan*
+     (Password saat ini, Password baru, Konfirmasi) + tombol Ganti
+     Password, dengan penjelasan bahwa perangkat lain akan logout.
+     Pesan sukses/error per bagian.
+
 ## 7. Sengaja DI LUAR SCOPE (jangan dikerjakan tanpa diminta)
 
 - Vault switcher mid-session (ganti vault tanpa logout).

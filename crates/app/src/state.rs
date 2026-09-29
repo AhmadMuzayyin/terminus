@@ -244,7 +244,16 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
     // Font & tema terminal — SEKALI di sini (bukan tiap kali panel
     // pengaturan dibuka), daftarnya statis selama app jalan.
     let tm = ui.global::<TerminalTabsModel>();
-    tm.set_available_fonts(ModelRc::new(VecModel::from(scan_monospace_fonts())));
+    let fonts = scan_monospace_fonts();
+    // Default Slint `"monospace"` itu nama GENERIK — renderer Slint
+    // tidak menerjemahkannya lewat fontconfig seperti terminal native,
+    // jadi jatuh ke font sans PROPORSIONAL: kolom grid tidak rata dan
+    // seleksi mouse (yang menghitung kolom dari lebar SATU sel) meleset.
+    // Ganti dengan nama font monospace yang BENERAN terpasang.
+    if let Some(font) = pick_default_monospace(&fonts) {
+        tm.set_terminal_font_family(font);
+    }
+    tm.set_available_fonts(ModelRc::new(VecModel::from(fonts)));
     let built_in_themes = terminus_term_emulator::palette::built_in_themes();
     tm.set_available_themes(ModelRc::new(VecModel::from(
         built_in_themes.iter().map(|(name, _)| slint::SharedString::from(*name)).collect::<Vec<_>>(),
@@ -3697,6 +3706,18 @@ fn scan_monospace_fonts() -> Vec<slint::SharedString> {
     names.into_iter().map(slint::SharedString::from).collect()
 }
 
+/// Font monospace default dari hasil `scan_monospace_fonts` — urutan
+/// preferensi font terminal yang umum & lengkap glyph-nya, fallback ke
+/// font pertama yang ditemukan. `None` cuma kalau daftarnya kosong.
+fn pick_default_monospace(fonts: &[slint::SharedString]) -> Option<slint::SharedString> {
+    const PREFERRED: [&str; 6] =
+        ["DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Ubuntu Mono", "Menlo", "Consolas"];
+    PREFERRED
+        .iter()
+        .find_map(|want| fonts.iter().find(|f| f.as_str() == *want).cloned())
+        .or_else(|| fonts.iter().find(|f| f.as_str() != "monospace").cloned())
+}
+
 fn set_status(state: &Arc<AppState>, id: Uuid, status: &str) {
     state.statuses.lock().unwrap().insert(id, status.to_string());
 }
@@ -3898,6 +3919,15 @@ mod tests {
         let fonts = scan_monospace_fonts();
         assert!(!fonts.is_empty(), "harus nemuin minimal satu font monospace di sistem");
         println!("Font monospace terdeteksi: {fonts:?}");
+    }
+
+    #[test]
+    fn default_font_pakai_preferensi_lalu_font_nyata_pertama() {
+        let fonts: Vec<slint::SharedString> = vec!["Fira Code".into(), "Noto Sans Mono".into()];
+        assert_eq!(pick_default_monospace(&fonts).unwrap(), "Noto Sans Mono");
+        let fonts: Vec<slint::SharedString> = vec!["monospace".into(), "Fira Code".into()];
+        assert_eq!(pick_default_monospace(&fonts).unwrap(), "Fira Code");
+        assert!(pick_default_monospace(&[]).is_none());
     }
 
     fn temp_vault() -> VaultStore {

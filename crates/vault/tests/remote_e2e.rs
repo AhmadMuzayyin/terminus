@@ -1,0 +1,133 @@
+//! E2E `RemoteVaultClient` lawan backend SUNGGUHAN (`backend/`, `npm run
+//! dev`) — Milestone 6 `docs/desktop-selfhosted-integration.md`. Urutan
+//! panggilan SENGAJA meniru `crates/app/src/state.rs` apa adanya
+//! (termasuk `credential_id` host/identity yang BEDA dari `id`-nya dan
+//! `store_secret` SEBELUM `save_profile`/`save_identity`), karena justru
+//! kontrak itulah yang diuji bagian 2.6 doc.
+//!
+//! `#[ignore]` — butuh server jalan. Jalankan:
+//! `TERMINUS_E2E_URL=http://localhost:4000 cargo test -p terminus-vault
+//! --test remote_e2e -- --ignored --nocapture`
+//!
+//! Akun uji: `TERMINUS_E2E_EMAIL`/`TERMINUS_E2E_PASSWORD` (default
+//! `e2e@terminus.local`/`e2e-password-123`) — dicoba register dulu
+//! (sukses kalau server masih kosong), kalau ditolak baru login.
+
+use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile, Identity};
+use terminus_vault::{RemoteVaultClient, VaultError};
+use uuid::Uuid;
+
+fn env_or(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+async fn login_or_register(url: &str) -> terminus_vault::AuthTokens {
+    let email = env_or("TERMINUS_E2E_EMAIL", "e2e@terminus.local");
+    let password = env_or("TERMINUS_E2E_PASSWORD", "e2e-password-123");
+    match RemoteVaultClient::register(url, &email, &password).await {
+        Ok(tokens) => tokens,
+        Err(_) => RemoteVaultClient::login(url, &email, &password).await.expect("login akun uji"),
+    }
+}
+
+fn new_host(group_id: Option<Uuid>) -> (HostProfile, Uuid) {
+    // Persis `on_host_save_requested` (state.rs): id & credential_id
+    // DUA UUID berbeda.
+    let credential_id = Uuid::new_v4();
+    let profile = HostProfile {
+        id: Uuid::new_v4(),
+        label: format!("e2e-host-{}", &Uuid::new_v4().to_string()[..8]),
+        host: "10.9.8.7".into(),
+        port: 22,
+        username: "admin".into(),
+        kind: ConnectionKind::Ssh,
+        auth: AuthMethod::Password { credential_id },
+        group_id,
+        tags: vec![],
+        terminal_theme: None,
+    };
+    (profile, credential_id)
+}
+
+#[tokio::test]
+#[ignore]
+async fn alur_lengkap_lawan_backend_sungguhan() {
+    let url = env_or("TERMINUS_E2E_URL", "http://localhost:4000");
+
+    // --- Auth + resolusi vault (auth_flow::resolve_vault_id) ---
+    let tokens = login_or_register(&url).await;
+    let vaults = RemoteVaultClient::list_vaults(&url, &tokens.access_token).await.expect("list vault");
+    let vault_id = match vaults.into_iter().next() {
+        Some(v) => v.id,
+        None => RemoteVaultClient::create_vault(&url, &tokens.access_token, "My Vault").await.expect("create vault").id,
+    };
+    println!("vault = {vault_id}");
+
+    // Access token SENGAJA rusak -> request pertama 401 -> client wajib
+    // refresh diam-diam pakai refresh token lalu ulangi (bagian 2.5).
+    let rotated = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let rotated_sink = rotated.clone();
+    let client = RemoteVaultClient::new(url.clone(), vault_id, "token-rusak".into(), tokens.refresh_token.clone())
+        .with_token_persister(move |t| rotated_sink.lock().unwrap().push(t));
+
+    // --- Grup ---
+    let group = HostGroup { id: Uuid::new_v4(), name: "e2e-grup".into(), subtitle: None, parent_id: None };
+    client.save_group(&group).await.expect("create grup (lewat refresh-on-401)");
+    assert_eq!(rotated.lock().unwrap().len(), 1, "refresh token hasil rotasi harus dipersist");
+    assert_ne!(client.current_refresh_token().await, tokens.refresh_token, "refresh token harus sudah rotate");
+    assert!(client.list_groups().await.unwrap().iter().any(|g| g.id == group.id), "id grup dari client dipakai apa adanya");
+
+    // --- Host BARU + password (store_secret SEBELUM save_profile) ---
+    let (host, credential_id) = new_host(Some(group.id));
+    client.store_secret(credential_id, b"rahasia-host-1").await.expect("store_secret host baru (harus dibuffer)");
+    client.save_profile(&host).await.expect("save_profile host baru + flush password");
+
+    let listed = client.list_all_profiles().await.unwrap();
+    let from_server = listed.iter().find(|p| p.id == host.id).expect("host baru ada di server dengan id dari client");
+    let server_cred = match from_server.auth {
+        AuthMethod::Password { credential_id } => credential_id,
+        _ => panic!("auth harus Password"),
+    };
+    assert_eq!(server_cred, host.id, "credential_id dari server == id host (bagian 2.6)");
+    assert_eq!(client.read_secret(server_cred).await.unwrap(), b"rahasia-host-1");
+
+    // --- UPDATE host yang sudah ada: ganti label + password ---
+    let mut edited = from_server.clone();
+    edited.label = format!("{}-edit", edited.label);
+    client.store_secret(server_cred, b"rahasia-host-2").await.expect("store_secret host lama (PUT langsung)");
+    client.save_profile(&edited).await.expect("update host");
+    assert_eq!(client.read_secret(server_cred).await.unwrap(), b"rahasia-host-2");
+    assert!(client.list_all_profiles().await.unwrap().iter().any(|p| p.id == host.id && p.label == edited.label));
+
+    // --- Identity BARU (password wajib ikut POST) ---
+    let identity = Identity {
+        id: Uuid::new_v4(),
+        label: "e2e-identity".into(),
+        username: "noc".into(),
+        credential_id: Uuid::new_v4(),
+    };
+    client.store_secret(identity.credential_id, b"rahasia-identity").await.expect("store_secret identity baru");
+    client.save_identity(&identity).await.expect("save_identity baru");
+    let identities = client.list_identities().await.unwrap();
+    let id_from_server = identities.iter().find(|i| i.id == identity.id).expect("identity ada di server");
+    assert_eq!(client.read_secret(id_from_server.credential_id).await.unwrap(), b"rahasia-identity");
+
+    // --- Hapus: identity, host, grup (cascade) ---
+    client.delete_identity(identity.id).await.expect("hapus identity");
+    let (host2, cred2) = new_host(Some(group.id));
+    client.store_secret(cred2, b"x").await.unwrap();
+    client.save_profile(&host2).await.unwrap();
+    client.delete_group(group.id).await.expect("hapus grup");
+    let after = client.list_all_profiles().await.unwrap();
+    assert!(!after.iter().any(|p| p.id == host.id || p.id == host2.id), "hapus grup ikut hapus host di dalamnya");
+    assert!(!client.list_identities().await.unwrap().iter().any(|i| i.id == identity.id));
+
+    // --- Login diam-diam: refresh token LAMA sudah dicabut (rotasi),
+    // yang TERBARU masih valid ---
+    match RemoteVaultClient::refresh_session(&url, &tokens.refresh_token).await {
+        Err(VaultError::SessionExpired(_)) => {}
+        other => panic!("refresh token lama harus SessionExpired, dapat: {:?}", other.map(|_| ())),
+    }
+    let latest = client.current_refresh_token().await;
+    RemoteVaultClient::refresh_session(&url, &latest).await.expect("refresh token terbaru harus valid");
+}

@@ -7,7 +7,7 @@
 // bersifat persisten (bukan file temp sekali pakai seperti SQLite
 // lokal desktop app), jadi harus dibersihkan eksplisit.
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 
 import { createApp } from "../src/app.js";
@@ -20,6 +20,14 @@ const FIRST_USER = { email: "admin@terminus.test", password: "super-secret-passw
 beforeAll(async () => {
   await prisma.refreshToken.deleteMany();
   await prisma.user.deleteMany();
+});
+
+// Aturan DESIGN.md Milestone 3: tiap suite bersihkan fixture-nya sendiri.
+// Tanpa ini `admin@terminus.test` tertinggal, dan DB dev jadi "sudah punya
+// user" — alur "Daftar admin pertama" di desktop app tidak bisa diuji lagi
+// setelah `npm test`. Refresh token ikut terhapus (onDelete: Cascade).
+afterAll(async () => {
+  await prisma.user.deleteMany({ where: { email: FIRST_USER.email } });
 });
 
 describe("Auth flow", () => {

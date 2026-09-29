@@ -503,7 +503,23 @@ diverifikasi (`cargo build --workspace` + `cargo test --workspace` +
 5. ⏳ **Resolusi vault (bagian 4)** — sisa: >1 vault -> daftar pilihan
    SEKALI waktu login (sekarang otomatis vault pertama, lihat
    `TODO(Milestone 5)` di `auth_flow::resolve_vault_id`).
-6. ⏳ **Verifikasi end-to-end manual**: jalankan `backend/` lewat
+6. ⏳ **Verifikasi end-to-end** — BAGIAN OTOMATIS ✅: test integrasi
+   `crates/vault/tests/remote_e2e.rs` (`#[ignore]`, butuh `npm run dev`;
+   jalankan `TERMINUS_E2E_URL=http://localhost:4000 cargo test -p
+   terminus-vault --test remote_e2e -- --ignored`) meniru urutan panggilan
+   `state.rs` apa adanya lawan backend sungguhan: register/login, list/
+   create vault, refresh-on-401 + persist token hasil rotasi, grup/host/
+   identity create-update-delete + password, cascade hapus grup, token
+   lama ditolak. **Bug nyata yang ditemukan & diperbaiki**:
+   `flush_pending_secret` mengirim password host BARU ke `PUT
+   /hosts/{credential_id}/secret` (menyimpang dari bagian 2.6 yang benar:
+   `:id`) — host baru dari `state.rs` punya `credential_id` UUID terpisah
+   yang tidak dikenal server -> 404, artinya tambah/duplikat/import host
+   ber-password di mode Self-hosted SELALU gagal sebelumnya. Juga
+   diperbaiki di backend: `tests/auth.test.ts` tidak punya `afterAll`
+   (fixture `admin@terminus.test` tertinggal -> DB dev "sudah punya user"
+   setelah `npm test`, alur Daftar admin pertama tidak bisa diuji).
+   **Sisa (manual GUI)**: jalankan `backend/` lewat
    `npm run dev` + MySQL lokal, desktop app mode Self-hosted connect
    ke situ — create host/grup/identity, set/get password, lock+buka
    lagi (refresh token jalan), ganti balik ke mode Local (data lokal

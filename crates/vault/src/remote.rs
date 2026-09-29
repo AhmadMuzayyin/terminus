@@ -289,15 +289,20 @@ impl RemoteVaultClient {
     }
 
     /// Kirim plaintext yang sudah dibuffer (kalau ada) buat
-    /// `credential_id` ini ke `PUT {prefix}/:credential_id/secret`,
-    /// lalu hapus dari buffer. Dipanggil dari `save_profile` SETELAH
-    /// host-nya sukses dibuat/diupdate. Lihat bagian 2.6 doc.
-    async fn flush_pending_secret(&self, credential_id: Uuid, prefix: &str) -> Result<(), VaultError> {
+    /// `credential_id` ini ke `PUT {prefix}/:resource_id/secret`, lalu
+    /// hapus dari buffer. Dipanggil dari `save_profile` SETELAH host-nya
+    /// sukses dibuat/diupdate. Lihat bagian 2.6 doc.
+    ///
+    /// Buffer di-key `credential_id`, tapi URL WAJIB pakai `resource_id`
+    /// (id host): host BARU dari `state.rs` punya `credential_id` UUID
+    /// terpisah yang tidak pernah dikenal server — `PUT` ke situ 404
+    /// (ditemukan E2E Milestone 6, `tests/remote_e2e.rs`).
+    async fn flush_pending_secret(&self, credential_id: Uuid, prefix: &str, resource_id: Uuid) -> Result<(), VaultError> {
         let maybe_plaintext = self.pending_secrets.lock().await.remove(&credential_id);
         let Some(plaintext) = maybe_plaintext else { return Ok(()) };
         let password = Self::plaintext_to_password_string(plaintext)?;
         let resp = self
-            .send(Method::PUT, &format!("{prefix}/{credential_id}/secret"), Some(json!({ "password": password })))
+            .send(Method::PUT, &format!("{prefix}/{resource_id}/secret"), Some(json!({ "password": password })))
             .await?;
         Self::empty_or_err(resp).await
     }
@@ -349,7 +354,7 @@ impl RemoteVaultClient {
             AuthMethod::Password { credential_id } => credential_id,
             _ => profile.id, // AuthMethod::Agent/PrivateKey belum didukung mode Self-hosted, fallback aman.
         };
-        self.flush_pending_secret(credential_id, "/hosts").await
+        self.flush_pending_secret(credential_id, "/hosts", profile.id).await
     }
 
     pub async fn delete_profile(&self, id: Uuid) -> Result<(), VaultError> {

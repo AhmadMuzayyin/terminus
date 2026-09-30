@@ -6,7 +6,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -31,12 +30,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.terminus.mobile.AppContainer
@@ -46,6 +43,7 @@ import org.terminus.mobile.data.VaultRepository
 import org.terminus.mobile.ui.account.AccountScreen
 import org.terminus.mobile.ui.hosts.HostsScreen
 import org.terminus.mobile.ui.identities.IdentitiesScreen
+import org.terminus.mobile.ui.sftp.SftpScreen
 import org.terminus.mobile.ui.terminal.ConnectFlow
 import org.terminus.mobile.ui.terminal.CredentialDialog
 import org.terminus.mobile.ui.terminal.TerminalScreen
@@ -69,18 +67,26 @@ fun TerminusApp(
     val scope = rememberCoroutineScope()
     val sessions = container.terminalSessions
     val terminalTabs by sessions.tabs.collectAsStateWithLifecycle()
-    val connect = remember(repository) {
-        ConnectFlow(repository, sessions, scope, snackbar, onOpened = { terminalOpen = true })
-    }
+    val connect = remember(repository) { ConnectFlow(repository, scope, snackbar) }
     val requestNotifications = rememberNotificationPermission()
 
     LaunchedEffect(repository) { repository.refresh() }
     // Sesi terakhir ditutup -> kembali ke Hosts.
     LaunchedEffect(terminalTabs.isEmpty()) { if (terminalTabs.isEmpty()) terminalOpen = false }
 
+    // Hasil transfer SFTP (bisa selesai waktu tab lain sedang dibuka).
+    LaunchedEffect(container.sftp) { container.sftp.events.collect { snackbar.showSnackbar(it) } }
+
     val onConnect: (Host) -> Unit = { host ->
         requestNotifications()
-        connect.start(host)
+        connect.start(host) { h, u, p ->
+            sessions.open(h, u, p)
+            terminalOpen = true
+        }
+    }
+    val onPickSftpHost: (Host) -> Unit = { host ->
+        requestNotifications()
+        connect.start(host) { h, u, p -> container.sftp.connect(h, u, p) }
     }
 
     if (terminalOpen && terminalTabs.isNotEmpty()) {
@@ -121,7 +127,7 @@ fun TerminusApp(
                         Tab.Hosts -> HostsScreen(repository, snackbar, onConnect = onConnect)
                         Tab.Identities -> IdentitiesScreen(repository, snackbar)
                         Tab.Account -> AccountScreen(account, serverUrl, onLogout)
-                        Tab.Sftp -> PlaceholderScreen(title = stringResource(current.label))
+                        Tab.Sftp -> SftpScreen(container.sftp, repository, connect, snackbar, onPickHost = onPickSftpHost)
                     }
                 }
             }
@@ -162,23 +168,5 @@ private fun rememberNotificationPermission(): () -> Unit {
             asked = true
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-    }
-}
-
-@Composable
-private fun PlaceholderScreen(title: String) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Belum diimplementasi — lihat mobile/DESIGN.md bagian 9.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp),
-        )
     }
 }

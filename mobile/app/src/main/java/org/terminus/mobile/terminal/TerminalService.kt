@@ -13,17 +13,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.terminus.mobile.MainActivity
 import org.terminus.mobile.R
 import org.terminus.mobile.TerminusApplication
+import org.terminus.mobile.sftp.SftpStatus
 
 /**
- * Foreground service "N sesi SSH aktif" (mobile/DESIGN.md bagian 7). TIDAK
- * memegang koneksi — koneksi ada di [TerminalSessions] (seumur proses);
+ * Foreground service "N sesi SSH + SFTP aktif" (mobile/DESIGN.md bagian 7).
+ * TIDAK memegang koneksi — koneksi ada di [TerminalSessions] & SftpManager (seumur proses);
  * service ini cuma memberi tahu Android bahwa proses sedang dipakai,
  * supaya sesi tidak dimatikan waktu app di background. Berhenti sendiri
- * begitu sesi terakhir ditutup.
+ * begitu sesi terakhir (terminal maupun SFTP) ditutup.
  */
 class TerminalService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -32,18 +34,20 @@ class TerminalService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val sessions = (application as TerminusApplication).container.terminalSessions
+        val container = (application as TerminusApplication).container
+        val active = combine(container.terminalSessions.tabs, container.sftp.status) { tabs, sftp -> Activity.of(tabs.size, sftp) }
         // startForeground WAJIB segera setelah startForegroundService (batas waktu Android).
-        startForeground(NOTIFICATION_ID, notification(sessions.tabs.value.size), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        val now = Activity.of(container.terminalSessions.tabs.value.size, container.sftp.status.value)
+        startForeground(NOTIFICATION_ID, notification(now), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         if (!observing) {
             observing = true
             scope.launch {
-                sessions.tabs.collect { tabs ->
-                    if (tabs.isEmpty()) {
+                active.collect { activity ->
+                    if (activity.isEmpty) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     } else {
-                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(tabs.size))
+                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(activity))
                     }
                 }
             }
@@ -57,7 +61,24 @@ class TerminalService : Service() {
         super.onDestroy()
     }
 
-    private fun notification(count: Int): Notification {
+    /** Yang membuat proses harus tetap hidup: sesi terminal & koneksi SFTP. */
+    private data class Activity(val terminals: Int, val sftp: Boolean) {
+        val isEmpty get() = terminals == 0 && !sftp
+
+        val title: String
+            get() = listOfNotNull(
+                "$terminals sesi SSH".takeIf { terminals > 0 },
+                "SFTP".takeIf { sftp },
+            ).joinToString(" + ") + " aktif"
+
+        companion object {
+            /** SFTP dihitung selama tersambung / sedang menyambung (bukan saat cuma menampilkan pesan gagal). */
+            fun of(terminals: Int, sftp: SftpStatus) =
+                Activity(terminals, sftp is SftpStatus.Connected || sftp is SftpStatus.Connecting)
+        }
+    }
+
+    private fun notification(activity: Activity): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -66,7 +87,7 @@ class TerminalService : Service() {
         )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_server)
-            .setContentTitle("$count sesi SSH aktif")
+            .setContentTitle(activity.title)
             .setContentText("Ketuk untuk kembali ke Terminus.")
             .setContentIntent(open)
             .setOngoing(true)

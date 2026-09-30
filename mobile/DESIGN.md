@@ -322,8 +322,40 @@ di emulator/HP) sebelum lanjut; user yang commit.
    ulang -> "Koneksi terputus" lalu HOST KEY BERUBAH diblokir -> hapus
    kunci lama -> kunci baru dipercaya, logout -> service berhenti & 0
    koneksi SSH tersisa di server.
-5. ⏳ **SFTP** — jelajah, unduh/unggah via SAF, buat folder/ganti
+5. ✅ **SFTP** — jelajah, unduh/unggah via SAF, buat folder/ganti
    nama/hapus.
+   **Selesai** — `ssh/SftpChannel` (sshj SFTP), `sftp/SftpManager` +
+   `RemotePaths` (fungsi murni), `ui/sftp/SftpScreen`. Keputusan:
+   - `SshConnector` punya SATU jalur connect + known_hosts + login untuk
+     shell & SFTP, dan satu instance dipakai bersama — aturan host key
+     identik. Tampilan dialog/peringatan host key juga dipakai bersama
+     (`ui/common/ConnectionUi.kt`).
+   - `ConnectFlow` jadi generik (`onReady(host, username, password)`):
+     dialog kredensial & "Simpan ke server" sama untuk terminal & SFTP.
+   - SATU koneksi SFTP seumur proses (bukan layar): pindah tab tidak
+     memutus koneksi/transfer; ikut dihitung foreground service
+     ("1 sesi SSH + SFTP aktif"); logout ikut memutusnya. Sambung ulang
+     ke host yang sama kembali ke folder terakhir.
+   - Satu transfer sekaligus (tanpa antrean) dengan progres & Batal.
+     Gagal/batal -> file setengah jadi DIHAPUS (di HP untuk unduhan, di
+     server untuk unggahan).
+   - Unduh = SAF "Simpan sebagai" (`CreateDocument`), unggah = SAF
+     `OpenDocument` + konfirmasi "Timpa?" kalau nama sudah ada. Tanpa izin
+     storage sama sekali.
+   - Hapus folder = rekursif, dengan peringatan "BESERTA SELURUH ISINYA";
+     symlink tidak pernah diikuti saat menghapus (yang dihapus link-nya).
+     Mengetuk symlink mengikuti tujuannya (folder dibuka, file diunduh).
+   - Bar progres memakai track netral (`ProgressBar`): track bawaan
+     Material = `secondaryContainer` = hijau di tema ini, bar 6% terlihat
+     hampir penuh.
+   Unit test 42/42 (baru: RemotePaths 4). Diuji di emulator lawan backend
+   4100/`terminus_e2e` + container SSH: host key berubah diblokir juga di
+   SFTP -> hapus -> percayai kunci baru, jelajah + symlink ke folder, unduh
+   (5 MB, SHA-256 sama dengan server), buat folder, ganti nama, unggah
+   (isi di server cocok), konfirmasi timpa, hapus folder berisi, unduh
+   400 MB -> progres -> Batal (file parsial di HP terhapus), notifikasi
+   "SFTP aktif" / "1 sesi SSH + SFTP aktif", koneksi tetap hidup waktu app
+   di background, logout -> 0 koneksi tersisa di server.
 6. ⏳ **Akun & pengaturan** — profile (nama/email/password), kunci app
    biometrik, ukuran font & tema terminal.
 7. ⏳ **Verifikasi end-to-end** ke backend lokal + build APK rilis

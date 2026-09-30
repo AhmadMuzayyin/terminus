@@ -18,6 +18,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -264,5 +265,20 @@ fun ErrorStrip(message: String, onRetry: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         TextButton(onClick = onRetry) { Text("Coba lagi") }
+    }
+}
+
+/**
+ * Bar progres dengan track NETRAL. Track bawaan Material memakai
+ * `secondaryContainer` = hijau "sukses" di tema ini — bar 6% jadi terlihat
+ * hampir penuh. [progress] null = tak tentu (animasi).
+ */
+@Composable
+fun ProgressBar(modifier: Modifier = Modifier, progress: (() -> Float)? = null) {
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    if (progress == null) {
+        LinearProgressIndicator(modifier.fillMaxWidth(), trackColor = track)
+    } else {
+        LinearProgressIndicator(progress = progress, modifier = modifier.fillMaxWidth(), trackColor = track)
     }
 }

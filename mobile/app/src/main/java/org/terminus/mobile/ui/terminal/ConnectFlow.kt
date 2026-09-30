@@ -28,42 +28,50 @@ import org.terminus.mobile.api.ApiError
 import org.terminus.mobile.api.Host
 import org.terminus.mobile.data.VaultRepository
 import org.terminus.mobile.data.address
-import org.terminus.mobile.terminal.TerminalSessions
-import org.terminus.mobile.terminal.TerminalTab
 import org.terminus.mobile.ui.common.PasswordField
 
-/** Kredensial yang perlu diketik user sebelum connect. [tab] != null = sambung ulang tab itu. */
-data class CredentialRequest(
+/** Kredensial yang perlu diketik user sebelum connect. [onReady] = lanjutan setelah kredensial lengkap. */
+class CredentialRequest(
     val host: Host,
     val askUsername: Boolean,
     val askPassword: Boolean,
     val initialUsername: String,
-    val tab: TerminalTab?,
     val error: String? = null,
-)
+    val onReady: (host: Host, username: String, password: String) -> Unit,
+) {
+    fun withError(message: String) =
+        CredentialRequest(host, askUsername, askPassword, initialUsername, message, onReady)
+}
 
 /**
- * Alur "ketuk host -> sesi terbuka" (mobile/DESIGN.md bagian 7): username &
- * password lengkap -> password diambil dari server lalu connect; ada yang
- * kosong (atau autentikasi gagal) -> tanya dulu, opsi simpan ke server.
- * Password tidak disimpan di HP.
+ * Alur "pilih host -> kredensial lengkap" (mobile/DESIGN.md bagian 7),
+ * dipakai terminal & SFTP: username & password lengkap -> password
+ * diambil dari server; ada yang kosong (atau autentikasi gagal) -> tanya
+ * dulu, opsi simpan ke server. Password tidak disimpan di HP — cuma
+ * diteruskan ke [CredentialRequest.onReady].
  */
 class ConnectFlow(
     private val repository: VaultRepository,
-    private val sessions: TerminalSessions,
     private val scope: CoroutineScope,
     private val snackbar: SnackbarHostState,
-    private val onOpened: () -> Unit,
 ) {
     var request by mutableStateOf<CredentialRequest?>(null)
         private set
     var busy by mutableStateOf(false)
         private set
 
-    /** Ketuk host, atau "Sambung ulang" / "Masukkan password" di tab [tab]. */
-    fun start(host: Host, tab: TerminalTab? = null, authFailed: Boolean = false) {
+    /**
+     * @param authFailed percobaan sebelumnya ditolak server -> selalu tanya lagi.
+     * @param lastUsername username percobaan sebelumnya (diisikan ulang ke dialog).
+     */
+    fun start(
+        host: Host,
+        authFailed: Boolean = false,
+        lastUsername: String? = null,
+        onReady: (host: Host, username: String, password: String) -> Unit,
+    ) {
         if (busy) return
-        // Pakai data TERBARU (host bisa sudah diedit sejak tab dibuka).
+        // Pakai data TERBARU (host bisa sudah diedit sejak sesi dibuka).
         val latest = repository.content.value.hosts.find { it.id == host.id } ?: host
         val needUsername = latest.username.isBlank()
         val needPassword = !latest.hasPassword || authFailed
@@ -74,14 +82,14 @@ class ConnectFlow(
                 askPassword = needPassword,
                 // Gagal login: isi dengan username yang BARUSAN dicoba (bisa
                 // hasil ketikan, host-nya sendiri tidak punya username).
-                initialUsername = tab?.username?.takeIf { authFailed && it.isNotEmpty() } ?: latest.username,
-                tab = tab,
+                initialUsername = lastUsername?.takeIf { authFailed && it.isNotEmpty() } ?: latest.username,
                 error = if (authFailed) "Username atau password SSH salah." else null,
+                onReady = onReady,
             )
             return
         }
         run {
-            launchSession(latest, latest.username, repository.hostPassword(latest.id), tab)
+            onReady(latest, latest.username, repository.hostPassword(latest.id))
         }
     }
 
@@ -89,11 +97,11 @@ class ConnectFlow(
         val req = request ?: return
         val user = username.trim()
         if (user.isEmpty()) {
-            request = req.copy(error = "Username wajib diisi.")
+            request = req.withError("Username wajib diisi.")
             return
         }
         if (req.askPassword && password.isEmpty()) {
-            request = req.copy(error = "Password wajib diisi.")
+            request = req.withError("Password wajib diisi.")
             return
         }
         request = null
@@ -107,17 +115,12 @@ class ConnectFlow(
                     snackbar.showSnackbar("Gagal menyimpan ke server: ${e.message}")
                 }
             }
-            launchSession(req.host.copy(username = user), user, pw, req.tab)
+            req.onReady(req.host.copy(username = user), user, pw)
         }
     }
 
     fun dismiss() {
         request = null
-    }
-
-    private fun launchSession(host: Host, username: String, password: String, tab: TerminalTab?) {
-        if (tab == null) sessions.open(host, username, password) else sessions.reconnect(tab, host, username, password)
-        onOpened()
     }
 
     private fun run(block: suspend () -> Unit) {
@@ -137,9 +140,9 @@ class ConnectFlow(
 /** Dialog username/password sebelum connect. */
 @Composable
 fun CredentialDialog(request: CredentialRequest, onSubmit: (String, String, Boolean) -> Unit, onDismiss: () -> Unit) {
-    var username by rememberSaveable(request.host.id, request.tab?.id) { mutableStateOf(request.initialUsername) }
-    var password by rememberSaveable(request.host.id, request.tab?.id) { mutableStateOf("") }
-    var save by rememberSaveable(request.host.id, request.tab?.id) { mutableStateOf(false) }
+    var username by rememberSaveable(request.host.id) { mutableStateOf(request.initialUsername) }
+    var password by rememberSaveable(request.host.id) { mutableStateOf("") }
+    var save by rememberSaveable(request.host.id) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

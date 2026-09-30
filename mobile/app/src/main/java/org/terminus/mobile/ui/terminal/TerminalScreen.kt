@@ -22,14 +22,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,7 +59,10 @@ import org.terminus.mobile.terminal.TerminalEngine
 import org.terminus.mobile.terminal.TerminalSessions
 import org.terminus.mobile.terminal.TerminalSurface
 import org.terminus.mobile.terminal.TerminalTab
-import org.terminus.mobile.ui.common.ConfirmDialog
+import org.terminus.mobile.ui.common.HostKeyChangedBanner
+import org.terminus.mobile.ui.common.ProgressBar
+import org.terminus.mobile.ui.common.StatusBanner
+import org.terminus.mobile.ui.common.UntrustedHostKeyDialog
 
 /**
  * Layar Terminal layar penuh (mobile/DESIGN.md bagian 7): pengalih sesi di
@@ -186,86 +186,46 @@ private fun statusColor(status: SessionStatus): Color = when (status) {
 @Composable
 private fun StatusOverlay(tab: TerminalTab, sessions: TerminalSessions, connect: ConnectFlow) {
     val status by tab.status.collectAsStateWithLifecycle()
-    var confirmForget by remember(tab.id) { mutableStateOf(false) }
     val target = "${tab.host.host}:${tab.host.port}"
+    val reconnect = { connect.start(tab.host) { h, u, p -> sessions.reconnect(tab, h, u, p) } }
 
     when (val s = status) {
         SessionStatus.Connected -> Unit
         SessionStatus.Connecting -> Column(Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Banner("Menghubungkan ke ${tab.host.address()}…")
+            ProgressBar()
+            StatusBanner("Menghubungkan ke ${tab.host.address()}…")
         }
-        is SessionStatus.UntrustedHostKey -> AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Host belum dikenal") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Ini pertama kali terhubung ke $target. Pastikan sidik jari di bawah SAMA dengan milik server sebelum mempercayainya.")
-                    Text(s.info.algorithm, style = MaterialTheme.typography.labelMedium)
-                    Text(s.info.fingerprint, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
-                }
-            },
-            confirmButton = { TextButton(onClick = { sessions.trustHostKey(tab) }) { Text("Percayai & sambungkan") } },
-            dismissButton = { TextButton(onClick = { sessions.close(tab) }) { Text("Batal") } },
+        is SessionStatus.UntrustedHostKey -> UntrustedHostKeyDialog(
+            target,
+            s.info,
+            onTrust = { sessions.trustHostKey(tab) },
+            onCancel = { sessions.close(tab) },
         )
-        is SessionStatus.HostKeyChanged -> Banner(
-            "HOST KEY $target BERUBAH — koneksi diblokir. Bisa jadi server diinstal ulang, atau ada yang menyadap " +
-                "koneksi (MITM). Hapus kunci lama HANYA kalau kamu yakin servernya memang berganti.\n\n" +
-                "Tersimpan: ${s.expected.algorithm} ${s.expected.fingerprint}\nSekarang: ${s.actual.algorithm} ${s.actual.fingerprint}",
-            error = true,
-            actions = listOf("Hapus kunci lama" to { confirmForget = true }, "Tutup sesi" to { sessions.close(tab) }),
+        is SessionStatus.HostKeyChanged -> HostKeyChangedBanner(
+            target,
+            s.expected,
+            s.actual,
+            closeLabel = "Tutup sesi",
+            onForget = { sessions.forgetHostKey(tab) },
+            onClose = { sessions.close(tab) },
         )
-        SessionStatus.AuthFailed -> Banner(
+        SessionStatus.AuthFailed -> StatusBanner(
             "Username atau password SSH salah.",
             error = true,
             actions = listOf(
-                "Masukkan password" to { connect.start(tab.host, tab, authFailed = true) },
+                "Masukkan password" to {
+                    connect.start(tab.host, authFailed = true, lastUsername = tab.username) { h, u, p -> sessions.reconnect(tab, h, u, p) }
+                },
                 "Tutup sesi" to { sessions.close(tab) },
             ),
         )
-        is SessionStatus.Failed -> Banner(
+        is SessionStatus.Failed -> StatusBanner(
             s.message,
             error = true,
-            actions = listOf("Sambung ulang" to { connect.start(tab.host, tab) }, "Tutup sesi" to { sessions.close(tab) }),
+            actions = listOf("Sambung ulang" to reconnect, "Tutup sesi" to { sessions.close(tab) }),
         )
         is SessionStatus.Disconnected -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-            Banner(
-                s.message,
-                actions = listOf("Sambung ulang" to { connect.start(tab.host, tab) }, "Tutup sesi" to { sessions.close(tab) }),
-            )
-        }
-    }
-
-    if (confirmForget) {
-        ConfirmDialog(
-            title = "Hapus host key lama?",
-            text = "Koneksi berikutnya ke $target akan menampilkan sidik jari baru untuk diperiksa. " +
-                "Lakukan ini hanya kalau kamu yakin servernya memang berganti kunci.",
-            confirmLabel = "Hapus",
-            onConfirm = { confirmForget = false; sessions.forgetHostKey(tab) },
-            onDismiss = { confirmForget = false },
-        )
-    }
-}
-
-@Composable
-private fun Banner(message: String, error: Boolean = false, actions: List<Pair<String, () -> Unit>> = emptyList()) {
-    Surface(
-        color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Column(Modifier.padding(12.dp)) {
-            Text(
-                message,
-                color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (actions.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    actions.forEach { (label, onClick) -> TextButton(onClick = onClick) { Text(label) } }
-                }
-            }
+            StatusBanner(s.message, actions = listOf("Sambung ulang" to reconnect, "Tutup sesi" to { sessions.close(tab) }))
         }
     }
 }

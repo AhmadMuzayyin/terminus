@@ -46,7 +46,36 @@ sealed class SshFailure(message: String) : Exception(message) {
  */
 class SshConnector(private val knownHosts: KnownHostsStore) {
 
+    /** Shell interaktif (terminal) dengan PTY [columns]×[rows]. */
     suspend fun open(target: SshTarget, columns: Int, rows: Int): ShellChannel = withContext(Dispatchers.IO) {
+        val client = connectAuthenticated(target)
+        try {
+            val session = client.startSession()
+            session.allocatePTY(TERM, columns, rows, 0, 0, emptyMap())
+            val shell = session.startShell()
+            ensureActive() // dibatalkan waktu connect -> jangan tinggalkan koneksi menggantung
+            SshShell(client, session, shell)
+        } catch (e: Throwable) {
+            runCatching { client.disconnect() }
+            throw if (e is IOException) SshFailure.Connect(describe(e, target)) else e
+        }
+    }
+
+    /** Subsistem SFTP — aturan host key & autentikasi SAMA PERSIS dengan [open]. */
+    suspend fun openSftp(target: SshTarget): SftpChannel = withContext(Dispatchers.IO) {
+        val client = connectAuthenticated(target)
+        try {
+            val sftp = client.newSFTPClient()
+            ensureActive()
+            SftpChannel(client, sftp)
+        } catch (e: Throwable) {
+            runCatching { client.disconnect() }
+            throw if (e is IOException) SshFailure.Connect(describe(e, target)) else e
+        }
+    }
+
+    /** Connect + cek host key (known_hosts) + login password. BLOKING — panggil di Dispatchers.IO. */
+    private suspend fun connectAuthenticated(target: SshTarget): SSHClient {
         val id = knownHostId(target.host, target.port)
         val stored = knownHosts.get(id)
         var check: HostKeyCheck? = null
@@ -81,12 +110,7 @@ class SshConnector(private val knownHosts: KnownHostsStore) {
             }
             // Tanpa keepalive, NAT/router rumahan memutus sesi yang diam beberapa menit.
             client.connection.keepAlive.keepAliveInterval = KEEPALIVE_SECONDS
-
-            val session = client.startSession()
-            session.allocatePTY(TERM, columns, rows, 0, 0, emptyMap())
-            val shell = session.startShell()
-            ensureActive() // dibatalkan waktu connect -> jangan tinggalkan koneksi menggantung
-            SshShell(client, session, shell)
+            return client
         } catch (e: Throwable) {
             runCatching { client.disconnect() }
             throw if (e is IOException) SshFailure.Connect(describe(e, target)) else e

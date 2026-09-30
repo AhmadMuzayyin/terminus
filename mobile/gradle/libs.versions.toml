@@ -19,6 +19,11 @@ sshj = "0.41.1"
 # Samakan dengan yang dibawa sshj 0.41.1 — dipasang eksplisit sebagai
 # security provider di TerminusApplication.
 bouncycastle = "1.84"
+# Kunci app (Milestone 6). 1.1.0 = rilis STABIL terakhir (1.4.0 masih alpha).
+biometric = "1.1.0"
+# BiometricPrompt butuh FragmentActivity; dipasang eksplisit supaya tidak
+# ikut versi lama bawaan biometric 1.1.0.
+fragment = "1.9.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +41,8 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 termux-terminal-emulator = { group = "com.github.termux.termux-app", name = "terminal-emulator", version.ref = "termux" }
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
 bouncycastle-prov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+androidx-fragment = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver3", version.ref = "okhttp" }

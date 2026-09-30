@@ -2,7 +2,6 @@ package org.terminus.mobile
 
 import android.graphics.Color
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,15 +19,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.terminus.mobile.api.VaultApi
 import org.terminus.mobile.auth.AuthState
+import org.terminus.mobile.auth.LockState
 import org.terminus.mobile.data.VaultRepository
 import org.terminus.mobile.ui.TerminusApp
+import org.terminus.mobile.ui.lock.LockScreen
 import org.terminus.mobile.ui.login.LoginScreen
 import org.terminus.mobile.ui.theme.TerminusTheme
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (turunan ComponentActivity): BiometricPrompt untuk kunci
+// app membutuhkannya.
+class MainActivity : FragmentActivity() {
+    private val container get() = (application as TerminusApplication).container
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // App SELALU tema gelap (ui/theme/Theme.kt) — ikon status/navigation
@@ -39,12 +45,23 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
-        val container = (application as TerminusApplication).container
         setContent {
             TerminusTheme {
                 Surface(Modifier.fillMaxSize()) { Root(container) }
             }
         }
+    }
+
+    // Activity tidak dibuat ulang saat rotasi (configChanges), jadi onStop/onStart
+    // di sini = app benar-benar ke background / kembali.
+    override fun onStart() {
+        super.onStart()
+        container.appLock.onForeground()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        container.appLock.onBackground()
     }
 }
 
@@ -53,6 +70,21 @@ private fun Root(container: AppContainer) {
     val sessionManager = container.sessionManager
     val state by sessionManager.state.collectAsStateWithLifecycle()
     val loginUi by sessionManager.loginUi.collectAsStateWithLifecycle()
+    val lock by container.appLock.state.collectAsStateWithLifecycle()
+
+    // Kunci app menutupi SEMUA layar; isi app tidak pernah tampil sebelum
+    // pengaturan terbaca (Unknown).
+    when (lock) {
+        LockState.Unknown -> {
+            StartingScreen(null)
+            return
+        }
+        LockState.Locked -> {
+            LockScreen(onUnlocked = container.appLock::unlock)
+            return
+        }
+        LockState.Unlocked -> Unit
+    }
 
     when (val s = state) {
         AuthState.Starting -> StartingScreen(loginUi.info)
@@ -67,7 +99,7 @@ private fun Root(container: AppContainer) {
             // Satu repository per sesi login: logout -> login lagi (mungkin
             // akun/server lain) mulai dari isi kosong, bukan isi akun lama.
             val repository = remember(s.session) { VaultRepository(VaultApi(container.httpClient, s.session)) }
-            TerminusApp(s.account, s.session.baseUrl, repository, container, onLogout = { sessionManager.logout() })
+            TerminusApp(s.account, s.session.baseUrl, s.session, repository, container, onLogout = { sessionManager.logout() })
         }
     }
 }

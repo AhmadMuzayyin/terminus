@@ -356,8 +356,45 @@ di emulator/HP) sebelum lanjut; user yang commit.
    400 MB -> progres -> Batal (file parsial di HP terhapus), notifikasi
    "SFTP aktif" / "1 sesi SSH + SFTP aktif", koneksi tetap hidup waktu app
    di background, logout -> 0 koneksi tersisa di server.
-6. ⏳ **Akun & pengaturan** — profile (nama/email/password), kunci app
+6. ✅ **Akun & pengaturan** — profile (nama/email/password), kunci app
    biometrik, ukuran font & tema terminal.
+   **Selesai** — `settings/Settings.kt` (DataStore `settings`),
+   `terminal/TerminalThemes.kt`, `data/ProfileForms.kt`, `auth/AppLock.kt`,
+   `ui/lock/DeviceAuth.kt`, `ui/account/{AccountScreen,ProfileScreen}.kt`.
+   Keputusan & temuan:
+   - Profil: aturan & pesan SALINAN `plan_account_update` desktop (cuma
+     field berubah yang dikirim; ganti email wajib password saat ini).
+     403 = pesan biasa (TIDAK logout). Ganti password: token baru dari
+     server langsung dipasang & dipersist; perangkat lain logout.
+   - Tema: 6 tema = SALINAN PERSIS `built_in_themes()` desktop
+     (`crates/term-emulator/src/palette.rs`). Tema host dari server
+     (`terminalTheme`, diatur di desktop) menang; kalau tidak dikenal ->
+     tema default Pengaturan. Ganti tema default -> sesi terbuka ikut.
+     Perintah `reset` di server mengembalikan warna Termux ke bawaan ->
+     dideteksi (warna == skema bawaan persis) & tema dipasang ulang;
+     warna yang sengaja diubah aplikasi server (OSC) tetap dihormati.
+   - Ukuran font: pinch & slider disimpan permanen (slider menyimpan waktu
+     dilepas). Berlaku untuk layar terminal yang dibuka berikutnya.
+   - Kunci app: `androidx.biometric` 1.1.0 (rilis STABIL terakhir; 1.4.0
+     masih alpha) + `MainActivity` jadi `FragmentActivity`. Biometrik kuat
+     ATAU kunci layar (API 29 tidak mendukung kombinasi itu -> biometrik
+     biasa ATAU kunci layar). Menyalakan & mematikan kunci wajib lolos
+     autentikasi. Status "belum diketahui" selama pengaturan dibaca ->
+     isi app tidak pernah sempat terlihat. Background dihitung dari
+     onStop/onStart Activity (aman karena `configChanges`). Sesi SSH/SFTP
+     tetap jalan selama terkunci; posisi layar (tab, grup) boleh hilang.
+   - Slider & bar progres: track kosong dibuat netral (bawaan =
+     `secondaryContainer` = hijau di tema ini, terlihat "penuh").
+   Unit test 56/56 (baru: TerminalThemes 3, ProfileForms 5, AppLock 4,
+   ApiSession +2). Diuji di emulator lawan backend 4100/`terminus_e2e`:
+   tema Mono Amber + font 16 sp di terminal sungguhan, tema bertahan
+   setelah `reset`, pengaturan tersimpan setelah force-stop, ganti email
+   tanpa/salah password (pesan, tidak logout), ubah nama+email (server
+   cocok), ganti password (token perangkat lain 401, app tetap masuk
+   setelah force-stop), kunci app dengan PIN uji (aktifkan, buka ulang ->
+   terkunci, batal -> layar kunci, buka dengan PIN, background singkat
+   tidak mengunci, matikan wajib PIN). Background 5 menit dicakup unit
+   test (jam palsu), tidak ditunggu sungguhan di emulator.
 7. ⏳ **Verifikasi end-to-end** ke backend lokal + build APK rilis
    (tanda tangan debug/rilis, package name masih placeholder).
 

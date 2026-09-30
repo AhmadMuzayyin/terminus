@@ -122,4 +122,38 @@ class ApiSessionTest {
         assertEquals(1, refreshCount.get())
         assertEquals(listOf("refresh-2"), persisted)
     }
+
+    @Test fun `ubah profil - cuma field berubah dikirim, password salah 403 tanpa refresh`() = runBlocking {
+        server.enqueue(json(200, """{"id":"u1","email":"a@b.c","fullName":"Budi Baru"}"""))
+        server.enqueue(json(403, """{"error":"Password saat ini salah"}"""))
+        val s = session()
+
+        assertEquals("Budi Baru", s.updateProfile("Budi Baru", null, null).displayName)
+        assertEquals("""{"fullName":"Budi Baru"}""", server.takeRequest().body?.utf8())
+
+        try {
+            s.updateProfile(null, "baru@b.c", "salah")
+            fail("harus 403")
+        } catch (e: ApiError.Http) {
+            assertEquals(403, e.status)
+            assertEquals("Password saat ini salah", e.message)
+        }
+        assertEquals("/api/v1/auth/me", server.takeRequest().url.encodedPath)
+        assertEquals(2, server.requestCount) // tidak ada /auth/refresh
+        assertEquals(null, expiredMessage)
+    }
+
+    @Test fun `ganti password - token baru dari server langsung dipakai & dipersist`() = runBlocking {
+        server.enqueue(json(200, tokens("access-baru", "refresh-baru")))
+        server.enqueue(json(200, me))
+        val s = session()
+
+        s.changePassword("lama-123", "baru-12345")
+        s.me()
+
+        assertEquals("""{"currentPassword":"lama-123","newPassword":"baru-12345"}""", server.takeRequest().body?.utf8())
+        assertEquals("Bearer access-baru", server.takeRequest().headers["Authorization"])
+        assertEquals(listOf("refresh-baru"), persisted)
+        assertEquals("refresh-baru", s.currentRefreshToken)
+    }
 }

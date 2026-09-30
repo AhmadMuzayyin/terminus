@@ -35,6 +35,9 @@ interface EmulatorSession {
     /** Putus saluran tanpa memicu [onChannelEnded]; layar tetap. */
     fun detach()
 
+    /** Pasang warna terminal; bertahan walau server mengirim `reset`. Main thread. */
+    fun applyTheme(theme: TerminalTheme)
+
     /** Tulis pesan status ke layar (bukan dari server), mis. "[koneksi terputus]". */
     fun printNotice(text: String)
 

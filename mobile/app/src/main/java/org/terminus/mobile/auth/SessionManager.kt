@@ -99,6 +99,12 @@ class SessionManager(
         runCatching { loggedIn.session.logout() }
     }
 
+    /** Profil diubah (tab Akun) -> tampilan nama/email ikut berubah; sesi tetap sama. */
+    fun updateAccount(account: Account) {
+        val current = _state.value as? AuthState.LoggedIn ?: return
+        _state.value = current.copy(account = account)
+    }
+
     fun clearLoginMessages() = _loginUi.update { it.copy(error = null, info = null) }
 
     private fun runAuth(rawUrl: String, call: suspend (String) -> AuthTokens) {

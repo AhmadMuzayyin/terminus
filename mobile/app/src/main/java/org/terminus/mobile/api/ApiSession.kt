@@ -79,6 +79,27 @@ class ApiSession(
 
     suspend fun me(): Account = client.decode(send("GET", authUrl("/me")))
 
+    /**
+     * `PATCH /auth/me` — hanya field yang berubah (null = tetap). Ganti email
+     * wajib [currentPassword]; salah = 403 ([ApiError.Http], BUKAN sesi
+     * kedaluwarsa — refresh-on-401 tidak terpicu).
+     */
+    suspend fun updateProfile(fullName: String?, email: String?, currentPassword: String?): Account = client.decode(
+        send("PATCH", authUrl("/me"), client.json.encodeToString(UpdateProfileRequest(fullName, email, currentPassword))),
+    )
+
+    /**
+     * `PUT /auth/me/password` — server mencabut SEMUA refresh token (semua
+     * perangkat logout) lalu memberi pasangan baru untuk perangkat ini, yang
+     * WAJIB langsung dipasang & dipersist (token lama sudah mati).
+     */
+    suspend fun changePassword(currentPassword: String, newPassword: String) {
+        val fresh: AuthTokens = client.decode(
+            send("PUT", authUrl("/me/password"), client.json.encodeToString(ChangePasswordRequest(currentPassword, newPassword))),
+        )
+        installTokens(fresh)
+    }
+
     /** Cabut refresh token TERBARU di server. Best-effort — backend selalu 204. */
     suspend fun logout() {
         markLoggedOut()

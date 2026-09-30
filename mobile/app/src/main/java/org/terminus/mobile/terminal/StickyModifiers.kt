@@ -22,20 +22,34 @@ class StickyModifiers {
 }
 
 /**
- * Ukuran font terminal (sp), dipakai semua sesi. Diubah lewat pinch. Belum
- * disimpan permanen — pengaturan font menyusul di Milestone 6.
+ * Ukuran font terminal (sp), dipakai semua sesi. Diubah lewat pinch atau
+ * slider Pengaturan; tiap perubahan user dilaporkan ke [onChange] (disimpan
+ * ke DataStore oleh AppContainer).
  */
 class FontSize(initialSp: Float = DEFAULT_SP) {
     var sp by mutableFloatStateOf(initialSp)
         private set
 
+    var onChange: ((Float) -> Unit)? = null
+
+    /** Perubahan dari user (pinch, slider) — ikut disimpan. */
     fun set(value: Float) {
-        sp = value.coerceIn(MIN_SP, MAX_SP)
+        val next = clamp(value)
+        if (next == sp) return
+        sp = next
+        onChange?.invoke(next)
+    }
+
+    /** Nilai tersimpan dibaca waktu app dibuka — TIDAK disimpan balik. */
+    fun load(value: Float) {
+        sp = clamp(value)
     }
 
     companion object {
         const val DEFAULT_SP = 13f
         const val MIN_SP = 7f
         const val MAX_SP = 32f
+
+        fun clamp(value: Float) = value.coerceIn(MIN_SP, MAX_SP)
     }
 }

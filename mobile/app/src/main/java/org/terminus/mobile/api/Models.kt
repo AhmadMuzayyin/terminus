@@ -29,5 +29,16 @@ internal data class RefreshRequest(val refreshToken: String)
 @Serializable
 internal data class CreateVaultRequest(val name: String)
 
+/** `PATCH /auth/me` — field null DIBUANG dari JSON (= tidak diubah). */
+@Serializable
+internal data class UpdateProfileRequest(
+    val fullName: String? = null,
+    val email: String? = null,
+    val currentPassword: String? = null,
+)
+
+@Serializable
+internal data class ChangePasswordRequest(val currentPassword: String, val newPassword: String)
+
 @Serializable
 internal data class ErrorBody(val error: String? = null)

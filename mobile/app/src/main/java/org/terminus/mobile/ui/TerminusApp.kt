@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.terminus.mobile.AppContainer
 import org.terminus.mobile.api.Account
+import org.terminus.mobile.api.ApiSession
 import org.terminus.mobile.api.Host
 import org.terminus.mobile.data.VaultRepository
 import org.terminus.mobile.ui.account.AccountScreen
@@ -54,6 +55,7 @@ import org.terminus.mobile.ui.terminal.TerminalScreen
 fun TerminusApp(
     account: Account,
     serverUrl: String,
+    session: ApiSession,
     repository: VaultRepository,
     container: AppContainer,
     onLogout: () -> Unit,
@@ -126,7 +128,7 @@ fun TerminusApp(
                     when (current) {
                         Tab.Hosts -> HostsScreen(repository, snackbar, onConnect = onConnect)
                         Tab.Identities -> IdentitiesScreen(repository, snackbar)
-                        Tab.Account -> AccountScreen(account, serverUrl, onLogout)
+                        Tab.Account -> AccountScreen(account, serverUrl, session, container, snackbar, onLogout)
                         Tab.Sftp -> SftpScreen(container.sftp, repository, connect, snackbar, onPickHost = onPickSftpHost)
                     }
                 }

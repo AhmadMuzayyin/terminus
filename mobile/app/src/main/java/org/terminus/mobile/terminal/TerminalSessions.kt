@@ -59,12 +59,14 @@ class TerminalTab internal constructor(val id: Long, val title: String, host: Ho
  *
  * @param onSessionsStarted dipanggil tiap sesi dibuka — menyalakan
  *   foreground service (service mematikan dirinya sendiri kalau 0 sesi).
+ * @param themeFor tema satu host (tema host di server, atau default Pengaturan).
  */
 class TerminalSessions(
     private val engine: TerminalEngine,
     private val connector: SshConnector,
     private val scope: CoroutineScope,
     private val onSessionsStarted: () -> Unit,
+    private val themeFor: (Host) -> TerminalTheme,
 ) {
     private val _tabs = MutableStateFlow<List<TerminalTab>>(emptyList())
     val tabs: StateFlow<List<TerminalTab>> = _tabs.asStateFlow()
@@ -83,6 +85,7 @@ class TerminalSessions(
         val sameHost = _tabs.value.count { it.host.id == host.id }
         val title = if (sameHost == 0) host.label else "${host.label} (${sameHost + 1})"
         val tab = TerminalTab(nextId++, title, host, engine.newSession())
+        tab.screen.applyTheme(themeFor(host))
         tab.screen.onChannelEnded = { error ->
             val message = if (error == null) "Sesi ditutup server." else "Koneksi terputus: ${error.message ?: error.javaClass.simpleName}"
             tab.screen.printNotice(message)
@@ -99,6 +102,7 @@ class TerminalSessions(
     fun reconnect(tab: TerminalTab, host: Host, username: String, password: String) {
         if (tab !in _tabs.value) return
         tab.host = host
+        tab.screen.applyTheme(themeFor(host))
         connect(tab, username, password)
     }
 
@@ -118,6 +122,11 @@ class TerminalSessions(
             connector.forget(tab.host.host, tab.host.port)
             tab.statusFlow.value = SessionStatus.Failed("Host key lama dihapus. Sambung ulang untuk memeriksa kunci yang baru.")
         }
+    }
+
+    /** Tema default di Pengaturan berubah -> pasang ulang ke semua sesi yang terbuka. */
+    fun refreshThemes() {
+        _tabs.value.forEach { it.screen.applyTheme(themeFor(it.host)) }
     }
 
     fun close(tab: TerminalTab) {

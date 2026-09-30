@@ -62,6 +62,8 @@ dependencies {
     implementation(libs.termux.terminal.emulator)
     implementation(libs.sshj)
     implementation(libs.bouncycastle.prov)
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

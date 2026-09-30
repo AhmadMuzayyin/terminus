@@ -6,9 +6,11 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.termux.terminal.TerminalColors
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
+import com.termux.terminal.TextStyle
 import com.termux.view.TerminalViewSession
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.ExecutorService
@@ -36,6 +38,7 @@ class TermuxSession(context: Context) : TerminalViewSession(), EmulatorSession, 
     /** Naik tiap attach/detach — pembaca lama yang baru selesai tidak boleh melapor "terputus". */
     private var generation = 0
     private var disposed = false
+    private var theme: TerminalTheme? = null
 
     override var columns = DEFAULT_COLUMNS
         private set
@@ -55,6 +58,7 @@ class TermuxSession(context: Context) : TerminalViewSession(), EmulatorSession, 
         val current = emulator
         if (current == null) {
             emulator = TerminalEmulator(this, columns, rows, cellWidthPixels, cellHeightPixels, TRANSCRIPT_ROWS, this)
+            theme?.let(::paint)
             if (pending.size() > 0) {
                 appendToScreen(pending.toByteArray())
                 pending.reset()
@@ -100,6 +104,21 @@ class TermuxSession(context: Context) : TerminalViewSession(), EmulatorSession, 
         val old = channel ?: return
         channel = null
         execute { old.close() }
+    }
+
+    override fun applyTheme(theme: TerminalTheme) {
+        this.theme = theme
+        paint(theme)
+        onScreenUpdated?.invoke()
+    }
+
+    /** Tulis warna tema ke emulator (kalau emulator sudah ada). */
+    private fun paint(theme: TerminalTheme) {
+        val colors = emulator?.mColors?.mCurrentColors ?: return
+        theme.ansi.copyInto(colors, destinationOffset = 0)
+        colors[TextStyle.COLOR_INDEX_FOREGROUND] = theme.foreground
+        colors[TextStyle.COLOR_INDEX_BACKGROUND] = theme.background
+        colors[TextStyle.COLOR_INDEX_CURSOR] = theme.foreground
     }
 
     override fun printNotice(text: String) {
@@ -151,6 +170,13 @@ class TermuxSession(context: Context) : TerminalViewSession(), EmulatorSession, 
     override fun onBell() = Unit
 
     override fun onColorsChanged() {
+        // `reset` penuh (mis. perintah `reset` di server) mengembalikan SEMUA warna
+        // ke skema bawaan Termux -> pasang ulang tema. Perubahan warna yang
+        // disengaja aplikasi server (OSC 4/10/11) tidak sama persis dengan skema
+        // bawaan, jadi tetap dihormati.
+        val current = emulator?.mColors?.mCurrentColors
+        val t = theme
+        if (t != null && current != null && current.contentEquals(TerminalColors.COLOR_SCHEME.mDefaultColors)) paint(t)
         onScreenUpdated?.invoke()
     }
 

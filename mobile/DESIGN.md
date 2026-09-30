@@ -63,7 +63,16 @@ app. TIDAK ADA salinan host/password di HP.
   baru `terminal-view` memuat renderer glyph turunan kitty berlisensi
   GPLv3 (lihat `terminal-view/NOTICE.md` di termux-app) — cocok dengan
   GPLv3 kita, tapi berarti APK mobile TIDAK BOLEH dirilis dengan lisensi
-  non-GPL. Cek ulang NOTICE.md di versi yang di-pin (Milestone 4).
+  non-GPL. **Dicek di Milestone 4**: versi yang di-pin (`v0.118.3`) belum
+  punya NOTICE.md itu — murni Apache 2.0. Cek ulang tiap naik versi.
+- **Termux dipakai sebagian di-vendor** (Milestone 4): `TerminalSession`
+  Termux itu `final` & selalu menjalankan proses LOKAL lewat JNI, dan
+  `TerminalView` cuma menerima tipe itu. Jadi: `terminal-emulator` dipakai
+  apa adanya (JitPack), sedangkan kode `terminal-view` DISALIN ke
+  `app/src/main/java/com/termux/view/` dengan satu perubahan — tipe
+  `TerminalSession` diganti `TerminalViewSession` (kelas kita). Detail &
+  atribusi: `mobile/THIRD_PARTY_NOTICES.md`. Naik versi Termux = salin
+  ulang folder itu + ulangi penggantian yang sama.
 
 ## 4. Struktur Folder & Lapisan
 
@@ -91,11 +100,18 @@ tahu apa pun soal Android UI (gampang dites di JVM).
 
 ### 4.4 Antarmuka terminal yang bisa ditukar
 
-Layar terminal TIDAK memakai kelas Termux langsung. Ada antarmuka kecil
-`TerminalSurface` (tulis byte dari server ke tampilan, terima input user,
-ukuran kolom×baris berubah, ambil teks seleksi, zoom font). Implementasi
-v1: `TermuxTerminalSurface`. Kalau nanti pindah ke libghostty, cukup
-tambah implementasi baru.
+Layar terminal TIDAK memakai kelas Termux langsung. Wujud akhirnya
+(Milestone 4, `terminal/TerminalEngine.kt`):
+- `ssh/ShellChannel` — aliran byte shell (output, write, resize, close).
+  `ssh/` tidak tahu apa pun soal Termux/layar.
+- `EmulatorSession` — isi layar + riwayat satu sesi, diberi makan
+  `ShellChannel`; hidup lebih lama dari view (pindah tab/rotasi/sambung
+  ulang tidak menghapus isinya).
+- `TerminalSurface` — view yang menampilkan satu `EmulatorSession`
+  (tombol ekstra, tempel, keyboard).
+- `TerminalEngine` — pembuat keduanya. Implementasi v1: `TermuxEngine`
+  (`TermuxSession` + `TermuxTerminalSurface`). Pindah ke libghostty =
+  engine baru; `ssh/`, `TerminalSessions`, & layar lain tetap.
 
 ## 5. Kontrak API Backend yang Dipakai
 
@@ -243,11 +259,69 @@ di emulator/HP) sebelum lanjut; user yang commit.
    **Catatan uji**: di emulator yang punya Google Autofill aktif, isian
    `adb shell input text` tercampur saran autofill — matikan sementara
    (`settings put secure autofill_service null`) lalu KEMBALIKAN.
-3. ⏳ **Hosts & Identities** — CRUD grup/host/identity + password,
+3. ✅ **Hosts & Identities** — CRUD grup/host/identity + password,
    pencarian, drill-down grup.
-4. ⏳ **Terminal SSH** — sshj + known_hosts, `TerminalSurface` + Termux,
+   **Selesai** — `api/VaultApi` + `VaultModels`, `data/` (`VaultRepository`
+   satu sumber isi vault per sesi login; `Forms` & `HostListing` fungsi
+   murni), `ui/hosts` (daftar + drill-down, pencarian, FAB, menu ⋮ /
+   tahan lama, form host), `ui/identities`, `ui/common`. Keputusan:
+   - Grup **satu tingkat** (sama dengan desktop — `parentId` tidak dipakai).
+   - Tiap perubahan -> kirim ke server -> muat ulang daftar (tanpa cache
+     lokal). Mutasi `NonCancellable` supaya "buat host -> kirim password"
+     tidak terpotong pindah tab.
+   - Host baru tersimpan tapi password gagal -> form pindah ke mode edit
+     host itu (`HostPasswordNotSaved`), mencegah host dobel.
+   - `groupId: null` dikirim EKSPLISIT (encoder `explicitNulls = true`);
+     `password` identity yang tidak diubah DIBUANG dari JSON (backend
+     menolak `null`). Field tags/kind/terminalTheme tidak pernah dikirim.
+   - Label host kosong = pakai host/IP. Duplikat ikut menyalin password.
+   - Ketuk host = snackbar "belum tersedia" sampai Milestone 4.
+   Unit test 34/34 (baru: Forms 6, HostListing 4, VaultRepository 7).
+   Diuji di emulator lawan backend 4100/`terminus_e2e`: tambah identity,
+   grup, host di dalam grup diisi dari identity (password di server
+   cocok), duplikat (password ikut), edit + pindah ke Tanpa grup (server:
+   `groupId` null, port 2222), pencarian multi-kata, Back keluar grup,
+   hapus grup (host di dalamnya ikut terhapus).
+4. ✅ **Terminal SSH** — sshj + known_hosts, `TerminalSurface` + Termux,
    tombol ekstra, multi-sesi, foreground service, salin/tempel, resize.
    Pin versi Termux + cek NOTICE.md.
+   **Selesai** — versi: Termux `v0.118.3` (Apache 2.0, tanpa NOTICE.md
+   GPL), sshj 0.41.1, BouncyCastle 1.84. Keputusan & temuan:
+   - `terminal-view` di-vendor (lihat bagian 3 & 4.4).
+   - **Host key dua tahap**: host baru -> koneksi pertama ditolak di
+     verifier & sidik jarinya dilaporkan -> dialog "Percayai?" -> simpan
+     -> connect ulang. Menunggu jawaban user DI DALAM verifier sshj tidak
+     bisa (thread transport dengan timeout key exchange). Password
+     disimpan di memori HANYA selama dialog itu terbuka.
+   - known_hosts per `host`/`[host]:port`, format sidik jari = OpenSSH
+     (`SHA256:…`, diuji sama persis dengan `ssh-keygen -lf`). Kunci
+     berubah (termasuk jenis kunci berbeda) = DIBLOKIR; satu-satunya
+     jalan "Hapus kunci lama" (berkonfirmasi) lalu periksa kunci baru.
+   - Android membawa provider "BC" versi pangkas -> diganti BouncyCastle
+     lengkap di `TerminusApplication` (tanpa ini Ed25519 gagal).
+   - Sesi seumur PROSES (`TerminalSessions` di `AppContainer`), bukan
+     layar. Foreground service tipe `specialUse` (dataSync dibatasi 6 jam
+     di Android 15) cuma memegang notifikasi; berhenti sendiri di 0 sesi.
+     Izin notifikasi (Android 13+) ditanya waktu connect pertama.
+   - Username/password kosong atau autentikasi gagal -> dialog kredensial
+     (opsi "Simpan ke server"); gagal login mengisi ulang username yang
+     barusan dicoba.
+   - Sambung ulang memakai tab & layar yang sama (riwayat tetap);
+     keepalive 30 detik; `configChanges` di Activity -> rotasi cukup
+     resize, tidak membongkar view.
+   - Landscape + keyboard menempel: bar sesi disembunyikan & baris tombol
+     ekstra dirapatkan (tanpanya terminal tinggal 0–4 baris).
+   - Ukuran font (pinch) belum disimpan permanen — Milestone 6.
+   Unit test 38/38 (baru: HostKeys 4). Diuji di emulator lawan backend
+   4100/`terminus_e2e` + container `linuxserver/openssh-server` (dari
+   emulator `10.0.2.2:2222`): dialog sidik jari (cocok dengan
+   `ssh-keyscan`), shell & input, `stty size` ikut layar/rotasi (51 -> 108
+   kolom), CTRL tempel (^C), panah riwayat, seleksi -> Salin -> Tempel,
+   dua sesi + pengalih, username/password ditanya + password salah + simpan
+   ke server, `exit` -> Sambung ulang (riwayat tetap), container dibuat
+   ulang -> "Koneksi terputus" lalu HOST KEY BERUBAH diblokir -> hapus
+   kunci lama -> kunci baru dipercaya, logout -> service berhenti & 0
+   koneksi SSH tersisa di server.
 5. ⏳ **SFTP** — jelajah, unduh/unggah via SAF, buat folder/ganti
    nama/hapus.
 6. ⏳ **Akun & pengaturan** — profile (nama/email/password), kunci app

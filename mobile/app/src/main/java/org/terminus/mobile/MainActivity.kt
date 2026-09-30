@@ -16,12 +16,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.terminus.mobile.api.VaultApi
 import org.terminus.mobile.auth.AuthState
-import org.terminus.mobile.auth.SessionManager
+import org.terminus.mobile.data.VaultRepository
 import org.terminus.mobile.ui.TerminusApp
 import org.terminus.mobile.ui.login.LoginScreen
 import org.terminus.mobile.ui.theme.TerminusTheme
@@ -37,17 +39,18 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
-        val sessionManager = (application as TerminusApplication).container.sessionManager
+        val container = (application as TerminusApplication).container
         setContent {
             TerminusTheme {
-                Surface(Modifier.fillMaxSize()) { Root(sessionManager) }
+                Surface(Modifier.fillMaxSize()) { Root(container) }
             }
         }
     }
 }
 
 @Composable
-private fun Root(sessionManager: SessionManager) {
+private fun Root(container: AppContainer) {
+    val sessionManager = container.sessionManager
     val state by sessionManager.state.collectAsStateWithLifecycle()
     val loginUi by sessionManager.loginUi.collectAsStateWithLifecycle()
 
@@ -60,7 +63,12 @@ private fun Root(sessionManager: SessionManager) {
             onRegister = sessionManager::register,
             onSwitchForm = sessionManager::clearLoginMessages,
         )
-        is AuthState.LoggedIn -> TerminusApp(s.account, s.session.baseUrl, onLogout = { sessionManager.logout() })
+        is AuthState.LoggedIn -> {
+            // Satu repository per sesi login: logout -> login lagi (mungkin
+            // akun/server lain) mulai dari isi kosong, bukan isi akun lama.
+            val repository = remember(s.session) { VaultRepository(VaultApi(container.httpClient, s.session)) }
+            TerminusApp(s.account, s.session.baseUrl, repository, container, onLogout = { sessionManager.logout() })
+        }
     }
 }
 

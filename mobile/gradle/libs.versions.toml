@@ -11,6 +11,14 @@ serialization = "1.11.0"
 coroutines = "1.11.0"
 datastore = "1.2.1"
 lifecycle = "2.11.0"
+# Termux DI-PIN (mobile/DESIGN.md bagian 3). v0.118.3 = rilis stabil terakhir,
+# terminal-emulator & terminal-view di versi ini murni Apache 2.0 (belum ada
+# renderer glyph GPLv3 turunan kitty / NOTICE.md).
+termux = "v0.118.3"
+sshj = "0.41.1"
+# Samakan dengan yang dibawa sshj 0.41.1 — dipasang eksplisit sebagai
+# security provider di TerminusApplication.
+bouncycastle = "1.84"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -25,6 +33,9 @@ androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lif
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+termux-terminal-emulator = { group = "com.github.termux.termux-app", name = "terminal-emulator", version.ref = "termux" }
+sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+bouncycastle-prov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver3", version.ref = "okhttp" }

@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Sesi SSH tetap hidup di background (mobile/DESIGN.md bagian 7). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- allowBackup=false: token login & known_hosts tidak boleh ikut backup
          cloud Android (mobile/DESIGN.md bagian 6). -->
@@ -13,14 +17,30 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Terminus">
+        <!-- configChanges: rotasi/keyboard fisik TIDAK membuat ulang Activity —
+             view terminal cukup diukur ulang (window-change ke server), bukan
+             dibongkar-pasang. singleTop: ketuk notifikasi kembali ke Activity yang sama. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- specialUse: klien SSH interaktif tidak cocok dengan tipe FGS lain
+             (dataSync dibatasi 6 jam di Android 15). -->
+        <service
+            android:name=".terminal.TerminalService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi terminal SSH interaktif yang dibuka user tetap tersambung saat aplikasi di background." />
+        </service>
     </application>
 </manifest>

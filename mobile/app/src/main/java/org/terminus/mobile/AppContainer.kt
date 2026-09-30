@@ -4,10 +4,20 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.terminus.mobile.api.HttpClient
+import org.terminus.mobile.auth.AuthState
 import org.terminus.mobile.auth.DataStoreConfigStore
 import org.terminus.mobile.auth.KeystoreTokenStore
 import org.terminus.mobile.auth.SessionManager
+import org.terminus.mobile.ssh.DataStoreKnownHostsStore
+import org.terminus.mobile.ssh.SshConnector
+import org.terminus.mobile.terminal.FontSize
+import org.terminus.mobile.terminal.StickyModifiers
+import org.terminus.mobile.terminal.TerminalEngine
+import org.terminus.mobile.terminal.TerminalService
+import org.terminus.mobile.terminal.TerminalSessions
+import org.terminus.mobile.terminal.TermuxEngine
 
 /** Wiring manual semua dependency (tanpa framework DI — mobile/DESIGN.md bagian 3). */
 class AppContainer(context: Context) {
@@ -22,4 +32,24 @@ class AppContainer(context: Context) {
         configStore = DataStoreConfigStore(context),
         scope = appScope,
     )
+
+    val terminalEngine: TerminalEngine = TermuxEngine(context.applicationContext)
+
+    /** Ctrl/Alt tempel & ukuran font — satu untuk semua sesi, seumur proses. */
+    val modifiers = StickyModifiers()
+    val fontSize = FontSize()
+
+    val terminalSessions = TerminalSessions(
+        engine = terminalEngine,
+        connector = SshConnector(DataStoreKnownHostsStore(context)),
+        scope = appScope,
+        onSessionsStarted = { TerminalService.start(context.applicationContext) },
+    )
+
+    init {
+        // Logout / sesi login berakhir -> semua sesi SSH ditutup (mobile/DESIGN.md bagian 6).
+        appScope.launch {
+            sessionManager.state.collect { if (it !is AuthState.LoggedIn) terminalSessions.closeAll() }
+        }
+    }
 }

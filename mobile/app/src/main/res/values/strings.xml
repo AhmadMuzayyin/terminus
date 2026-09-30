@@ -5,4 +5,8 @@
     <string name="tab_sftp">SFTP</string>
     <string name="tab_identities">Identities</string>
     <string name="tab_account">Akun</string>
+    <!-- Menu seleksi teks terminal (dipakai kode terminal-view yang di-vendor). -->
+    <string name="copy_text">Salin</string>
+    <string name="paste_text">Tempel</string>
+    <string name="text_selection_more">Lainnya…</string>
 </resources>

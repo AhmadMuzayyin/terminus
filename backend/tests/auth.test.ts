@@ -15,7 +15,11 @@ import { prisma } from "../src/db/client.js";
 
 const app = createApp();
 
-const FIRST_USER = { email: "admin@terminus.test", password: "super-secret-password", fullName: "Admin Terminus" };
+const FIRST_USER = {
+  email: "admin@terminus.test",
+  password: "super-secret-password",
+  fullName: "Admin Terminus",
+};
 // Dipakai suite "Profil akun" (email & password FIRST_USER diubah di sana).
 const CHANGED_EMAIL = "admin-baru@terminus.test";
 const OTHER_USER_EMAIL = "lain@terminus.test";
@@ -30,7 +34,9 @@ beforeAll(async () => {
 // user" — alur "Daftar admin pertama" di desktop app tidak bisa diuji lagi
 // setelah `npm test`. Refresh token ikut terhapus (onDelete: Cascade).
 afterAll(async () => {
-  await prisma.user.deleteMany({ where: { email: { in: [FIRST_USER.email, CHANGED_EMAIL, OTHER_USER_EMAIL] } } });
+  await prisma.user.deleteMany({
+    where: { email: { in: [FIRST_USER.email, CHANGED_EMAIL, OTHER_USER_EMAIL] } },
+  });
 });
 
 describe("Auth flow", () => {
@@ -257,7 +263,9 @@ describe("Profil akun (PATCH /me, PUT /me/password)", () => {
       expect(reuse.status).toBe(401);
     }
     // Token BARU dari respons -> tetap bisa dipakai (perangkat ini tetap login).
-    const fresh = await request(app).post("/api/v1/auth/refresh").send({ refreshToken: res.body.refreshToken });
+    const fresh = await request(app)
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: res.body.refreshToken });
     expect(fresh.status).toBe(200);
 
     const loginOldPwd = await request(app)

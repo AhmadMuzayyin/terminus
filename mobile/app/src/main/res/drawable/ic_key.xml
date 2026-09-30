@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ikon kunci (Identities) — belum ada padanannya di desktop. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M7.5 11 C9.7 11 11.5 12.8 11.5 15 C11.5 17.2 9.7 19 7.5 19 C5.3 19 3.5 17.2 3.5 15 C3.5 12.8 5.3 11 7.5 11 Z M10.5 12 L20 2.5 M16 6.5 L18.5 9 M18 4.5 L20.5 7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

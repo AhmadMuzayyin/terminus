@@ -203,9 +203,26 @@ tersimpan → masuk otomatis ("Masuk otomatis…").
 Dikerjakan SATU-SATU, tiap milestone diverifikasi (build + test + dicoba
 di emulator/HP) sebelum lanjut; user yang commit.
 
-1. ⏳ **Kerangka proyek** — Gradle wrapper, Compose, Material 3, bottom
+1. ✅ **Kerangka proyek** — Gradle wrapper, Compose, Material 3, bottom
    navigation dengan 4 layar kosong, `applicationId` placeholder, lisensi.
    Verifikasi: `./gradlew assembleDebug` + jalan di emulator.
+   **Selesai** — versi: Gradle 9.8.0, AGP 9.4.1 (Kotlin bawaan AGP, tanpa
+   plugin `kotlin-android`), Kotlin compose plugin 2.4.20, Compose BOM
+   2026.09.00. Temuan yang mengubah rencana:
+   - `compileSdk = 37` (bukan 36): `core-ktx` 1.19.1 mensyaratkannya;
+     `targetSdk` tetap 36 (perilaku runtime tidak berubah).
+   - Mesin dev cuma punya JRE (tanpa `javac`) → JDK 21 buat compile
+     diunduh otomatis lewat foojay toolchain resolver
+     (`settings.gradle.kts` + `java.toolchain` 21), tanpa sudo.
+   - Namespace kode `org.terminus.mobile`; `applicationId`
+     `com.example.terminus` (placeholder).
+   - Status bar dipaksa ikon terang (`SystemBarStyle.dark`) — app selalu
+     gelap; default mengikuti tema sistem & tidak terbaca di HP bertema
+     terang.
+   - Warna = token desktop (`ui/tokens.slint`), ikon garis = path yang
+     sama dengan `ui/components/icons.slint`.
+   Diverifikasi: build debug sukses, unit test 1/1, dijalankan di emulator
+   AVD `A16` (Android 16) — 4 tab berpindah, tanpa crash.
 2. ⏳ **Login & sesi** — client API (auth, vault), token store Keystore,
    refresh-on-401, resolusi vault, login otomatis, daftar admin pertama,
    logout. Unit test MockWebServer.

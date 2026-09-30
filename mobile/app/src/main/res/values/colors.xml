@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sama dengan Tokens.surface / primary-container desktop (ui/tokens.slint). -->
+    <color name="surface">#0B1326</color>
+    <color name="primary_container">#4D8EFF</color>
+</resources>

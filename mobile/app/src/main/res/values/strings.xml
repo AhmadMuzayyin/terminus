@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Terminus</string>
+    <string name="tab_hosts">Hosts</string>
+    <string name="tab_sftp">SFTP</string>
+    <string name="tab_identities">Identities</string>
+    <string name="tab_account">Akun</string>
+</resources>

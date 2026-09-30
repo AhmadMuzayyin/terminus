@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cuma tema window (sebelum Compose tampil); warna UI sebenarnya di
+         ui/theme/Theme.kt. -->
+    <style name="Theme.Terminus" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+    </style>
+</resources>

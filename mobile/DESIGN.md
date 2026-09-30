@@ -208,7 +208,10 @@ tersimpan → masuk otomatis ("Masuk otomatis…").
 
 - **Unit test JVM**: client API dengan **MockWebServer** (refresh-on-401,
   rotasi token, 403 profil, resolusi vault), parser/format kecil.
-- **Instrumentasi (emulator)**: alur login & layar utama.
+- **Instrumentasi (emulator)**: alur login & layar utama —
+  `app/src/androidTest/.../LoginE2ETest.kt` (login benar -> daftar host,
+  password salah -> pesan). Server & akun lewat argumen instrumentasi,
+  cara menjalankan di kepala file itu.
 - **E2E ke backend sungguhan**: backend TERPISAH ber-database
   `terminus_e2e` (JANGAN DB berisi akun sungguhan — suite auth backend
   menghapus user), mis. `PORT=4100`. Dari emulator Android, host PC =
@@ -395,8 +398,27 @@ di emulator/HP) sebelum lanjut; user yang commit.
    terkunci, batal -> layar kunci, buka dengan PIN, background singkat
    tidak mengunci, matikan wajib PIN). Background 5 menit dicakup unit
    test (jam palsu), tidak ditunggu sungguhan di emulator.
-7. ⏳ **Verifikasi end-to-end** ke backend lokal + build APK rilis
+7. ✅ **Verifikasi end-to-end** ke backend lokal + build APK rilis
    (tanda tangan debug/rilis, package name masih placeholder).
+   **Selesai** — build rilis (R8 + pengecilan resource + penandatanganan,
+   lihat bagian 11) & test instrumentasi `LoginE2ETest`. Temuan:
+   - R8 tanpa warning dengan aturan keep BouncyCastle & sshj
+     (`app/proguard-rules.pro`). APK rilis 11 MB (debug 45 MB).
+   - APK rilis diuji dari INSTALASI BERSIH lawan backend 4100 +
+     container SSH: login (URL diketik), daftar host, SSH (sidik jari
+     cocok `ssh-keyscan`, perintah jalan), SFTP (unduh, isi cocok),
+     Identities, Profil — tanpa ClassNotFound/NoSuchMethod/
+     Serialization error di logcat.
+   - Test instrumentasi butuh `espresso-core` 3.7.0 eksplisit: versi
+     lama bawaan `ui-test-junit4` memanggil `InputManager.getInstance`
+     yang dihapus di Android 16 -> semua test gagal.
+   - Orchestrator + `clearPackageData`: tiap test mulai dari data app
+     bersih. 2/2 lulus, diulang 2x berturut-turut. SEKALI (run pertama
+     setelah ganti dependency) teardown test kedua gagal "activity tetap
+     PAUSED" — tidak muncul lagi di 3 run berikutnya; kalau berulang,
+     curigai jendela sistem (autofill/izin) yang menutupi activity.
+   - Tanpa argumen server, test dilewati (AssumptionViolated): task
+     Gradle SUKSES, walau XML reporter AGP menulisnya di tag `<failure>`.
 
 ## 10. Sengaja DI LUAR SCOPE (jangan dikerjakan tanpa diminta)
 
@@ -409,3 +431,29 @@ di emulator/HP) sebelum lanjut; user yang commit.
   menyiapkan jalannya).
 - Import/Export XML/JSON (bisa lewat desktop, data servernya sama).
 - Publikasi Play Store (package name final, ikon/branding final).
+
+## 11. Build Rilis & Penandatanganan
+
+- `./gradlew assembleRelease` -> `app/build/outputs/apk/release/app-release.apk`.
+  R8 + pengecilan resource AKTIF; aturan keep di `app/proguard-rules.pro`
+  (tiap aturan ada alasannya — jangan tambah `-keep class **` asal lolos).
+  **Tiap kali dependency/aturan R8 berubah, APK rilis wajib diuji ulang
+  penuh** (login, SSH, SFTP) — R8 cuma ketahuan merusak reflection saat
+  runtime.
+- **Kunci rilis** dibaca dari `mobile/keystore.properties`:
+  ```
+  storeFile=../terminus-release.jks   (relatif ke folder mobile/)
+  storePassword=...
+  keyAlias=terminus
+  keyPassword=...
+  ```
+  File itu, `*.jks`, & `*.keystore` ada di `.gitignore` — JANGAN pernah
+  di-commit. Keystore dibuat & disimpan SENDIRI oleh pemilik app (backup
+  di tempat aman): kalau hilang, update app di Play Store tidak bisa
+  dirilis lagi. Membuatnya: `keytool -genkeypair -v -keystore
+  terminus-release.jks -alias terminus -keyalg RSA -keysize 4096 -validity 10000`.
+- `keystore.properties` tidak ada -> APK rilis ditandatangani kunci
+  DEBUG (bisa dipasang untuk uji, BUKAN untuk Play Store).
+- Sebelum publikasi: ganti `applicationId` (placeholder
+  `com.example.terminus`, satu-satunya tempat di `app/build.gradle.kts`),
+  naikkan `versionCode`/`versionName`, ikon & branding final (bagian 10).

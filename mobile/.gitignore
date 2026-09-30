@@ -7,3 +7,8 @@ local.properties
 captures/
 *.apk
 *.aab
+
+# Kunci rilis: RAHASIA, simpan di luar repo (mobile/DESIGN.md bagian 11).
+keystore.properties
+*.jks
+*.keystore

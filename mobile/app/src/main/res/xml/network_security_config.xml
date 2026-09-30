@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HTTP polos diizinkan: server Terminus self-hosted sering di LAN tanpa
+     TLS. Layar Login menampilkan peringatan kalau URL-nya http://
+     (mobile/DESIGN.md bagian 6). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

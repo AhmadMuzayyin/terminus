@@ -22,14 +22,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import org.terminus.mobile.api.Account
+import org.terminus.mobile.ui.account.AccountScreen
 import org.terminus.mobile.ui.theme.TerminusTheme
 
-// Kerangka Milestone 1: bottom navigation + layar placeholder. Tab dipilih
-// lewat state biasa (bukan navigation-compose) — layar penuh Terminal &
-// Login (Milestone 2/4) yang nanti menentukan perlu tidaknya navigasi
-// bertingkat.
+// Layar utama SETELAH login: bottom navigation. Tab dipilih lewat state
+// biasa (bukan navigation-compose) — layar penuh Terminal (Milestone 4)
+// yang nanti menentukan perlu tidaknya navigasi bertingkat.
 @Composable
-fun TerminusApp() {
+fun TerminusApp(account: Account, serverUrl: String, onLogout: () -> Unit) {
     var current by rememberSaveable { mutableStateOf(Tab.Hosts) }
 
     Scaffold(
@@ -47,7 +48,10 @@ fun TerminusApp() {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            PlaceholderScreen(title = stringResource(current.label))
+            when (current) {
+                Tab.Account -> AccountScreen(account, serverUrl, onLogout)
+                else -> PlaceholderScreen(title = stringResource(current.label))
+            }
         }
     }
 }
@@ -73,5 +77,7 @@ private fun PlaceholderScreen(title: String) {
 @Preview
 @Composable
 private fun TerminusAppPreview() {
-    TerminusTheme { TerminusApp() }
+    TerminusTheme {
+        TerminusApp(Account(id = "1", email = "admin@contoh.com", fullName = "Admin"), "https://vault.contoh.com", onLogout = {})
+    }
 }

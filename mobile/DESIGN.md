@@ -223,9 +223,26 @@ di emulator/HP) sebelum lanjut; user yang commit.
      sama dengan `ui/components/icons.slint`.
    Diverifikasi: build debug sukses, unit test 1/1, dijalankan di emulator
    AVD `A16` (Android 16) — 4 tab berpindah, tanpa crash.
-2. ⏳ **Login & sesi** — client API (auth, vault), token store Keystore,
+2. ✅ **Login & sesi** — client API (auth, vault), token store Keystore,
    refresh-on-401, resolusi vault, login otomatis, daftar admin pertama,
    logout. Unit test MockWebServer.
+   **Selesai** — `api/` (murni JVM: `HttpClient`, `AuthApi`, `ApiSession`
+   dengan refresh-on-401 ber-`Mutex` supaya beberapa request 401
+   bersamaan cuma refresh SEKALI), `auth/` (`KeystoreTokenStore`
+   AES-GCM, `DataStoreConfigStore`, `SessionManager` + `AuthState`),
+   `TerminusApplication`/`AppContainer`, layar Login/Daftar, splash
+   "Masuk otomatis…", tab Akun (identitas + Logout berkonfirmasi).
+   `network_security_config` mengizinkan `http://` (peringatan tampil di
+   form). Unit test 17/17 (ApiSession 6, SessionManager 10, Tab 1).
+   Diuji di emulator lawan backend TERPISAH (port 4100, DB
+   `terminus_e2e`, dari emulator `http://10.0.2.2:4100`): daftar admin
+   pertama (+ "My Vault" otomatis), login otomatis setelah force-stop
+   (token rotasi tersimpan: 1 dicabut, 1 aktif), logout (token dicabut
+   server, URL tetap, buka ulang minta login), password salah
+   ("Email atau password salah"), login manual.
+   **Catatan uji**: di emulator yang punya Google Autofill aktif, isian
+   `adb shell input text` tercampur saran autofill — matikan sementara
+   (`settings put secure autofill_service null`) lalu KEMBALIKAN.
 3. ⏳ **Hosts & Identities** — CRUD grup/host/identity + password,
    pencarian, drill-down grup.
 4. ⏳ **Terminal SSH** — sshj + known_hosts, `TerminalSurface` + Termux,

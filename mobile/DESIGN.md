@@ -32,7 +32,7 @@ app. TIDAK ADA salinan host/password di HP.
 | Navigasi | **Bottom navigation**: Hosts, SFTP, Identities, Akun | Standar Android, terjangkau jempol |
 | Kunci app | **Opsional** di Pengaturan (default MATI): biometrik / kunci layar HP | Pilihan user |
 | Min Android | **Android 10 (API 29)** | Scoped storage modern, kode lebih sederhana |
-| Package name | Placeholder **`com.example.terminus`** — diganti user sebelum rilis | Cuma di `applicationId` (bagian 4), terpisah dari namespace kode |
+| Package name | **`com.ustdev.terminus`** (2026-10-01; sebelumnya placeholder `com.example.terminus`) | Cuma di `applicationId` (bagian 4), terpisah dari namespace kode `org.terminus.mobile` |
 | Auth SSH | **Password saja** di v1 | Server baru bisa simpan password teks (sama dengan desktop Self-hosted) |
 
 ## 3. Tech Stack & Alasan
@@ -81,7 +81,7 @@ mobile/
   DESIGN.md                ← dokumen ini
   settings.gradle.kts, build.gradle.kts, gradle/…
   app/
-    build.gradle.kts       ← applicationId = "com.example.terminus" (SATU-SATUNYA tempat)
+    build.gradle.kts       ← applicationId = "com.ustdev.terminus" (SATU-SATUNYA tempat)
     src/main/java/…/terminus/
       MainActivity.kt
       AppContainer.kt      ← wiring manual semua dependency
@@ -234,7 +234,7 @@ di emulator/HP) sebelum lanjut; user yang commit.
      diunduh otomatis lewat foojay toolchain resolver
      (`settings.gradle.kts` + `java.toolchain` 21), tanpa sudo.
    - Namespace kode `org.terminus.mobile`; `applicationId`
-     `com.example.terminus` (placeholder).
+     `com.example.terminus` (placeholder waktu itu; kini `com.ustdev.terminus`).
    - Status bar dipaksa ikon terang (`SystemBarStyle.dark`) — app selalu
      gelap; default mengikuti tema sistem & tidak terbaca di HP bertema
      terang.
@@ -454,6 +454,8 @@ di emulator/HP) sebelum lanjut; user yang commit.
   terminus-release.jks -alias terminus -keyalg RSA -keysize 4096 -validity 10000`.
 - `keystore.properties` tidak ada -> APK rilis ditandatangani kunci
   DEBUG (bisa dipasang untuk uji, BUKAN untuk Play Store).
-- Sebelum publikasi: ganti `applicationId` (placeholder
-  `com.example.terminus`, satu-satunya tempat di `app/build.gradle.kts`),
-  naikkan `versionCode`/`versionName`, ikon & branding final (bagian 10).
+- `applicationId` = `com.ustdev.terminus` (satu-satunya tempat:
+  `app/build.gradle.kts`). JANGAN diubah lagi setelah rilis pertama —
+  Play Store & HP menganggapnya app baru (update tidak menyambung).
+- Sebelum publikasi: naikkan `versionCode`/`versionName`, ikon & branding
+  final (bagian 10), keystore rilis sendiri.

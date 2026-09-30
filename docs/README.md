@@ -23,6 +23,8 @@ di-*fork*, dipelajari, dan dikontribusikan.
   plus iterasi cepat khusus desain UI.
 - **[Fitur](#features)** — ringkasan semua fitur yang sudah berfungsi
   penuh: vault terenkripsi, terminal SSH, SFTP, console serial.
+- **[Aplikasi Mobile (Android)](#mobile)** — pakai host, terminal SSH,
+  dan SFTP dari HP lewat server Terminus Self-hosted.
 - **[Arsitektur](#architecture)** — struktur workspace crate, prinsip
   desain, tumpukan teknologi.
 - **[Packaging & Rilis](#packaging)** — build executable siap-distribusi

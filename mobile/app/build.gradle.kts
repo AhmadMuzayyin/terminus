@@ -22,9 +22,10 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        // PLACEHOLDER — diganti user sebelum rilis Play Store. SATU-SATUNYA
-        // tempat identitas aplikasi ditulis (mobile/DESIGN.md bagian 2).
-        applicationId = "com.example.terminus"
+        // Identitas aplikasi (Play Store, instalasi di HP). SATU-SATUNYA tempat
+        // ditulis (mobile/DESIGN.md bagian 2). Mengubahnya lagi = app BARU di
+        // HP & Play Store (data & update tidak menyambung ke yang lama).
+        applicationId = "com.ustdev.terminus"
         minSdk = 29
         targetSdk = 36
         versionCode = 1

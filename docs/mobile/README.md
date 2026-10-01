@@ -14,6 +14,7 @@ Yang bisa dilakukan dari HP:
 - Atur **profil akun**, **kunci aplikasi** (sidik jari / kunci layar),
   **ukuran font**, dan **tema terminal**.
 
+> [!NOTE]
 > Aplikasi mobile **hanya** bekerja dengan server Self-hosted. Vault
 > lokal (mode Local di desktop) tidak tersedia di HP.
 
@@ -108,6 +109,7 @@ Setelah masuk, ada empat tab di bawah layar:
   - Host: **Edit**, **Duplikat** (password ikut tersalin), **Hapus**.
   - Grup: **Ganti nama**, **Hapus**.
 
+> [!WARNING]
 > **Menghapus grup ikut menghapus semua host di dalamnya** beserta
 > password tersimpannya — sama seperti di desktop. Aplikasi menampilkan
 > jumlah host yang ikut terhapus sebelum kamu mengonfirmasi.

@@ -5,11 +5,12 @@
 Butuh Rust edisi 2021 terbaru (stable, minimal 1.85 — beberapa
 dependency transitif mensyaratkan versi itu).
 
-```bash
-# Opsi A — rustup (disarankan, portable di Linux/macOS/Windows)
+```bash tab="rustup (disarankan)"
+# Portable di Linux/macOS/Windows
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
 
-# Opsi B — paket distro (contoh Fedora)
+```bash tab="Paket distro (Fedora)"
 sudo dnf install rust cargo
 ```
 
@@ -22,16 +23,17 @@ beda-beda per OS.
 
 ### Linux
 
-```bash
-# Fedora
+```bash tab="Fedora"
 sudo dnf install gcc gcc-c++ pkgconf-pkg-config \
     fontconfig-devel libxkbcommon-devel wayland-devel libX11-devel
+```
 
-# Debian/Ubuntu
+```bash tab="Debian/Ubuntu"
 sudo apt install build-essential pkg-config \
     libfontconfig1-dev libxkbcommon-dev libwayland-dev libx11-dev
+```
 
-# Arch
+```bash tab="Arch"
 sudo pacman -S base-devel pkgconf fontconfig libxkbcommon wayland libx11
 ```
 
@@ -69,6 +71,7 @@ Slint pakai backend native Win32/Direct3D, **tidak butuh WebView2**
 atau runtime GUI tambahan apa pun — beda dari framework berbasis web
 view (Tauri/Electron).
 
+> [!NOTE]
 > `rusqlite` (dipakai vault) pakai feature `bundled` — SQLite
 > di-compile dari source lewat `cc`, jadi **tidak perlu** install
 > `sqlite-devel`/`libsqlite3-dev` terpisah di platform manapun

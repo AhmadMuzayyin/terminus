@@ -4,284 +4,1221 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Terminus — Dokumentasi</title>
-<meta name="description" content="Dokumentasi Terminus — SSH/SFTP/Console manager native lintas platform." />
+<meta name="description" content="Dokumentasi Terminus — SSH, SFTP, dan console serial manager native lintas platform." />
+<meta name="color-scheme" content="dark light" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234d8eff'/%3E%3Ctext x='32' y='45' font-family='sans-serif' font-size='34' font-weight='700' fill='%23002e6a' text-anchor='middle'%3ET%3C/text%3E%3C/svg%3E" />
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<script>
+  // Tema dipasang SEBELUM render supaya tidak berkedip terang->gelap.
+  (function () {
+    try {
+      var t = localStorage.getItem("docs-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  })();
+</script>
 <style>
+  /* ==================================================================
+     Token desain. Gelap = warna aplikasi Terminus (ui/tokens.slint);
+     terang = padanan netral untuk membaca lama di siang hari.
+     ================================================================== */
   :root {
-    --surface-lowest: #060e20;
-    --surface: #0b1326;
-    --surface-low: #131b2e;
-    --surface-container: #171f33;
-    --surface-high: #222a3d;
-    --surface-highest: #2d3449;
-    --on-surface: #dae2fd;
-    --on-surface-variant: #c2c6d6;
-    --outline: #8c909f;
-    --outline-variant: #424754;
-    --primary: #adc6ff;
-    --on-primary: #002e6a;
-    --primary-container: #4d8eff;
-    --success: #4edea3;
-    --font-headline: "Hanken Grotesk", "Inter", sans-serif;
-    --font-body: "Inter", sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --bg: #0b1326;
+    --bg-inset: #060e20;
+    --bg-raised: #131b2e;
+    --bg-hover: #182136;
+    --border: #253049;
+    --border-strong: #354059;
+    --text: #dae2fd;
+    --text-2: #b4bccf;
+    --text-3: #8c93a6;
+    --accent: #8db4ff;
+    --accent-strong: #4d8eff;
+    --accent-bg: rgba(77, 142, 255, 0.12);
+    --code-text: #d4dcf2;
+    --inline-code-bg: #1a2338;
+    --mark: rgba(255, 213, 79, 0.28);
+
+    --note: #4d8eff;
+    --tip: #3fcf98;
+    --important: #b48cff;
+    --warning: #e8b02e;
+    --caution: #ff6b6b;
+
+    --hl-keyword: #c792ea;
+    --hl-string: #a5d6a7;
+    --hl-number: #f7a86b;
+    --hl-comment: #6b7590;
+    --hl-title: #82aaff;
+    --hl-attr: #ffcb6b;
+    --hl-builtin: #7fdbca;
+    --hl-variable: #f07178;
+    --hl-meta: #89ddff;
+    --hl-prompt: #5f6b85;
+    --hl-ip: #7fdbca;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+    --header-h: 52px;
+    --sidebar-w: 256px;
+    --toc-w: 224px;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--surface);
-    color: var(--on-surface);
-    font-family: var(--font-body);
-    font-size: 15px;
-    line-height: 1.6;
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-inset: #f6f8fb;
+    --bg-raised: #f3f5f9;
+    --bg-hover: #eceff5;
+    --border: #e1e5ec;
+    --border-strong: #cbd2dd;
+    --text: #18202f;
+    --text-2: #3d4759;
+    --text-3: #687387;
+    --accent: #1f5fd6;
+    --accent-strong: #1f5fd6;
+    --accent-bg: rgba(31, 95, 214, 0.08);
+    --code-text: #1f2a3c;
+    --inline-code-bg: #eef1f6;
+    --mark: rgba(255, 196, 0, 0.35);
+
+    --note: #1f5fd6;
+    --tip: #12845a;
+    --important: #7646d9;
+    --warning: #a86b00;
+    --caution: #c92a2a;
+
+    --hl-keyword: #8a3ab9;
+    --hl-string: #1d7a3e;
+    --hl-number: #b4531c;
+    --hl-comment: #7a8395;
+    --hl-title: #1f5fd6;
+    --hl-attr: #8a6100;
+    --hl-builtin: #0d7a86;
+    --hl-variable: #c2410c;
+    --hl-meta: #0b6bcb;
+    --hl-prompt: #8b93a3;
+    --hl-ip: #0d7a86;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #ffffff; --bg-inset: #f6f8fb; --bg-raised: #f3f5f9; --bg-hover: #eceff5;
+      --border: #e1e5ec; --border-strong: #cbd2dd;
+      --text: #18202f; --text-2: #3d4759; --text-3: #687387;
+      --accent: #1f5fd6; --accent-strong: #1f5fd6; --accent-bg: rgba(31, 95, 214, 0.08);
+      --code-text: #1f2a3c; --inline-code-bg: #eef1f6; --mark: rgba(255, 196, 0, 0.35);
+      --note: #1f5fd6; --tip: #12845a; --important: #7646d9; --warning: #a86b00; --caution: #c92a2a;
+      --hl-keyword: #8a3ab9; --hl-string: #1d7a3e; --hl-number: #b4531c; --hl-comment: #7a8395;
+      --hl-title: #1f5fd6; --hl-attr: #8a6100; --hl-builtin: #0d7a86; --hl-variable: #c2410c;
+      --hl-meta: #0b6bcb; --hl-prompt: #8b93a3; --hl-ip: #0d7a86;
+    }
   }
 
-  /* --- Header --- */
-  header.top {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 20px;
-    background: var(--surface-container);
-    border-bottom: 1px solid var(--outline-variant);
-    position: sticky;
-    top: 0;
-    z-index: 20;
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: calc(var(--header-h) + 16px); -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.65 var(--font-ui);
+    -webkit-font-smoothing: antialiased;
   }
-  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
-  .brand .logo {
-    width: 32px; height: 32px; border-radius: 8px;
-    background: var(--primary-container); color: var(--on-primary);
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-headline); font-weight: 700; font-size: 16px;
-    flex-shrink: 0;
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 3px; }
+  .skip-link {
+    position: absolute; left: 12px; top: -48px; z-index: 100;
+    background: var(--accent-strong); color: #fff; padding: 8px 12px; border-radius: 4px;
   }
-  .brand .name { font-family: var(--font-headline); font-weight: 700; font-size: 17px; }
-  .brand .tagline { font-size: 11px; color: var(--on-surface-variant); font-family: var(--font-mono); }
-  header.top .spacer { flex: 1; }
-  header.top a.gh {
-    color: var(--on-surface-variant);
-    text-decoration: none;
-    font-size: 13px;
-    border: 1px solid var(--outline-variant);
-    border-radius: 6px;
-    padding: 6px 12px;
+  .skip-link:focus { top: 8px; }
+
+  /* ---------------- Header ---------------- */
+  .site-header {
+    position: sticky; top: 0; z-index: 30;
+    height: var(--header-h);
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 600; white-space: nowrap; }
+  .brand:hover { text-decoration: none; }
+  .brand-mark {
+    width: 24px; height: 24px; border-radius: 6px;
+    background: var(--accent-strong); color: #fff;
+    display: grid; place-items: center;
+    font: 700 14px/1 var(--font-ui);
+  }
+  .brand-sub { color: var(--text-3); font-weight: 400; }
+  .version {
+    font: 500 11.5px/1 var(--font-mono);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
     white-space: nowrap;
   }
-  header.top a.gh:hover { background: var(--surface-high); color: var(--on-surface); }
-  #menu-toggle {
-    display: none;
-    background: none; border: 1px solid var(--outline-variant); border-radius: 6px;
-    color: var(--on-surface); width: 36px; height: 36px; font-size: 18px; cursor: pointer;
+  .header-search { flex: 1; max-width: 420px; margin-left: 16px; position: relative; }
+  .header-spacer { flex: 1; }
+  .header-actions { display: flex; align-items: center; gap: 4px; }
+  .icon-btn {
+    height: 32px; min-width: 32px; padding: 0 8px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    color: var(--text-2); cursor: pointer; font-size: 13px;
   }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); text-decoration: none; }
+  .icon-btn svg { width: 16px; height: 16px; }
+  #menu-btn, #search-open-btn { display: none; }
 
-  /* --- Layout --- */
-  .layout { flex: 1; display: flex; max-width: 1280px; width: 100%; margin: 0 auto; }
-  nav.sidebar {
-    width: 240px;
-    flex-shrink: 0;
-    padding: 20px 12px;
-    border-right: 1px solid var(--outline-variant);
-  }
-  nav.sidebar .group-title {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--outline); padding: 14px 12px 6px;
-  }
-  nav.sidebar a {
-    display: block;
-    padding: 8px 12px;
+  /* ---------------- Search ---------------- */
+  .search-box {
+    display: flex; align-items: center; gap: 8px;
+    height: 34px; padding: 0 10px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    color: var(--on-surface-variant);
-    text-decoration: none;
-    font-size: 14px;
-    margin-bottom: 2px;
   }
-  nav.sidebar a:hover { background: var(--surface-container); color: var(--on-surface); }
-  nav.sidebar a.active { background: var(--primary-container); color: var(--on-primary); font-weight: 600; }
-
-  main {
-    flex: 1;
-    min-width: 0;
-    padding: 32px 40px 80px;
+  .search-box:focus-within { border-color: var(--accent-strong); }
+  .search-box svg { width: 15px; height: 15px; color: var(--text-3); flex-shrink: 0; }
+  .search-box input {
+    flex: 1; min-width: 0; height: 100%;
+    background: none; border: none; outline: none;
+    color: var(--text); font: 14px var(--font-ui);
   }
-  #content { max-width: 780px; }
-  #content.loading { opacity: .5; }
-
-  /* --- Markdown rendering --- */
-  #content h1 { font-family: var(--font-headline); font-size: 30px; margin: 0 0 6px; }
-  #content h2 { font-family: var(--font-headline); font-size: 21px; margin: 34px 0 12px; padding-top: 8px; border-top: 1px solid var(--outline-variant); }
-  #content h2:first-child { border-top: none; padding-top: 0; margin-top: 0; }
-  #content h3 { font-family: var(--font-headline); font-size: 16px; margin: 22px 0 8px; color: var(--on-surface); }
-  #content p, #content li { color: var(--on-surface-variant); }
-  #content a { color: var(--primary); }
-  #content strong { color: var(--on-surface); }
-  #content code {
-    font-family: var(--font-mono);
-    background: var(--surface-container);
+  .search-box input::placeholder { color: var(--text-3); }
+  kbd {
+    font: 11px/1 var(--font-mono);
+    color: var(--text-3);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
     border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 13px;
-    color: var(--success);
+    padding: 2px 5px;
   }
-  #content pre {
-    background: var(--surface-lowest) !important;
-    border: 1px solid var(--outline-variant);
+  .search-results {
+    position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+    min-width: 360px;
+    max-height: min(70vh, 520px); overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
-    padding: 14px 16px;
-    overflow-x: auto;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    padding: 6px;
+    display: none;
   }
-  #content pre code {
-    background: none;
-    padding: 0;
-    color: inherit;
+  .search-results.open { display: block; }
+  .search-status { padding: 10px 12px; color: var(--text-3); font-size: 13px; }
+  .search-hit {
+    display: block; padding: 8px 10px; border-radius: 6px; color: var(--text-2);
+    border-left: 2px solid transparent;
+  }
+  .search-hit:hover, .search-hit.active { background: var(--bg-hover); text-decoration: none; border-left-color: var(--accent-strong); }
+  .search-hit .hit-path { font-size: 12px; color: var(--text-3); }
+  .search-hit .hit-title { color: var(--text); font-weight: 600; font-size: 14px; }
+  .search-hit .hit-snippet { font-size: 13px; color: var(--text-2); margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .search-hit mark, .doc mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+  .search-foot { display: flex; gap: 12px; padding: 8px 10px 4px; border-top: 1px solid var(--border); margin-top: 6px; color: var(--text-3); font-size: 12px; }
+
+  /* ---------------- Layout ---------------- */
+  .shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+  .sidebar {
+    position: sticky; top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+    padding: 20px 12px 32px 16px;
+    border-right: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .nav-group { margin-bottom: 18px; }
+  .nav-group-title {
+    font-size: 12px; font-weight: 600; color: var(--text);
+    padding: 0 10px 6px;
+  }
+  .nav-link {
+    display: block;
+    padding: 5px 10px;
+    color: var(--text-2);
+    border-left: 2px solid var(--border);
+    line-height: 1.45;
+  }
+  .nav-link:hover { color: var(--text); text-decoration: none; border-left-color: var(--border-strong); background: var(--bg-hover); }
+  .nav-link[aria-current="page"] { color: var(--accent); border-left-color: var(--accent-strong); background: var(--accent-bg); font-weight: 500; }
+  .sidebar-foot { margin-top: 24px; padding: 12px 10px 0; border-top: 1px solid var(--border); color: var(--text-3); font-size: 12.5px; }
+  .sidebar-foot a { color: var(--text-2); }
+
+  main { min-width: 0; padding: 28px 48px 64px; }
+  .doc-wrap { max-width: 760px; margin: 0 auto; }
+
+  .toc {
+    position: sticky; top: var(--header-h);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+    padding: 28px 16px 32px 8px;
     font-size: 13px;
   }
-  #content table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
-  #content th, #content td { border: 1px solid var(--outline-variant); padding: 8px 12px; text-align: left; }
-  #content th { background: var(--surface-container); color: var(--on-surface); }
-  #content blockquote {
-    border-left: 3px solid var(--primary-container);
-    margin: 16px 0; padding: 4px 16px; color: var(--on-surface-variant);
-    background: var(--surface-container); border-radius: 0 6px 6px 0;
-  }
-  #content hr { border: none; border-top: 1px solid var(--outline-variant); margin: 28px 0; }
-  #content ul, #content ol { padding-left: 22px; }
-  #content img { max-width: 100%; border-radius: 8px; }
+  .toc-title { font-size: 12px; font-weight: 600; color: var(--text); margin: 0 0 8px; padding-left: 12px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc a { display: block; padding: 3px 0 3px 12px; color: var(--text-3); border-left: 1px solid var(--border); line-height: 1.4; }
+  .toc a:hover { color: var(--text); text-decoration: none; }
+  .toc a.depth-3 { padding-left: 24px; }
+  .toc a.active { color: var(--accent); border-left-color: var(--accent-strong); }
+  .toc-actions { margin-top: 20px; padding-left: 12px; display: grid; gap: 6px; }
+  .toc-actions a { color: var(--text-3); font-size: 12.5px; }
+  .toc-actions a:hover { color: var(--text); }
 
-  footer {
-    text-align: center;
-    padding: 24px;
-    font-size: 12px;
-    color: var(--outline);
-    border-top: 1px solid var(--outline-variant);
-  }
-  footer a { color: var(--on-surface-variant); }
+  /* ---------------- Article header ---------------- */
+  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+  .breadcrumb a { color: var(--text-3); }
+  .breadcrumb a:hover { color: var(--text); }
+  .breadcrumb .sep { opacity: 0.6; }
+  .breadcrumb [aria-current] { color: var(--text-2); }
 
-  @media (max-width: 860px) {
-    #menu-toggle { display: block; }
-    nav.sidebar {
-      position: fixed; top: 61px; left: 0; bottom: 0; width: 240px;
-      background: var(--surface); z-index: 15; overflow-y: auto;
-      transform: translateX(-100%); transition: transform .18s ease-out;
+  .inline-toc { display: none; margin: 0 0 24px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+  .inline-toc summary { cursor: pointer; padding: 8px 12px; color: var(--text-2); font-weight: 500; }
+  .inline-toc ol { list-style: none; margin: 0; padding: 0 12px 10px; }
+  .inline-toc a { display: block; padding: 3px 0; color: var(--text-2); }
+  .inline-toc a.depth-3 { padding-left: 14px; }
+
+  /* ---------------- Typography ---------------- */
+  .doc { color: var(--text-2); }
+  .doc h1, .doc h2, .doc h3, .doc h4 { color: var(--text); line-height: 1.3; position: relative; }
+  .doc h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 12px; }
+  .doc h2 { font-size: 21px; font-weight: 650; margin: 40px 0 12px; padding-top: 4px; }
+  .doc h3 { font-size: 16.5px; font-weight: 650; margin: 28px 0 8px; }
+  .doc h4 { font-size: 15px; font-weight: 650; margin: 22px 0 6px; }
+  .doc h1 + p { font-size: 16.5px; color: var(--text-2); margin-bottom: 24px; }
+  .doc p { margin: 0 0 14px; }
+  .doc ul, .doc ol { margin: 0 0 14px; padding-left: 22px; }
+  .doc li { margin: 4px 0; }
+  .doc li > ul, .doc li > ol { margin: 4px 0; }
+  .doc strong { color: var(--text); font-weight: 600; }
+  .doc hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .doc img { max-width: 100%; border: 1px solid var(--border); border-radius: 6px; }
+  .doc a.ext::after { content: "↗"; font-size: 0.8em; margin-left: 2px; opacity: 0.7; }
+  .hd-anchor {
+    position: absolute; left: -22px; top: 0;
+    padding-right: 6px;
+    color: var(--text-3); font-weight: 400;
+    opacity: 0;
+  }
+  .doc h2:hover .hd-anchor, .doc h3:hover .hd-anchor, .hd-anchor:focus { opacity: 1; text-decoration: none; }
+
+  .doc :not(pre) > code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    color: var(--text);
+    background: var(--inline-code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    overflow-wrap: anywhere;
+  }
+
+  /* Tabel padat (pola dokumentasi teknis), bisa digeser di layar sempit. */
+  .table-wrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--border); border-radius: 6px; }
+  .doc table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .doc th, .doc td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+  .doc th { color: var(--text); font-weight: 600; background: var(--bg-raised); white-space: nowrap; }
+  .doc tr:last-child td { border-bottom: none; }
+  .doc td:first-child { color: var(--text); }
+
+  .doc blockquote { margin: 0 0 18px; padding: 2px 16px; border-left: 3px solid var(--border-strong); color: var(--text-2); }
+
+  /* ---------------- Callout (sintaks GitHub `> [!NOTE]`) ---------------- */
+  .callout { margin: 0 0 18px; padding: 10px 14px 2px; border: 1px solid var(--border); border-left: 3px solid var(--c); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--c) 7%, transparent); }
+  .callout-title { margin: 0 0 4px !important; font-size: 12.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--c); text-transform: uppercase; }
+  .callout-note { --c: var(--note); }
+  .callout-tip { --c: var(--tip); }
+  .callout-important { --c: var(--important); }
+  .callout-warning { --c: var(--warning); }
+  .callout-caution { --c: var(--caution); }
+
+  /* ---------------- Code block ---------------- */
+  .cb { margin: 0 0 18px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); overflow: hidden; }
+  .cb-head {
+    display: flex; align-items: center; gap: 10px;
+    height: 34px; padding: 0 6px 0 12px;
+    border-bottom: 1px solid var(--border);
+    font: 12px/1 var(--font-mono);
+    color: var(--text-3);
+  }
+  .cb-lang { text-transform: lowercase; }
+  .cb-title { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cb-head .grow { flex: 1; }
+  .copy-btn {
+    height: 24px; padding: 0 8px;
+    display: inline-flex; align-items: center; gap: 5px;
+    background: none; border: 1px solid transparent; border-radius: 4px;
+    color: var(--text-3); cursor: pointer; font: 12px var(--font-ui);
+  }
+  .copy-btn:hover { color: var(--text); background: var(--bg-hover); border-color: var(--border); }
+  .copy-btn.done { color: var(--tip); }
+  .copy-btn svg { width: 13px; height: 13px; }
+  .cb pre { margin: 0; padding: 12px 0; overflow-x: auto; }
+  .cb code {
+    display: block; min-width: max-content;
+    font: 13px/1.6 var(--font-mono);
+    color: var(--code-text);
+    tab-size: 4;
+  }
+  .ln { display: block; padding: 0 16px; white-space: pre; min-height: 1.6em; }
+  .ln.cmd::before, .ln.prompted .pr { color: var(--hl-prompt); user-select: none; -webkit-user-select: none; }
+  .ln.cmd::before { content: attr(data-prompt); margin-right: 1ch; }
+  .ln.cont { padding-left: calc(16px + var(--pw, 2ch)); }
+  .ln.comment { color: var(--hl-comment); font-style: italic; }
+  .ln.out { color: var(--text-3); }
+  .tok-ip { color: var(--hl-ip); }
+  .tok-port { color: var(--hl-number); }
+
+  /* Token highlight.js (tema sendiri, ikut token gelap/terang). */
+  .hljs-keyword, .hljs-selector-tag, .hljs-doctag { color: var(--hl-keyword); }
+  .hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-string { color: var(--hl-string); }
+  .hljs-number, .hljs-literal { color: var(--hl-number); }
+  .hljs-comment, .hljs-quote { color: var(--hl-comment); font-style: italic; }
+  .hljs-title, .hljs-section, .hljs-title.function_ { color: var(--hl-title); }
+  .hljs-attr, .hljs-attribute, .hljs-property, .hljs-type { color: var(--hl-attr); }
+  .hljs-built_in, .hljs-symbol, .hljs-name { color: var(--hl-builtin); }
+  .hljs-variable, .hljs-template-variable, .hljs-deletion { color: var(--hl-variable); }
+  .hljs-meta, .hljs-meta .hljs-keyword, .hljs-params { color: var(--hl-meta); }
+  .hljs-emphasis { font-style: italic; }
+  .hljs-strong { font-weight: 700; }
+
+  /* ---------------- Tabs ---------------- */
+  .tabs { margin: 0 0 18px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-inset); overflow: hidden; }
+  .tablist { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  .tab {
+    flex-shrink: 0;
+    padding: 9px 14px 8px;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--text-3); cursor: pointer;
+    font: 13px var(--font-ui);
+  }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent-strong); }
+  .tabs .cb { margin: 0; border: none; border-radius: 0; }
+  .tabs .cb-head { display: none; }
+  .tabs-head { display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+  .tabs-head .tablist { flex: 1; min-width: 0; border-bottom: none; }
+  .tab-tools { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; flex-shrink: 0; font: 12px/1 var(--font-mono); color: var(--text-3); }
+  .tabpanel[hidden] { display: none; }
+
+  /* ---------------- Article footer ---------------- */
+  .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+  .pager a { display: block; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+  .pager a:hover { border-color: var(--accent-strong); text-decoration: none; }
+  .pager .label { display: block; font-size: 12px; color: var(--text-3); margin-bottom: 2px; }
+  .pager .next { text-align: right; grid-column: 2; }
+  .doc-meta { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; margin-top: 20px; font-size: 13px; color: var(--text-3); }
+  .doc-meta a { color: var(--text-3); }
+  .doc-meta a:hover { color: var(--text); }
+  .doc-meta code { font: 12.5px var(--font-mono); }
+
+  /* ---------------- States ---------------- */
+  .skeleton { display: grid; gap: 12px; padding-top: 8px; }
+  .skeleton span { display: block; height: 12px; border-radius: 3px; background: var(--bg-raised); }
+  .skeleton .h { height: 26px; width: 46%; margin-bottom: 12px; }
+  .state { border: 1px solid var(--border); border-radius: 6px; padding: 18px 20px; }
+  .state h1 { font-size: 22px !important; }
+  .state .actions { display: flex; gap: 8px; margin-top: 14px; }
+  .btn {
+    height: 32px; padding: 0 12px; display: inline-flex; align-items: center;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    background: var(--bg-raised); color: var(--text); cursor: pointer; font-size: 13.5px;
+  }
+  .btn:hover { border-color: var(--accent-strong); text-decoration: none; }
+
+  .site-footer { border-top: 1px solid var(--border); padding: 16px; font-size: 12.5px; color: var(--text-3); text-align: center; }
+  .site-footer a { color: var(--text-2); }
+
+  .scrim { display: none; }
+
+  /* ---------------- Responsive ---------------- */
+  @media (max-width: 1199px) {
+    .shell { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+    .toc { display: none; }
+    .inline-toc { display: block; }
+    main { padding: 24px 32px 56px; }
+  }
+  @media (max-width: 899px) {
+    .shell { grid-template-columns: minmax(0, 1fr); }
+    #menu-btn { display: inline-flex; }
+    .sidebar {
+      position: fixed; z-index: 40; left: 0; top: 0; bottom: 0; height: auto;
+      width: min(300px, 86vw);
+      background: var(--bg);
+      transform: translateX(-100%);
+      padding-top: 16px;
     }
-    nav.sidebar.open { transform: translateX(0); box-shadow: 8px 0 24px rgba(0,0,0,.4); }
-    main { padding: 24px 20px 60px; }
+    /* Animasi HANYA saat user menekan ☰/scrim — bukan saat lebar layar
+       melewati breakpoint (dulu sidebar sempat terlihat setengah jalan). */
+    body.nav-anim .sidebar { transition: transform 0.16s ease-out; }
+    .sidebar.open { transform: none; }
+    .scrim.open { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(0, 0, 0, 0.45); }
+    main { padding: 20px 16px 48px; }
+    .doc h1 { font-size: 25px; }
+    .hd-anchor { display: none; }
+    .version, .brand-sub { display: none; }
+  }
+  @media (max-width: 639px) {
+    .header-search { display: none; position: fixed; left: 0; right: 0; top: 0; height: var(--header-h); max-width: none; margin: 0; padding: 9px 12px; background: var(--bg); z-index: 50; border-bottom: 1px solid var(--border); }
+    .header-search.open { display: block; }
+    .search-results { position: fixed; top: calc(var(--header-h) + 4px); left: 8px; right: 8px; min-width: 0; max-height: calc(100vh - var(--header-h) - 16px); }
+    #search-open-btn { display: inline-flex; }
+    .header-spacer { display: block; }
+    .pager { grid-template-columns: 1fr; }
+    .pager .next { grid-column: 1; }
+    .search-box kbd { display: none; }
+  }
+  @media (min-width: 640px) { .header-spacer { display: none; } }
+  @media (prefers-reduced-motion: reduce) { body.nav-anim .sidebar { transition: none; } }
+  @media print {
+    .site-header, .sidebar, .toc, .pager, .copy-btn, .inline-toc, .site-footer { display: none !important; }
+    .shell { display: block; }
   }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#doc" id="skip-link">Lewati ke konten</a>
 
-<header class="top">
-  <button id="menu-toggle" aria-label="Buka navigasi">☰</button>
-  <a class="brand" href="#/">
-    <span class="logo">T</span>
-    <span>
-      <div class="name">Terminus</div>
-      <div class="tagline">Dokumentasi</div>
-    </span>
+<header class="site-header">
+  <button class="icon-btn" id="menu-btn" aria-label="Buka navigasi" aria-controls="sidebar" aria-expanded="false">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+  </button>
+  <a class="brand" href="#">
+    <span class="brand-mark" aria-hidden="true">T</span>
+    <span>Terminus <span class="brand-sub">Docs</span></span>
   </a>
-  <div class="spacer"></div>
-  <a class="gh" href="https://github.com/AhmadMuzayyin/terminus" target="_blank" rel="noopener">GitHub ↗</a>
+  <span class="version" title="Versi dokumentasi = versi kode di cabang main" id="version-badge"></span>
+
+  <div class="header-search" id="header-search" role="search">
+    <div class="search-box">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="search-input" type="search" placeholder="Cari dokumentasi" autocomplete="off" spellcheck="false"
+             aria-label="Cari dokumentasi" aria-controls="search-results" aria-autocomplete="list" />
+      <kbd>/</kbd>
+    </div>
+    <div class="search-results" id="search-results" role="listbox" aria-label="Hasil pencarian"></div>
+  </div>
+  <span class="header-spacer"></span>
+
+  <div class="header-actions">
+    <button class="icon-btn" id="search-open-btn" aria-label="Cari dokumentasi">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+    </button>
+    <button class="icon-btn" id="theme-btn" aria-label="Ganti tema terang/gelap" title="Ganti tema">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11" /><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/AhmadMuzayyin/terminus" target="_blank" rel="noopener" aria-label="Kode sumber di GitHub">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .2a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 .2"/></svg>
+    </a>
+  </div>
 </header>
 
-<div class="layout">
-  <nav class="sidebar" id="sidebar"></nav>
-  <main>
-    <div id="content" class="loading">Memuat…</div>
+<div class="scrim" id="scrim"></div>
+
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="Navigasi dokumentasi"></nav>
+
+  <main id="main">
+    <div class="doc-wrap">
+      <nav class="breadcrumb" id="breadcrumb" aria-label="Breadcrumb"></nav>
+      <article class="doc" id="doc" tabindex="-1" aria-live="polite"></article>
+      <nav class="pager" id="pager" aria-label="Halaman sebelumnya dan berikutnya"></nav>
+      <div class="doc-meta" id="doc-meta"></div>
+    </div>
   </main>
+
+  <aside class="toc" id="toc" aria-label="Di halaman ini"></aside>
 </div>
 
-<footer>
-  Terminus — dilisensikan di bawah <a href="https://github.com/AhmadMuzayyin/terminus/blob/main/Cargo.toml" target="_blank" rel="noopener">GPL-3.0-or-later</a>.
-  Sumber dokumentasi ini: <a href="https://github.com/AhmadMuzayyin/terminus/tree/main/docs" target="_blank" rel="noopener">docs/</a>.
+<footer class="site-footer">
+  Terminus · <a href="https://github.com/AhmadMuzayyin/terminus/blob/main/LICENSE-GPL-3" target="_blank" rel="noopener">GPL-3.0-or-later</a>
+  · Sumber: <a href="https://github.com/AhmadMuzayyin/terminus/tree/main/docs" target="_blank" rel="noopener">docs/</a>
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/powershell.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/routeros.min.js"></script>
 <script>
-  // Daftar halaman dokumentasi — TIAP section = satu folder + README.md
-  // sendiri (bukan satu file markdown raksasa) supaya gampang di-maintain
-  // terpisah DAN tetap kebaca rapi kalau folder-nya dibuka langsung lewat
-  // GitHub UI (auto-render README.md), bukan cuma lewat situs ini.
-  const PAGES = [
-    { slug: "", title: "Pengenalan", file: "README.md" },
-    { group: "Panduan" },
-    { slug: "getting-started", title: "Instalasi", file: "getting-started/README.md" },
-    { slug: "usage", title: "Menjalankan Aplikasi", file: "usage/README.md" },
-    { slug: "features", title: "Fitur", file: "features/README.md" },
-    { slug: "mobile", title: "Aplikasi Mobile (Android)", file: "mobile/README.md" },
-    { group: "Pengembangan" },
-    { slug: "architecture", title: "Arsitektur", file: "architecture/README.md" },
-    { slug: "testing", title: "Testing", file: "testing/README.md" },
-    { slug: "packaging", title: "Packaging & Rilis", file: "packaging/README.md" },
-    { group: "Proyek" },
-    { slug: "roadmap", title: "Status & Roadmap", file: "roadmap/README.md" },
-    { slug: "contributing", title: "Berkontribusi", file: "contributing/README.md" },
+(function () {
+  "use strict";
+
+  // ==================================================================
+  // Konfigurasi
+  // ==================================================================
+
+  // Versi kode yang didokumentasikan (workspace Cargo.toml, backend, &
+  // mobile sama). Proyek belum punya dokumentasi berversi — ini info.
+  const VERSION = "0.1.0";
+  const BRANCH = "main";
+  const REPO = "https://github.com/AhmadMuzayyin/terminus";
+
+  // Daftar halaman. Tiap halaman = satu folder + README.md, supaya juga
+  // terbaca rapi kalau foldernya dibuka langsung di GitHub. `slug` = route
+  // (`#slug`, anchor bagian: `#slug:bagian`) — jangan diubah tanpa alias.
+  const NAV = [
+    { title: "Pengenalan", pages: [
+      { slug: "", title: "Pengenalan", file: "README.md" },
+    ] },
+    { title: "Memulai", pages: [
+      { slug: "getting-started", title: "Instalasi", file: "getting-started/README.md" },
+      { slug: "usage", title: "Menjalankan Aplikasi", file: "usage/README.md" },
+    ] },
+    { title: "Panduan", pages: [
+      { slug: "features", title: "Fitur", file: "features/README.md" },
+      { slug: "mobile", title: "Aplikasi Mobile (Android)", file: "mobile/README.md" },
+    ] },
+    { title: "Pengembangan", pages: [
+      { slug: "architecture", title: "Arsitektur", file: "architecture/README.md" },
+      { slug: "testing", title: "Testing", file: "testing/README.md" },
+      { slug: "packaging", title: "Packaging & Rilis", file: "packaging/README.md" },
+    ] },
+    { title: "Proyek", pages: [
+      { slug: "roadmap", title: "Status & Roadmap", file: "roadmap/README.md" },
+      { slug: "contributing", title: "Berkontribusi", file: "contributing/README.md" },
+    ] },
   ];
+  const PAGES = NAV.flatMap((g) => g.pages.map((p) => Object.assign({ group: g.title }, p)));
 
-  const sidebar = document.getElementById("sidebar");
-  const content = document.getElementById("content");
-  const menuToggle = document.getElementById("menu-toggle");
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    sidebar: $("sidebar"), scrim: $("scrim"), menuBtn: $("menu-btn"),
+    doc: $("doc"), crumb: $("breadcrumb"), pager: $("pager"), meta: $("doc-meta"), toc: $("toc"),
+    searchWrap: $("header-search"), searchInput: $("search-input"), searchResults: $("search-results"),
+    searchOpen: $("search-open-btn"), themeBtn: $("theme-btn"),
+  };
+  $("version-badge").textContent = "v" + VERSION;
 
-  function buildSidebar(activeSlug) {
-    sidebar.innerHTML = "";
-    for (const p of PAGES) {
-      if (p.group) {
-        const g = document.createElement("div");
-        g.className = "group-title";
-        g.textContent = p.group;
-        sidebar.appendChild(g);
-        continue;
+  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const entityBox = document.createElement("textarea");
+  const decodeEntities = (s) => { entityBox.innerHTML = s; return entityBox.value; };
+  const pageHref = (slug, anchor) => "#" + slug + (anchor ? ":" + anchor : "");
+
+  function slugify(text, used) {
+    let base = text.toLowerCase()
+      .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&[a-z]+;/g, "")
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim().replace(/\s+/g, "-").replace(/-+/g, "-") || "bagian";
+    let id = base, n = 2;
+    while (used.has(id)) id = base + "-" + n++;
+    used.add(id);
+    return id;
+  }
+
+  // ==================================================================
+  // Bahasa perangkat jaringan untuk highlight.js
+  // (MikroTik = `routeros` bawaan highlight.js; Cisco & Huawei di sini)
+  // ==================================================================
+  const IPV4 = { className: "number", begin: /\b\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?\b/ };
+  const IFACE = { className: "built_in", begin: /\b(?:(?:Gigabit|TenGigabit|Fast|HundredGig|FortyGig|TwentyFiveGig)?Ethernet|GE|XGE|Eth-Trunk|Vlanif|Vlan|Loopback|Tunnel|Port-channel|Serial|MEth|NULL)\s?\d+(?:[\/.:]\d+)*\b/i };
+  hljs.registerLanguage("cisco", function () {
+    return {
+      name: "Cisco IOS", aliases: ["ios", "cisco-ios", "iosxe", "nxos"], case_insensitive: true,
+      keywords: {
+        keyword: "interface ip ipv6 address no shutdown description hostname username password secret enable line vty con aux transport input output login local router ospf bgp eigrp rip network neighbor remote-as area switchport mode access trunk allowed vlan native spanning-tree service crypto key generate rsa modulus ssh version timeout authentication-retries domain-name access-list permit deny any host route default-gateway name-server logging snmp-server ntp server banner motd end exit write memory copy running-config startup-config show run terminal length configure",
+        literal: "enable disable",
+      },
+      contains: [hljs.COMMENT(/^\s*!/, /$/), IPV4, IFACE, hljs.QUOTE_STRING_MODE, { className: "number", begin: /\b\d+\b/ }],
+    };
+  });
+  hljs.registerLanguage("huawei", function () {
+    return {
+      name: "Huawei VRP", aliases: ["vrp", "huawei-vrp"], case_insensitive: true,
+      keywords: {
+        keyword: "sysname interface ip address undo shutdown description user-interface vty authentication-mode aaa local-user password cipher irreversible-cipher privilege level service-type protocol inbound stelnet ssh telnet sftp server enable rsa local-key-pair create vlan batch port link-type access trunk default allow-pass ospf area network bgp peer as-number route-static display current-configuration save return quit system-view acl rule permit deny source destination",
+      },
+      contains: [hljs.COMMENT(/^\s*#/, /$/), IPV4, IFACE, hljs.QUOTE_STRING_MODE, { className: "number", begin: /\b\d+\b/ }],
+    };
+  });
+
+  const LANG_ALIASES = { sh: "bash", shell: "bash", zsh: "bash", ps: "powershell", ps1: "powershell", pwsh: "powershell", mikrotik: "routeros", txt: "plaintext", text: "plaintext", plain: "plaintext" };
+  // Blok "skrip perintah": tiap baris = perintah (prompt digambar, tidak ikut tersalin).
+  const SCRIPT_LANGS = { bash: "$", powershell: "PS>", cmd: ">", bat: ">" };
+  // Blok "sesi terminal": baris berprompt = perintah, sisanya output.
+  const SESSION_LANGS = new Set(["console", "terminal", "shell-session"]);
+  const DEVICE_LANGS = new Set(["cisco", "huawei", "routeros"]);
+  // Prompt shell & perangkat jaringan: `$ `, `# `, `PS C:\> `, `user@host:~$ `,
+  // `Router#`, `Router(config-if)#`, `<Huawei>`, `[Huawei-GigabitEthernet0/0/1]`,
+  // `[admin@MikroTik] >`.
+  const PROMPT_RE = /^(\$ |# |> |PS [^>]*> ?|[\w.-]+@[\w.-]+:[^$#\s]*[$#] ?|[A-Za-z][\w.-]*(?:\([\w-]+\))?[>#] ?|<[\w.-]+> ?|\[[\w.@~\/: -]+\] ?[>#$]? ?)/;
+
+  function highlightLine(text, lang) {
+    if (!text) return "";
+    if (lang && hljs.getLanguage(lang)) {
+      try { return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch (e) {}
+    }
+    return escapeHtml(text);
+  }
+
+  // Sorot alamat IP & port di teks output (yang paling sering dicari mata
+  // di dokumentasi jaringan). Input sudah di-escape.
+  function markNetTokens(html) {
+    return html.replace(/\b(\d{1,3}(?:\.\d{1,3}){3})(\/\d{1,2})?(:\d{1,5})?\b/g, function (_, ip, mask, port) {
+      return '<span class="tok-ip">' + ip + (mask || "") + "</span>" + (port ? '<span class="tok-port">' + port + "</span>" : "");
+    });
+  }
+
+  // ==================================================================
+  // Markdown -> HTML
+  // ==================================================================
+  let codeStore = [];
+  let headingIds = new Set();
+
+  const CALLOUTS = {
+    NOTE: ["note", "Catatan"], TIP: ["tip", "Tips"], IMPORTANT: ["important", "Penting"],
+    WARNING: ["warning", "Peringatan"], CAUTION: ["caution", "Hati-hati"],
+  };
+
+  marked.use({
+    gfm: true,
+    renderer: {
+      code(code, infostring) {
+        const info = (infostring || "").trim();
+        const rawLang = (info.match(/^[^\s{]+/) || [""])[0].toLowerCase();
+        const attrs = {};
+        info.replace(/(\w+)="([^"]*)"/g, function (_, k, v) { attrs[k] = v; return ""; });
+        const i = codeStore.push({ code: code.replace(/\n$/, ""), lang: rawLang, title: attrs.title || "", tab: attrs.tab || "" }) - 1;
+        return '<div class="cb-slot" data-i="' + i + '"></div>';
+      },
+      heading(text, level, raw) {
+        if (level === 1) return "<h1>" + text + "</h1>";
+        const id = slugify(decodeEntities(raw).replace(/`/g, ""), headingIds);
+        const anchor = '<a class="hd-anchor" href="' + pageHref(currentPage.slug, id) + '" aria-label="Tautan ke bagian ini">#</a>';
+        return "<h" + level + ' id="' + id + '">' + anchor + text + "</h" + level + ">";
+      },
+      blockquote(quote) {
+        const m = quote.match(/^\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
+        if (!m) return "<blockquote>" + quote + "</blockquote>";
+        const c = CALLOUTS[m[1].toUpperCase()];
+        let body = quote.slice(m[0].length);
+        body = body.startsWith("</p>") ? body.slice(4) : "<p>" + body;
+        return '<aside class="callout callout-' + c[0] + '" role="note"><p class="callout-title">' + c[1] + "</p>" + body + "</aside>";
+      },
+      table(header, body) {
+        return '<div class="table-wrap"><table><thead>' + header + "</thead><tbody>" + body + "</tbody></table></div>";
+      },
+      link(href, title, text) {
+        const external = /^https?:\/\//.test(href || "");
+        const t = title ? ' title="' + escapeHtml(title) + '"' : "";
+        if (external) return '<a class="ext" href="' + escapeHtml(href) + '"' + t + ' target="_blank" rel="noopener">' + text + "</a>";
+        return '<a href="' + escapeHtml(href) + '"' + t + ">" + text + "</a>";
+      },
+    },
+  });
+
+  // ==================================================================
+  // Code block
+  // ==================================================================
+  const COPY_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10.5 5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5H5"/></svg>';
+
+  function buildCodeBlock(entry) {
+    const lang = LANG_ALIASES[entry.lang] || entry.lang;
+    const lines = entry.code.split("\n");
+    let copyText = entry.code;
+    const out = [];
+
+    if (SCRIPT_LANGS[lang]) {
+      const prompt = SCRIPT_LANGS[lang];
+      let continued = false;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) { out.push('<span class="ln"></span>'); continued = false; continue; }
+        if (!continued && /^(#|REM\b|::)/i.test(trimmed) && !trimmed.startsWith("#!")) {
+          out.push('<span class="ln comment">' + escapeHtml(line) + "</span>");
+          continue;
+        }
+        const html = highlightLine(line, lang === "cmd" || lang === "bat" ? "" : lang);
+        if (continued) out.push('<span class="ln cont">' + html + "</span>");
+        else out.push('<span class="ln cmd" data-prompt="' + escapeHtml(prompt) + '">' + html + "</span>");
+        continued = /\\$|`$/.test(line);
       }
-      const a = document.createElement("a");
-      a.href = "#" + p.slug;
-      a.textContent = p.title;
-      if (p.slug === activeSlug) a.classList.add("active");
-      sidebar.appendChild(a);
+    } else if (SESSION_LANGS.has(lang) || DEVICE_LANGS.has(lang)) {
+      // Sesi: baris berprompt = perintah (prompt tidak ikut tersalin);
+      // baris lain = output. Blok perangkat TANPA prompt = konfigurasi.
+      const commands = [];
+      const hasPrompt = lines.some((l) => PROMPT_RE.test(l));
+      const cmdLang = DEVICE_LANGS.has(lang) ? lang : "bash";
+      for (const line of lines) {
+        const m = hasPrompt ? line.match(PROMPT_RE) : null;
+        if (m) {
+          const cmd = line.slice(m[0].length);
+          commands.push(cmd);
+          out.push('<span class="ln prompted"><span class="pr">' + escapeHtml(m[0]) + "</span>" + highlightLine(cmd, cmdLang) + "</span>");
+        } else if (!hasPrompt && DEVICE_LANGS.has(lang)) {
+          out.push('<span class="ln">' + (line ? highlightLine(line, lang) : "") + "</span>");
+        } else {
+          out.push('<span class="ln out">' + markNetTokens(escapeHtml(line)) + "</span>");
+        }
+      }
+      if (hasPrompt) copyText = commands.join("\n");
+    } else if (lang === "plaintext" || !lang) {
+      for (const line of lines) out.push('<span class="ln">' + markNetTokens(escapeHtml(line)) + "</span>");
+    } else {
+      let html;
+      try {
+        html = hljs.getLanguage(lang) ? hljs.highlight(entry.code, { language: lang, ignoreIllegals: true }).value : escapeHtml(entry.code);
+      } catch (e) { html = escapeHtml(entry.code); }
+      // Pecah per baris (span highlight multi-baris ditutup-buka ulang).
+      const open = [];
+      for (const line of html.split("\n")) {
+        const prefix = open.join("");
+        const tags = line.match(/<span[^>]*>|<\/span>/g) || [];
+        for (const t of tags) { if (t === "</span>") open.pop(); else open.push(t); }
+        out.push('<span class="ln">' + prefix + line + "</span>".repeat(open.length) + "</span>");
+      }
     }
+
+    const fig = document.createElement("figure");
+    fig.className = "cb";
+    fig.dataset.lang = lang || "text";
+    const label = { bash: "bash", powershell: "powershell", plaintext: "text", routeros: "mikrotik routeros", cisco: "cisco ios", huawei: "huawei vrp", console: "terminal" }[lang] || lang || "text";
+    fig.innerHTML =
+      '<div class="cb-head"><span class="cb-lang">' + escapeHtml(label) + "</span>" +
+      (entry.title ? '<span class="cb-title">' + escapeHtml(entry.title) + "</span>" : "") +
+      '<span class="grow"></span><button class="copy-btn" type="button" aria-label="Salin kode">' + COPY_ICON + "<span>Salin</span></button></div>" +
+      "<pre><code>" + out.join("") + "</code></pre>";
+    const pw = (SCRIPT_LANGS[lang] || "").length + 1;
+    fig.style.setProperty("--pw", pw + "ch");
+    fig.dataset.label = label;
+    fig._copyText = copyText;
+    fig.querySelector(".copy-btn").addEventListener("click", function () { copyToClipboard(copyText, this); });
+    return fig;
   }
 
-  function findPage(slug) {
-    return PAGES.find((p) => !p.group && p.slug === slug);
-  }
-
-  marked.setOptions({ gfm: true, breaks: false });
-
-  async function loadPage() {
-    const slug = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
-    const page = findPage(slug) || PAGES.find((p) => !p.group);
-    buildSidebar(page.slug);
-    content.classList.add("loading");
+  async function copyToClipboard(text, btn) {
+    let ok = false;
     try {
-      const res = await fetch(page.file, { cache: "no-cache" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const md = await res.text();
-      content.innerHTML = marked.parse(md);
-      content.querySelectorAll("pre code").forEach((block) => hljs.highlightElement(block));
-      document.title = (page.title === "Pengenalan" ? "Terminus" : page.title + " — Terminus") + " — Dokumentasi";
-      window.scrollTo(0, 0);
-    } catch (err) {
-      content.innerHTML =
-        "<h1>Gagal memuat halaman</h1><p>Tidak bisa mengambil <code>" +
-        page.file +
-        "</code>: " +
-        String(err.message || err) +
-        "</p>";
-    } finally {
-      content.classList.remove("loading");
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
+    } catch (e) {}
+    if (!ok) {
+      // Fallback untuk http:// di jaringan lokal (Clipboard API butuh konteks aman).
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      ta.remove();
     }
-    sidebar.classList.remove("open");
+    const label = btn.querySelector("span");
+    btn.classList.toggle("done", ok);
+    label.textContent = ok ? "Tersalin" : "Gagal menyalin";
+    clearTimeout(btn._t);
+    btn._t = setTimeout(function () { btn.classList.remove("done"); label.textContent = "Salin"; }, 1600);
   }
 
-  window.addEventListener("hashchange", loadPage);
-  menuToggle.addEventListener("click", () => sidebar.classList.toggle("open"));
-  loadPage();
+  // Blok kode berurutan yang punya `tab="..."` digabung jadi satu tab group.
+  // Pilihan tab tersinkron antar group dengan label sama & diingat.
+  function getTabPref() { try { return localStorage.getItem("docs-tab") || ""; } catch (e) { return ""; } }
+  function setTabPref(v) { try { localStorage.setItem("docs-tab", v); } catch (e) {} }
+
+  function mountCodeBlocks(root) {
+    const slots = Array.from(root.querySelectorAll(".cb-slot"));
+    let groupId = 0;
+    let i = 0;
+    while (i < slots.length) {
+      const entry = codeStore[+slots[i].dataset.i];
+      if (!entry.tab) { slots[i].replaceWith(buildCodeBlock(entry)); i++; continue; }
+      // Kumpulkan slot bertab yang bersebelahan langsung (tanpa elemen lain di antaranya).
+      const group = [slots[i]];
+      let j = i + 1;
+      while (j < slots.length && codeStore[+slots[j].dataset.i].tab && group[group.length - 1].nextElementSibling === slots[j]) {
+        group.push(slots[j]); j++;
+      }
+      const gid = "tg" + groupId++;
+      const box = document.createElement("div");
+      box.className = "tabs";
+      const head = document.createElement("div");
+      head.className = "tabs-head";
+      const list = document.createElement("div");
+      list.className = "tablist"; list.setAttribute("role", "tablist");
+      const tools = document.createElement("div");
+      tools.className = "tab-tools";
+      tools.innerHTML = '<span class="tab-lang"></span><button class="copy-btn" type="button" aria-label="Salin kode tab ini">' + COPY_ICON + "<span>Salin</span></button>";
+      head.appendChild(list); head.appendChild(tools);
+      box.appendChild(head);
+      tools.querySelector(".copy-btn").addEventListener("click", function () {
+        const fig = box.querySelector(".tabpanel:not([hidden]) figure.cb");
+        if (fig) copyToClipboard(fig._copyText, this);
+      });
+      const pref = getTabPref();
+      let selected = group.findIndex((s) => codeStore[+s.dataset.i].tab === pref);
+      if (selected < 0) selected = 0;
+      group.forEach(function (slot, k) {
+        const e = codeStore[+slot.dataset.i];
+        const btn = document.createElement("button");
+        btn.className = "tab"; btn.type = "button"; btn.setAttribute("role", "tab");
+        btn.id = gid + "-t" + k; btn.setAttribute("aria-controls", gid + "-p" + k);
+        btn.setAttribute("aria-selected", String(k === selected)); btn.tabIndex = k === selected ? 0 : -1;
+        btn.textContent = e.tab; btn.dataset.tab = e.tab;
+        list.appendChild(btn);
+        const panel = document.createElement("div");
+        panel.className = "tabpanel"; panel.id = gid + "-p" + k; panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", btn.id); panel.hidden = k !== selected;
+        panel.appendChild(buildCodeBlock(e));
+        box.appendChild(panel);
+      });
+      tools.querySelector(".tab-lang").textContent = box.querySelector(".tabpanel:not([hidden]) figure.cb").dataset.label;
+      group[0].replaceWith(box);
+      group.slice(1).forEach((s) => s.remove());
+      i = j;
+    }
+  }
+
+  function selectTab(label) {
+    document.querySelectorAll(".tabs").forEach(function (box) {
+      const tabs = Array.from(box.querySelectorAll(".tab"));
+      const idx = tabs.findIndex((t) => t.dataset.tab === label);
+      if (idx < 0) return;
+      tabs.forEach(function (t, k) {
+        t.setAttribute("aria-selected", String(k === idx)); t.tabIndex = k === idx ? 0 : -1;
+        $(t.getAttribute("aria-controls")).hidden = k !== idx;
+      });
+      const fig = box.querySelector(".tabpanel:not([hidden]) figure.cb");
+      if (fig) box.querySelector(".tab-lang").textContent = fig.dataset.label;
+    });
+  }
+  document.addEventListener("click", function (e) {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    setTabPref(tab.dataset.tab);
+    selectTab(tab.dataset.tab);
+  });
+  document.addEventListener("keydown", function (e) {
+    const tab = e.target.closest && e.target.closest(".tab");
+    if (!tab || (e.key !== "ArrowRight" && e.key !== "ArrowLeft")) return;
+    const tabs = Array.from(tab.parentElement.children);
+    const next = tabs[(tabs.indexOf(tab) + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    next.focus(); next.click();
+  });
+
+  // ==================================================================
+  // Navigasi & halaman
+  // ==================================================================
+  let currentPage = PAGES[0];
+  const mdCache = new Map();
+
+  function parseRoute() {
+    let h = location.hash.slice(1);
+    try { h = decodeURIComponent(h); } catch (e) {}
+    h = h.replace(/^\/+/, "");
+    const k = h.indexOf(":");
+    return { slug: k < 0 ? h : h.slice(0, k), anchor: k < 0 ? "" : h.slice(k + 1) };
+  }
+
+  function renderSidebar() {
+    let html = "";
+    for (const g of NAV) {
+      html += '<div class="nav-group">';
+      if (g.title !== "Pengenalan") html += '<div class="nav-group-title">' + escapeHtml(g.title) + "</div>";
+      for (const p of g.pages) {
+        const cur = currentPage && p.slug === currentPage.slug && !currentPage.notFound;
+        html += '<a class="nav-link" href="' + pageHref(p.slug) + '"' + (cur ? ' aria-current="page"' : "") + ">" + escapeHtml(p.title) + "</a>";
+      }
+      html += "</div>";
+    }
+    html += '<div class="sidebar-foot">Dokumentasi untuk Terminus <strong>' + VERSION + "</strong> (cabang <code>" + BRANCH + '</code>).<br><a class="ext" href="' + REPO + '/issues" target="_blank" rel="noopener">Laporkan masalah</a></div>';
+    els.sidebar.innerHTML = html;
+  }
+
+  function renderChrome(page) {
+    if (page.notFound) {
+      els.crumb.innerHTML = '<a href="#">Dokumentasi</a>';
+      els.pager.innerHTML = ""; els.meta.innerHTML = "";
+      return;
+    }
+    const parts = ['<a href="#">Dokumentasi</a>'];
+    if (page.slug) parts.push('<span class="sep">/</span><span>' + escapeHtml(page.group) + "</span>");
+    parts.push('<span class="sep">/</span><span aria-current="page">' + escapeHtml(page.title) + "</span>");
+    els.crumb.innerHTML = page.slug ? parts.join("") : '<span aria-current="page">Dokumentasi</span>';
+
+    const idx = PAGES.indexOf(page);
+    const prev = PAGES[idx - 1], next = PAGES[idx + 1];
+    els.pager.innerHTML =
+      (prev ? '<a class="prev" href="' + pageHref(prev.slug) + '"><span class="label">← Sebelumnya</span>' + escapeHtml(prev.title) + "</a>" : "") +
+      (next ? '<a class="next" href="' + pageHref(next.slug) + '"><span class="label">Berikutnya →</span>' + escapeHtml(next.title) + "</a>" : "");
+    els.meta.innerHTML =
+      '<span>Sumber: <code>docs/' + escapeHtml(page.file) + "</code></span>" +
+      '<a class="ext" href="' + REPO + "/edit/" + BRANCH + "/docs/" + page.file + '" target="_blank" rel="noopener">Edit halaman ini</a>';
+  }
+
+  function renderToc(page) {
+    // Dari DOM (bukan teks mentah markdown) supaya `&`, kutip, dan kode
+    // inline tampil persis seperti di judul bagiannya.
+    const items = Array.from(els.doc.querySelectorAll("h2[id], h3[id]")).map((h) => ({
+      id: h.id, level: +h.tagName[1], text: h.textContent.replace(/^#/, "").trim(),
+    }));
+    if (items.length < 2) { els.toc.innerHTML = ""; return ""; }
+    const list = "<ol>" + items.map((h) => '<li><a class="depth-' + h.level + '" href="' + pageHref(page.slug, h.id) + '" data-id="' + h.id + '">' + escapeHtml(h.text) + "</a></li>").join("") + "</ol>";
+    els.toc.innerHTML = '<p class="toc-title">Di halaman ini</p>' + list +
+      '<div class="toc-actions"><a href="#" data-top>↑ Kembali ke atas</a><a class="ext" href="' + REPO + "/edit/" + BRANCH + "/docs/" + page.file + '" target="_blank" rel="noopener">Edit di GitHub</a></div>';
+    return items.length >= 3 ? '<details class="inline-toc"><summary>Di halaman ini</summary>' + list + "</details>" : "";
+  }
+
+  let spy = null;
+  function startScrollSpy() {
+    if (spy) spy.disconnect();
+    const links = Array.from(els.toc.querySelectorAll("a[data-id]"));
+    if (!links.length || !("IntersectionObserver" in window)) return;
+    const visible = new Map();
+    spy = new IntersectionObserver(function (entries) {
+      entries.forEach((e) => visible.set(e.target.id, e.isIntersecting));
+      const firstVisible = links.find((a) => visible.get(a.dataset.id));
+      if (!firstVisible) return;
+      links.forEach((a) => a.classList.toggle("active", a === firstVisible));
+    }, { rootMargin: "-56px 0px -70% 0px" });
+    links.forEach((a) => { const h = $(a.dataset.id); if (h) spy.observe(h); });
+  }
+
+  function showLoading() {
+    els.doc.innerHTML = '<div class="skeleton" aria-label="Memuat"><span class="h"></span><span style="width:92%"></span><span style="width:86%"></span><span style="width:64%"></span><span style="width:90%;margin-top:14px"></span><span style="width:78%"></span></div>';
+  }
+
+  function showError(page, err) {
+    els.doc.innerHTML =
+      '<div class="state"><h1>Halaman gagal dimuat</h1><p>Tidak bisa mengambil <code>docs/' + escapeHtml(page.file) + "</code> (" + escapeHtml(err.message || err) +
+      "). Periksa koneksi, lalu coba lagi.</p>" +
+      '<div class="actions"><button class="btn" type="button" id="retry-btn">Coba lagi</button><a class="btn ext" href="' + REPO + "/blob/" + BRANCH + "/docs/" + page.file + '" target="_blank" rel="noopener">Buka di GitHub</a></div></div>';
+    $("retry-btn").addEventListener("click", function () { mdCache.delete(page.file); route(true); });
+  }
+
+  function showNotFound(slug) {
+    els.doc.innerHTML =
+      '<div class="state"><h1>Halaman tidak ditemukan</h1><p>Tidak ada halaman dokumentasi <code>#' + escapeHtml(slug) + "</code>. Mungkin tautannya sudah lama atau salah ketik.</p>" +
+      "<ul>" + PAGES.map((p) => '<li><a href="' + pageHref(p.slug) + '">' + escapeHtml(p.title) + "</a></li>").join("") + "</ul>" +
+      '<div class="actions"><a class="btn" href="#">Ke halaman utama</a></div></div>';
+    els.toc.innerHTML = "";
+  }
+
+  function fetchMarkdown(file) {
+    if (!mdCache.has(file)) {
+      mdCache.set(file, fetch(file, { cache: "no-cache" }).then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.text();
+      }).catch(function (e) { mdCache.delete(file); throw e; }));
+    }
+    return mdCache.get(file);
+  }
+
+  function scrollToAnchor(anchor, smooth) {
+    const target = anchor ? $(anchor) : null;
+    if (target) target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+    else window.scrollTo(0, 0);
+  }
+
+  let renderedSlug = null;
+  async function route(force) {
+    const r = parseRoute();
+    const page = PAGES.find((p) => p.slug === r.slug);
+    closeSidebar();
+
+    if (!page) {
+      currentPage = { slug: r.slug, notFound: true, title: "Tidak ditemukan" };
+      renderedSlug = null;
+      renderSidebar(); renderChrome(currentPage); showNotFound(r.slug);
+      document.title = "Halaman tidak ditemukan — Terminus Docs";
+      return;
+    }
+    // Pindah bagian di halaman yang sama: cukup gulir.
+    if (!force && renderedSlug === page.slug) { scrollToAnchor(r.anchor, true); return; }
+
+    currentPage = page;
+    renderSidebar(); renderChrome(page);
+    showLoading();
+    els.toc.innerHTML = "";
+    try {
+      const md = await fetchMarkdown(page.file);
+      if (currentPage !== page) return; // sudah pindah halaman lagi
+      codeStore = []; headingIds = new Set();
+      els.doc.innerHTML = marked.parse(md);
+      const inlineToc = renderToc(page);
+      if (inlineToc) {
+        const h1 = els.doc.querySelector("h1");
+        const lead = h1 && h1.nextElementSibling && h1.nextElementSibling.tagName === "P" ? h1.nextElementSibling : h1;
+        if (lead) lead.insertAdjacentHTML("afterend", inlineToc);
+      }
+      mountCodeBlocks(els.doc);
+      renderedSlug = page.slug;
+      document.title = (page.slug ? page.title + " — " : "") + "Terminus Docs";
+      startScrollSpy();
+      scrollToAnchor(r.anchor, false);
+    } catch (err) {
+      renderedSlug = null;
+      showError(page, err);
+    }
+  }
+
+  els.toc.addEventListener("click", function (e) {
+    if (e.target.closest("[data-top]")) { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  });
+
+  // ---- Sidebar mobile ----
+  let animTimer = 0;
+  function animateNav() {
+    document.body.classList.add("nav-anim");
+    clearTimeout(animTimer);
+    animTimer = setTimeout(() => document.body.classList.remove("nav-anim"), 250);
+  }
+  function openSidebar() { animateNav(); els.sidebar.classList.add("open"); els.scrim.classList.add("open"); els.menuBtn.setAttribute("aria-expanded", "true"); }
+  function closeSidebar() { els.sidebar.classList.remove("open"); els.scrim.classList.remove("open"); els.menuBtn.setAttribute("aria-expanded", "false"); }
+  els.menuBtn.addEventListener("click", function () { if (els.sidebar.classList.contains("open")) { animateNav(); closeSidebar(); } else openSidebar(); });
+  els.scrim.addEventListener("click", function () { animateNav(); closeSidebar(); });
+
+  // ---- Tema ----
+  els.themeBtn.addEventListener("click", function () {
+    const root = document.documentElement;
+    const isLight = root.dataset.theme ? root.dataset.theme === "light" : matchMedia("(prefers-color-scheme: light)").matches;
+    root.dataset.theme = isLight ? "dark" : "light";
+    try { localStorage.setItem("docs-theme", root.dataset.theme); } catch (e) {}
+  });
+
+  // ==================================================================
+  // Pencarian (full-text semua halaman, sampai level heading)
+  // ==================================================================
+  let index = null, indexPromise = null, hits = [], activeHit = -1;
+
+  function plainText(tokens) {
+    let s = "";
+    (tokens || []).forEach(function (t) {
+      if (t.type === "code") s += " " + t.text;
+      else if (t.type === "table") {
+        s += " " + t.header.map((c) => c.text).join(" ");
+        t.rows.forEach((r) => (s += " " + r.map((c) => c.text).join(" ")));
+      } else if (t.tokens) s += " " + plainText(t.tokens);
+      else if (t.items) s += " " + t.items.map((it) => plainText(it.tokens)).join(" ");
+      else if (t.text) s += " " + t.text;
+    });
+    return decodeEntities(s).replace(/\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/g, "").replace(/[*_`>#|]/g, " ").replace(/\s+/g, " ");
+  }
+
+  function buildIndex() {
+    if (indexPromise) return indexPromise;
+    indexPromise = Promise.all(PAGES.map(function (page) {
+      return fetchMarkdown(page.file).then(function (md) {
+        const used = new Set();
+        const sections = [];
+        let cur = { page: page, heading: page.title, id: "", buf: [] };
+        marked.lexer(md).forEach(function (t) {
+          if (t.type === "heading" && t.depth >= 2) {
+            sections.push(cur);
+            const headText = decodeEntities(t.text).replace(/`/g, "");
+            cur = { page: page, heading: headText, id: slugify(headText, used), buf: [] };
+          } else if (!(t.type === "heading" && t.depth === 1)) {
+            cur.buf.push(t);
+          }
+        });
+        sections.push(cur);
+        return sections.map((s) => ({ page: s.page, heading: s.heading, id: s.id, text: plainText(s.buf).trim() }));
+      });
+    })).then(function (all) { index = all.flat(); return index; })
+      .catch(function (e) { indexPromise = null; throw e; });
+    return indexPromise;
+  }
+
+  function search(q) {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const res = [];
+    for (const s of index) {
+      const title = s.page.title.toLowerCase(), head = s.heading.toLowerCase(), text = s.text.toLowerCase();
+      let score = 0, ok = true;
+      for (const w of words) {
+        const inHead = head.includes(w), inTitle = title.includes(w), inText = text.includes(w);
+        if (!inHead && !inTitle && !inText) { ok = false; break; }
+        score += (inHead ? 8 : 0) + (inTitle ? 4 : 0) + (inText ? 1 : 0);
+      }
+      if (ok) res.push({ s: s, score: score });
+    }
+    res.sort((a, b) => b.score - a.score);
+    return res.slice(0, 12).map((r) => r.s);
+  }
+
+  function highlightWords(text, words) {
+    let html = escapeHtml(text);
+    words.forEach(function (w) {
+      const re = new RegExp("(" + escapeHtml(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig");
+      html = html.replace(re, "<mark>$1</mark>");
+    });
+    return html;
+  }
+
+  function snippet(text, words) {
+    const lower = text.toLowerCase();
+    let at = -1;
+    for (const w of words) { const k = lower.indexOf(w); if (k >= 0 && (at < 0 || k < at)) at = k; }
+    if (at < 0) return text.slice(0, 140);
+    const start = Math.max(0, at - 50);
+    return (start ? "…" : "") + text.slice(start, start + 160) + (start + 160 < text.length ? "…" : "");
+  }
+
+  function renderResults(q) {
+    const box = els.searchResults;
+    box.classList.add("open");
+    if (!q.trim()) { box.innerHTML = '<div class="search-status">Ketik kata kunci, mis. <code>sftp</code>, <code>host key</code>, <code>port</code>.</div>'; hits = []; return; }
+    if (!index) { box.innerHTML = '<div class="search-status">Menyiapkan indeks…</div>'; return; }
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    hits = search(q); activeHit = hits.length ? 0 : -1;
+    if (!hits.length) { box.innerHTML = '<div class="search-status">Tidak ada hasil untuk “' + escapeHtml(q) + "”.</div>"; return; }
+    box.innerHTML = hits.map(function (s, k) {
+      const path = s.page.group === s.page.title ? s.page.title : s.page.group + " / " + s.page.title;
+      return '<a class="search-hit' + (k === 0 ? " active" : "") + '" role="option" href="' + pageHref(s.page.slug, s.id) + '" data-k="' + k + '">' +
+        '<div class="hit-path">' + escapeHtml(path) + "</div>" +
+        '<div class="hit-title">' + highlightWords(s.heading, words) + "</div>" +
+        (s.text ? '<div class="hit-snippet">' + highlightWords(snippet(s.text, words), words) + "</div>" : "") + "</a>";
+    }).join("") + '<div class="search-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> pilih</span><span><kbd>Enter</kbd> buka</span><span><kbd>Esc</kbd> tutup</span></div>';
+  }
+
+  function setActiveHit(k) {
+    const items = els.searchResults.querySelectorAll(".search-hit");
+    if (!items.length) return;
+    activeHit = (k + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle("active", i === activeHit));
+    items[activeHit].scrollIntoView({ block: "nearest" });
+  }
+
+  function closeSearch() {
+    els.searchResults.classList.remove("open");
+    els.searchWrap.classList.remove("open");
+  }
+
+  els.searchInput.addEventListener("focus", function () {
+    renderResults(els.searchInput.value);
+    buildIndex().then(() => renderResults(els.searchInput.value)).catch(function () {
+      els.searchResults.innerHTML = '<div class="search-status">Indeks pencarian gagal dimuat. Periksa koneksi lalu coba lagi.</div>';
+    });
+  });
+  els.searchInput.addEventListener("input", () => renderResults(els.searchInput.value));
+  els.searchInput.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveHit(activeHit + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveHit(activeHit - 1); }
+    else if (e.key === "Enter") {
+      const el = els.searchResults.querySelectorAll(".search-hit")[activeHit];
+      if (el) { e.preventDefault(); location.hash = el.getAttribute("href"); els.searchInput.blur(); closeSearch(); }
+    } else if (e.key === "Escape") { els.searchInput.blur(); closeSearch(); }
+  });
+  els.searchResults.addEventListener("click", function (e) {
+    if (e.target.closest(".search-hit")) { closeSearch(); els.searchInput.blur(); }
+  });
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest("#header-search") && !e.target.closest("#search-open-btn")) closeSearch();
+  });
+  els.searchOpen.addEventListener("click", function () { els.searchWrap.classList.add("open"); els.searchInput.focus(); });
+  document.addEventListener("keydown", function (e) {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (((e.key === "/" && !typing) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k"))) {
+      e.preventDefault();
+      els.searchWrap.classList.add("open");
+      els.searchInput.focus(); els.searchInput.select();
+    } else if (e.key === "Escape") { closeSidebar(); }
+  });
+
+  window.addEventListener("hashchange", () => route(false));
+  route(false);
+})();
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # Fitur
 
-## 🔐 Manajemen Host & Vault Terenkripsi
+## Manajemen Host & Vault Terenkripsi
 
 - Simpan profil koneksi (label, host/IP, port, username, tags, grup)
   lengkap dengan kredensialnya, dienkripsi lokal pakai **Argon2id**
@@ -27,7 +27,7 @@
   diimpor (terenkripsi proprietary VanDyke, secara sengaja tidak
   dibongkar).
 
-## 💻 Terminal SSH Interaktif
+## Terminal SSH Interaktif
 
 - Connect ke sebuah host membuka **tab terminal baru** (mirip browser)
   — sesi lain tetap hidup di background, tab bar muncul di halaman
@@ -45,7 +45,7 @@
 - Auto-close tab kalau sesi diakhiri dari sisi remote (mis. ketik
   `exit`), tanpa perlu klik "×" manual.
 
-## 📁 SFTP — Dual-Pane File Browser
+## SFTP — Dual-Pane File Browser
 
 - Setelah connect, tampil dua panel bersebelahan: **Local** (kiri) dan
   **Remote** (kanan), keduanya bisa navigasi folder & path bar yang
@@ -62,7 +62,7 @@
 - Kalau belum ada host tersimpan sama sekali, halaman menampilkan
   pesan yang jelas (bukan area kosong tanpa penjelasan).
 
-## 🔌 Console — Koneksi Serial Lintas Platform
+## Console — Koneksi Serial Lintas Platform
 
 - Koneksi serial ke perangkat lewat kabel USB-to-serial,
   **cross-platform sejak awal** — otomatis mendeteksi nama port yang

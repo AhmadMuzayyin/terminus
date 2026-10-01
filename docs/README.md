@@ -1,9 +1,9 @@
 # Terminus
 
-> SSH · SFTP · Console (serial) manager desktop native, lintas platform,
-> ditulis 100% [Rust](https://www.rust-lang.org/) dengan GUI
-> [Slint](https://slint.dev) — open-source, satu binary, tanpa
-> Electron, tanpa runtime tambahan.
+SSH · SFTP · Console (serial) manager desktop native, lintas platform,
+ditulis 100% [Rust](https://www.rust-lang.org/) dengan GUI
+[Slint](https://slint.dev) — open-source, satu binary, tanpa
+Electron, tanpa runtime tambahan.
 
 Terminus adalah aplikasi manajemen koneksi remote (SSH, SFTP, dan
 console serial) yang dibangun sebagai aplikasi desktop

@@ -58,10 +58,10 @@ describe("Identities CRUD + secret", () => {
     const res = await request(app)
       .post(`/api/v1/vaults/${vaultId}/identities`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ label: "NOC Router", username: "bro-noc", password: "secret-identity-pw" });
+      .send({ label: "NOC Router", username: "noc-admin", password: "secret-identity-pw" });
 
     expect(res.status).toBe(201);
-    expect(res.body).toEqual({ id: expect.any(String), label: "NOC Router", username: "bro-noc" });
+    expect(res.body).toEqual({ id: expect.any(String), label: "NOC Router", username: "noc-admin" });
     identityId = res.body.id;
   });
 
@@ -70,7 +70,7 @@ describe("Identities CRUD + secret", () => {
     const res = await request(app)
       .post(`/api/v1/vaults/${vaultId}/identities`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ id: clientId, label: "NOC Switch", username: "bro-noc-2", password: "secret-identity-pw-2" });
+      .send({ id: clientId, label: "NOC Switch", username: "noc-admin-2", password: "secret-identity-pw-2" });
 
     expect(res.status).toBe(201);
     expect(res.body.id).toBe(clientId);
@@ -82,7 +82,7 @@ describe("Identities CRUD + secret", () => {
       .set("Authorization", `Bearer ${ownerToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.username).toBe("bro-noc");
+    expect(res.body.username).toBe("noc-admin");
   });
 
   it("get secret identity balikin password plaintext yang SAMA", async () => {
@@ -107,10 +107,10 @@ describe("Identities CRUD + secret", () => {
     const res = await request(app)
       .put(`/api/v1/vaults/${vaultId}/identities/${identityId}`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ username: "bro-noc-baru" });
+      .send({ username: "noc-admin-baru" });
 
     expect(res.status).toBe(200);
-    expect(res.body.username).toBe("bro-noc-baru");
+    expect(res.body.username).toBe("noc-admin-baru");
 
     const secretRes = await request(app)
       .get(`/api/v1/vaults/${vaultId}/identities/${identityId}/secret`)

@@ -3,8 +3,7 @@ import { VaultModel } from "../models.slint";
 import { IconServer, IconFolder, IconTerminal, IconBook, IconLogout, IconUser } from "./icons.slint";
 
 // Ikon nav — LINE ICON monokrom (`Path` di `icons.slint`), GANTI emoji
-// berwarna (🖥/📁/⌨/📖) sebelumnya atas permintaan eksplisit user
-// ("ganti dengan icon line", "warnanya kurang jelas" — emoji punya
+// berwarna (🖥/📁/⌨/📖) sebelumnya (warnanya kurang jelas — emoji punya
 // warna sendiri yang tidak ikut tema). `icon-kind` string SEDERHANA
 // (bukan lewat parameter tipe komponen — Slint tidak punya itu) yang
 // nentuin `Path` mana yang dirender.
@@ -125,7 +124,7 @@ export component NavRail inherits Rectangle {
                     font-size: Tokens.text-headline-sm;
                     font-weight: 700;
                 }
-                // Bukan "Pro Account" lagi (atas permintaan user) —
+                // Bukan "Pro Account" lagi —
                 // slogan "aneh" ini SENGAJA jadi antonim Termius (yang
                 // fitur-fitur pentingnya di balik langganan "Pro"):
                 // "Terminal" (aplikasi ini) + "Akhir Biaya Langganan"
@@ -165,8 +164,7 @@ export component NavRail inherits Rectangle {
         }
         // Keychain/Port Forwarding/Logs SENGAJA dihapus (UI & tidak
         // pernah ada backend-nya juga — cuma `PagePlaceholder` dummy,
-        // tidak ada handler Rust apa pun buat current-page 3/4/5) atas
-        // permintaan eksplisit user.
+        // tidak ada handler Rust apa pun buat current-page 3/4/5).
         Rectangle { vertical-stretch: 1; }
 
         Rectangle {
@@ -175,7 +173,7 @@ export component NavRail inherits Rectangle {
         }
         Rectangle { height: 4px; }
 
-        // "Settings" SENGAJA dihapus juga (atas permintaan user) —
+        // "Settings" SENGAJA dihapus juga —
         // cuma "Documentation" yang disisakan. Klik-nya buka halaman
         // web dokumentasi (terminus.github.io) lewat browser default
         // sistem — lihat `documentation-clicked` di atas.

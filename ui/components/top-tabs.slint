@@ -85,16 +85,16 @@ export component SearchField inherits Rectangle {
 }
 
 // Top bar SEKARANG murni satu kotak pencarian full-width — TANPA teks
-// judul halaman lagi (dihapus atas permintaan eksplisit user, lihat
-// referensi Termius yang ditunjukkan: search bar penuh, tidak ada nama
+// judul halaman lagi (sengaja dihapus, mengikuti pola Termius:
+// search bar penuh, tidak ada nama
 // halaman di kiri). `title` masih diterima (dipanggil dari
 // app-window.slint) tapi TIDAK dipakai di sini lagi — dibiarkan
 // terpasang di caller supaya tidak perlu ubah app-window.slint juga,
 // murni properti mati sekarang.
 export component TopBar inherits Rectangle {
     in property <string> title: "";
-    // Disembunyikan waktu halaman Terminal aktif (atas permintaan
-    // user) — pencarian host tidak relevan di sana, dan halaman
+    // Disembunyikan waktu halaman Terminal aktif — pencarian host
+    // tidak relevan di sana, dan halaman
     // Terminal sudah punya header/tab-nya sendiri.
     in property <bool> show-search: true;
 

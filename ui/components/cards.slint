@@ -165,7 +165,7 @@ export component HostCard inherits Rectangle {
                 }
             }
             // Tanda status/"connected" (StatusDot) SENGAJA dihapus dari
-            // sini atas permintaan user — kartu List sekarang murni
+            // sini — kartu List sekarang murni
             // identitas host, tanpa embel-embel status koneksi.
         }
 
@@ -176,8 +176,8 @@ export component HostCard inherits Rectangle {
 
     // Checkbox bulk-delete DI ATAS, tombol delete DEMPET di BAWAHNYA —
     // dua-duanya di tepi KANAN kartu sekarang (bukan checkbox kiri
-    // atas + delete kanan tengah kayak sebelumnya, atas permintaan
-    // user). Right edge-nya SAMA (`parent.width - 8px`) buat kedua
+    // atas + delete kanan tengah kayak sebelumnya). Right edge-nya
+    // SAMA (`parent.width - 8px`) buat kedua
     // elemen, jadi kolomnya rapi lurus — dan karena posisinya dihitung
     // dari `parent.width` (bukan angka mutlak), tetap responsive waktu
     // kartu resize. Checkbox dideklarasikan SEBELUM delete (bukan
@@ -257,7 +257,7 @@ export component GroupCard inherits Rectangle {
     border-color: Tokens.outline-variant;
     animate background { duration: Tokens.transition-fast; }
     // Backstop: nama grup panjang (mis. hasil Import XML: "ROUTER /
-    // BAROKAH") HARUS kepotong "…" (lihat `overflow: elide` di bawah),
+    // SITE-A") HARUS kepotong "…" (lihat `overflow: elide` di bawah),
     // ini jaring pengaman kedua kalau ada yang lolos.
     clip: true;
 
@@ -297,7 +297,7 @@ export component GroupCard inherits Rectangle {
             // `horizontal-stretch: 1` WAJIB — tanpa ini kolom teks
             // melebar sesuai nama grup TERPANJANG, tidak dibatasi
             // lebar kartu, dan bocor keluar (persis bug yang
-            // dilaporkan: "ROUTER / BAROKAH" nembus tepi kartu).
+            // dilaporkan: "ROUTER / SITE-A" nembus tepi kartu).
             VerticalLayout {
                 horizontal-stretch: 1;
                 alignment: center;
@@ -394,7 +394,7 @@ export component GroupCard inherits Rectangle {
     }
 
     // Checkbox bulk-delete DI ATAS delete, dempet, dua-duanya di tepi
-    // KANAN (bukan kiri atas lagi, atas permintaan user) — CENTER-nya
+    // KANAN (bukan kiri atas lagi) — CENTER-nya
     // sama dengan center tombol delete (38px) di atas (bukan tepi
     // kanan disamakan, yang bikin dua-duanya kelihatan "geser" karena
     // lebarnya beda — laporan user "di sejajarin"), tetap responsive

@@ -1,11 +1,9 @@
 # Terminus Backend API — Desain Arsitektur
 
 > Dokumen ini adalah SUMBER KEBENARAN buat struktur folder & alur kerja
-> project `backend/` ini. WAJIB dibaca ulang setiap mau melanjutkan
-> kerjaan di folder ini (termasuk lintas sesi kerja) SEBELUM menulis
-> kode baru — supaya konvensi (nama folder, pola per-modul, urutan
-> pengerjaan) tetap konsisten dan tidak improvisasi berbeda-beda tiap
-> kali disentuh. Update dokumen ini juga kalau ada keputusan desain
+> project `backend/` ini. Baca dulu sebelum menambah kode baru — supaya
+> konvensi (nama folder, pola per-modul, urutan pengerjaan) tetap
+> konsisten. Update dokumen ini juga kalau ada keputusan desain
 > yang berubah selama pengerjaan (jangan biarkan dokumen ini basi).
 
 ## 1. Apa ini & kenapa terpisah dari desktop app
@@ -41,7 +39,7 @@ data yang sama, bukan lewat mekanisme sync-antar-file.
 |---|---|---|
 | Bahasa | **TypeScript** (Node.js) | Backend ini nyimpan & memproses password host — type safety mengurangi kelas bug ceroboh (salah kirim field, dsb) dibanding JS polos. |
 | Web framework | **Express** | Simpel, ekosistem besar, tidak banyak "magic" (decorator/DI berat ala NestJS) — struktur tetap dijaga lewat KONVENSI folder per-modul di bawah (bagian 3), bukan lewat framework yang maksa. Selaras juga dengan gaya desktop app yang lebih suka eksplisit daripada abstraksi berat. |
-| Database | **MySQL** | Sesuai keputusan eksplisit user. |
+| Database | **MySQL** | Sudah dipakai di infrastruktur target deployment. |
 | Akses DB | **Prisma** (`schema.prisma` + generated client) | Type-safe query result, DAN sudah termasuk sistem migrasi (`prisma migrate`) — pas buat kebutuhan "struktur yang jelas & bisa diulang" tanpa nulis migration runner sendiri. |
 | Hash password login | **argon2** (npm `argon2`) | SAMA ALGORITMA dengan `terminus-vault::crypto::derive_key` di desktop app — konsisten postur keamanan lintas project. |
 | Enkripsi password host (`secrets.data`) | **ChaCha20-Poly1305** lewat modul bawaan `node:crypto` | SAMA PRIMITIVE dengan `terminus-vault::crypto::encrypt/decrypt`. Key-nya BEDA SUMBER dari vault lokal: di sini SATU kunci milik SERVER (`SERVER_MASTER_KEY`, env var, di-generate sekali waktu setup) — konsekuensi keputusan "server-side encryption at rest" yang sudah disepakati (bukan zero-knowledge per-user, server dipercaya karena self-hosted). |
@@ -124,7 +122,7 @@ backend/
 ```
 
 **Aturan konvensi yang WAJIB dipatuhi tiap nambah modul baru** (biar
-predictable buat dibaca ulang lintas sesi):
+struktur tiap modul seragam & mudah ditebak):
 - Modul baru = folder baru di `src/modules/<nama>/` dengan 4 file
   (`*.routes.ts`, `*.controller.ts`, `*.service.ts`, `*.schema.ts`) —
   jangan campur logic bisnis ke dalam file routes/controller.
@@ -239,7 +237,7 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    Prettier, `prisma/schema.prisma` (semua tabel bagian 4), Docker +
    docker-compose, `.env.example`, `src/config/env.ts`, `src/app.ts`
    kosong (cuma health-check `GET /health`). Diverifikasi lawan MySQL
-   sungguhan (container `mesem-mysql`) — migrasi jalan, build/lint/test
+   sungguhan (container `mysql-prod`) — migrasi jalan, build/lint/test
    hijau, dev server dites manual lewat curl.
 2. ✅ **Auth module** — register(first-run)/login/refresh/logout +
    `GET /me` penuh, diverifikasi lawan MySQL sungguhan (test + curl
@@ -269,15 +267,15 @@ tiap milestone selesai + terverifikasi (test hijau) sebelum lanjut:
    dulu (403 "bukan anggota") alih-alih ditolak validasi (400) —
    sekarang divalidasi formatnya duluan.
 5. ✅ **Docker packaging final** — `docker-compose.yml` diubah jadi
-   CUMA berisi service `server` (MySQL DIHAPUS dari situ atas
-   permintaan eksplisit user — produksi sudah punya `mesem-mysql`
+   CUMA berisi service `server` (MySQL SENGAJA DIHAPUS dari situ —
+   produksi sudah punya `mysql-prod`
    sendiri, dan dev lokal sengaja TIDAK PERNAH pakai Docker, cukup
    `npm run dev`). `docker compose config` sudah diverifikasi resolve
    bersih (container_name/network/volume ter-namespace `terminus-*`,
-   tidak nabrak `mesem-*`/`nms-net`). Kode & config dianggap SELESAI —
+   tidak nabrak `app-*`/`db-net`). Kode & config dianggap SELESAI —
    **catatan tersisa**: `docker compose up --build` end-to-end belum
-   sempat dicoba beneran jalan (dicoba di sandbox development, base
-   image Docker gagal ke-pull karena network Docker sandbox itu sendiri
+   sempat dicoba beneran jalan (di lingkungan development, base image
+   Docker gagal ke-pull karena jaringan Docker lingkungan itu sendiri
    yang bermasalah, bukan Dockerfile/compose-nya). Diputuskan LANJUT ke
    pekerjaan berikutnya — verifikasi run pertama ditunda ke waktu
    deploy sungguhan di server produksi (bukan blocker buat kerja
@@ -303,10 +301,9 @@ sendiri lalu client harus rekonsiliasi belakangan. Backward compatible
 mengonfirmasi `id` custom dipakai apa adanya. Total test SEKARANG 56
 (dari 53).
 
-6. ✅ **Profil akun** (diminta user setelah integrasi desktop jalan —
+6. ✅ **Profil akun** (dikerjakan setelah integrasi desktop jalan —
    sidebar desktop menampilkan NAMA + dropdown Profile/Logout, halaman
-   Profile bisa ubah email, full name, password). Keputusan (dikonfirmasi
-   user):
+   Profile bisa ubah email, full name, password). Keputusan:
    - **Skema**: `users.full_name VARCHAR(100) NULL` (migrasi baru). NULL
      cuma buat akun LAMA yang dibuat sebelum kolom ini ada — client
      menampilkan email sebagai fallback sampai nama diisi di Profile.

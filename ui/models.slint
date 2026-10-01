@@ -88,7 +88,7 @@ export global HostsModel {
 
     // Konfirmasi hapus GRUP — sama alurnya dengan hapus host di atas,
     // TAPI sekarang lebih penting lagi: `delete_group` di vault SUDAH
-    // DIUBAH (atas permintaan eksplisit user) buat cascade-hapus semua
+    // DIUBAH (keputusan desain) buat cascade-hapus semua
     // host DI DALAM grup itu juga (sebelumnya cuma di-ungroup) —
     // dialognya nyebut jumlah host yang bakal ikut kehapus
     // (`confirm-delete-group-host-count`, diisi Rust) biar user sadar
@@ -276,9 +276,9 @@ export global HostsModel {
 
 // Data + aksi buat halaman SFTP — DUA MODE: (1) "chooser" (belum
 // connect, `connected: false`) yang MURNI reuse data host `HostsModel`
-// (List/Groups/drill-down, SAMA persis alur halaman Hosts, atas
-// permintaan eksplisit user "atur halaman SFTP generic dari halaman
-// host") + form Manual; (2) two-pane browser (`connected: true`) yang
+// (List/Groups/drill-down, SAMA persis alur halaman Hosts — pilih
+// host SFTP dengan cara yang sama seperti di halaman Hosts) + form
+// Manual; (2) two-pane browser (`connected: true`) yang
 // SUDAH beneran nge-list direktori lokal (`std::fs`) & remote (SFTP
 // asli lewat `terminus-sftp-engine`) — lihat `crates/app/src/
 // state.rs::wire_sftp_callbacks`. v1 SENGAJA cuma satu sesi SFTP aktif
@@ -290,11 +290,9 @@ export global SftpModel {
     in-out property <string> connect-error: "";
 
     // Chooser SEKARANG SELALU langsung nampilin host list/group
-    // (atas permintaan eksplisit user — dulu ketutup di balik toggle
-    // "Host"/"Manual"). Manual connect (host ad-hoc, tidak pernah
+    // (dulu ketutup di balik toggle "Host"/"Manual"). Manual connect (host ad-hoc, tidak pernah
     // disimpan ke vault) pindah jadi MODAL terpisah (bukan slide-over
-    // lagi, atas permintaan eksplisit user juga — "tidak bagus sama
-    // sekali"), dibuka lewat tombol "+ Manual" di toolbar.
+    // lagi), dibuka lewat tombol "+ Manual" di toolbar.
     in-out property <bool> manual-modal-open: false;
     in-out property <string> manual-host: "";
     // String (bukan `int`) SENGAJA — `DialogField` (dipakai buat
@@ -331,16 +329,15 @@ export global SftpModel {
     // Ketik langsung di kotak path (lihat `FilePane` di page-sftp.slint)
     // lalu Enter -> lompat LANGSUNG ke path ABSOLUT itu (bukan relatif
     // kayak `sftp-*-navigate-requested`, yang cuma buat masuk/keluar
-    // SATU level lewat klik dua kali folder) — atas permintaan
-    // eksplisit user, path bar-nya harus bisa diketik/diganti manual.
+    // SATU level lewat klik dua kali folder) — path bar-nya harus
+    // bisa diketik/diganti manual.
     callback sftp-local-path-set-requested(string /* path absolut */);
     callback sftp-remote-path-set-requested(string /* path absolut */);
 
     // Transfer file — DUA CARA sekarang:
     // (1) Drag & drop beneran antar panel (Slint 1.17 SUNGGUH
     //     mendukungnya via `DragArea`/`DropArea` + `data-transfer` —
-    //     koreksi dari klaim SEBELUMNYA di sesi ini yang salah bilang
-    //     ini tidak bisa dibangun pakai API publik; ternyata `slint::
+    //     BISA dibangun pakai API publik; `slint::
     //     DataTransfer` MEMANG public di crate `slint` 1.17.x, cuma
     //     dulu salah cari lokasi re-export-nya. `data-transfer`
     //     OPAQUE di sisi Slint — konstruksi/baca isinya WAJIB lewat
@@ -536,8 +533,8 @@ export global TerminalTabsModel {
     in-out property <color> terminal-bg-color: #060e20;
     callback terminal-theme-changed(string /* nama tema, lihat built_in_themes() */);
 
-    // Kontrol jendela CUSTOM — atas permintaan eksplisit user (gambar
-    // referensi: satu window bar berisi toggle sidebar + tab + kontrol
+    // Kontrol jendela CUSTOM (desain: satu window bar berisi toggle
+    // sidebar + tab + kontrol
     // minimize/maximize/close, TANPA title bar asli OS di atasnya lagi).
     // `AppWindow` di-set `no-frame: true` (lihat app-window.slint),
     // makanya SEMUANYA — drag buat pindah jendela, minimize, maximize,
@@ -625,12 +622,11 @@ export global ConsoleModel {
 // pengalamannya SERAGAM (bukan tiga gaya loading beda-beda: dulu SSH
 // cuma badge status di kartu host, SFTP teks "Menghubungkan..." di
 // tombol, Console juga teks di tombol). Bukan modal/dialog (tidak ada
-// scrim) — benar-benar "pindah ke halaman baru" sesuai permintaan
-// eksplisit user.
+// scrim) — benar-benar "pindah ke halaman baru".
 export global ConnectingModel {
     in-out property <bool> visible: false;
-    in-out property <string> label: "";     // nama host, mis. "MESEM-SERVER"
-    in-out property <string> subtitle: ""; // "SSH 103.86.116.222:1522" dst
+    in-out property <string> label: "";     // nama host, mis. "WEB-SERVER"
+    in-out property <string> subtitle: ""; // "SSH 198.51.100.20:22" dst
     // Huruf pertama `label`, UPPERCASE, dihitung Rust (`profile.label
     // .chars().next()`) — bukan diakalin dari sisi Slint (mis.
     // `label.to-uppercase()` lalu di-`elide`/`clip` biar KELIHATAN
@@ -647,8 +643,8 @@ export global ConnectingModel {
     // Host TERSIMPAN yang belum pernah diisi password (mis. hasil
     // Import SecureCRT) — dulu langsung gagal connect dengan pesan
     // error "mungkin belum diisi password", user harus buka panel Host
-    // Details dulu buat isi manual SEBELUM connect. Sekarang (atas
-    // permintaan eksplisit user): begitu proses connect ketahuan host
+    // Details dulu buat isi manual SEBELUM connect. Sekarang: begitu
+    // proses connect ketahuan host
     // ini belum ada password tersimpan, layar Connecting ganti jadi
     // form isi password (bukan spinner) — submit di sini LANGSUNG
     // lanjut connect otomatis (Rust yang urus simpan ke vault +

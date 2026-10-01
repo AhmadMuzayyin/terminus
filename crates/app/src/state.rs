@@ -109,8 +109,8 @@ pub struct AppState {
     term_size: Arc<Mutex<(u16, u16)>>,
     /// Nama color theme (lihat `terminus_term_emulator::palette::
     /// built_in_themes()`) PER HOST — diubah lewat panel pengaturan (⚙
-    /// di halaman Terminal), disimpan keyed by `HostProfile::id` (atas
-    /// permintaan eksplisit user: "setiap host bisa beda theme").
+    /// di halaman Terminal), disimpan keyed by `HostProfile::id` (tiap
+    /// host boleh punya tema sendiri).
     /// Host yang belum pernah eksplisit ganti tema TIDAK ada entry-nya
     /// di sini — `theme_name_for()`/`palette_for()` fallback ke default
     /// "Terminus Dark". Ini CACHE baca-cepat (dibaca ULANG tiap kali
@@ -990,8 +990,8 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     //     delete-group-*` di models.slint). `delete_group` di vault
     //     SEKARANG CASCADE: host DI DALAMNYA (beserta password
     //     tersimpannya) ikut kehapus, bukan cuma diungrouped kayak
-    //     sebelumnya — perubahan perilaku ini SENGAJA, atas permintaan
-    //     eksplisit user. Sama pola loading-state dengan hapus host:
+    //     sebelumnya — perubahan perilaku ini SENGAJA (keputusan
+    //     desain). Sama pola loading-state dengan hapus host:
     //     dialog tetap kebuka sampai beneran selesai. ---
     {
         let ui_weak = ui.as_weak();
@@ -1298,8 +1298,8 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     None => {
                         // Password belum ada — DULU langsung gagal dengan
                         // notice error, user harus buka panel Host Details
-                        // manual dulu. SEKARANG (atas permintaan eksplisit
-                        // user): tampilkan layar Connecting dalam mode
+                        // manual dulu. SEKARANG (keputusan desain):
+                        // tampilkan layar Connecting dalam mode
                         // "minta password" (`ConnectingModel.needs-
                         // password`), simpan profile-nya di `state.pending_
                         // password_profile` biar `on_password_submitted`
@@ -1623,8 +1623,8 @@ struct ImportSummary {
 
 /// Tulis hasil parse (`terminus_core::import::securecrt::parse`) ke
 /// vault: satu `HostProfile` per host, satu `HostGroup` per path
-/// folder UNIK (di-flatten jadi satu nama, mis. `["ROUTER","BAROKAH"]`
-/// -> `"ROUTER / BAROKAH"` — model grup kita sengaja tidak
+/// folder UNIK (di-flatten jadi satu nama, mis. `["ROUTER","SITE-A"]`
+/// -> `"ROUTER / SITE-A"` — model grup kita sengaja tidak
 /// bertingkat). Grup yang namanya SUDAH ADA di vault dipakai ulang,
 /// TIDAK dibuat duplikat — penting buat import ulang dari file
 /// `config.xml` yang sudah diperbarui.
@@ -1783,8 +1783,8 @@ async fn build_json_backup(vault: &VaultBackend, passphrase: &str) -> Result<ter
 /// klik/tutup tab.
 fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     // --- Kontrol jendela CUSTOM (`no-frame: true` di app-window.slint
-    //     — title bar asli OS dihapus, atas permintaan eksplisit
-    //     user) — minimize/maximize/close/drag lewat `slint::Window`
+    //     — title bar asli OS sengaja dihapus) —
+    //     minimize/maximize/close/drag lewat `slint::Window`
     //     langsung, BUKAN lewat vault/tokio (murni sinkron, tidak ada
     //     I/O), lihat komentar panjang `window-*-requested` di
     //     models.slint. ---
@@ -2005,8 +2005,8 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             tokio::spawn(async move {
                 let active_id = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner());
                 // Simpan PER HOST (bukan lagi satu nilai global untuk
-                // semua tab) — atas permintaan eksplisit user: "setiap
-                // host bisa beda theme". Tanpa tab aktif (harusnya
+                // semua tab) — tiap host boleh punya tema sendiri.
+                // Tanpa tab aktif (harusnya
                 // tidak mungkin — panel pengaturan ini cuma bisa
                 // dibuka dari halaman Terminal, yang berarti ADA tab
                 // aktif — tapi dijaga jaga-jaga) ganti tema tidak
@@ -2252,8 +2252,8 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
     // --- Ketik LANGSUNG di path bar (lihat `FilePane.path-submitted`
     //     di page-sftp.slint) lalu Enter -> lompat ke path ABSOLUT itu
     //     (beda dari navigate-requested di atas, yang cuma relatif
-    //     satu level lewat klik dua kali folder) — atas permintaan
-    //     eksplisit user, path harus bisa diketik/diganti manual. ---
+    //     satu level lewat klik dua kali folder) — path harus bisa
+    //     diketik/diganti manual. ---
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
@@ -2408,9 +2408,9 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
-    // --- Drag & drop beneran antar panel — KOREKSI dari klaim
-    //     sebelumnya di sesi ini yang salah bilang ini mustahil pakai
-    //     API publik Slint. `slint::DataTransfer` TERNYATA memang
+    // --- Drag & drop beneran antar panel — BISA dibangun pakai API
+    //     publik Slint (bukan butuh workaround/fork).
+    //     `slint::DataTransfer` memang
     //     public (cek https://docs.rs/slint/1.17.1/slint/struct.
     //     DataTransfer.html — sebelumnya salah cari re-export-nya di
     //     source lokal). `data-transfer` OPAQUE di sisi Slint, jadi
@@ -4136,7 +4136,7 @@ mod tests {
     <VanDyke version="3.0">
         <key name="Sessions">
             <key name="ROUTER">
-                <key name="BAROKAH">
+                <key name="SITE-A">
                     <key name="rtr-01">
                         <dword name="Is Session">1</dword>
                         <string name="Protocol Name">SSH2</string>
@@ -4169,7 +4169,7 @@ mod tests {
 
     /// Membuktikan `import_parsed_hosts_into_vault` (dipakai
     /// `on_import_xml_requested`) beneran: (1) host di folder
-    /// BERTINGKAT dapat SATU grup gabungan ("ROUTER / BAROKAH"), bukan
+    /// BERTINGKAT dapat SATU grup gabungan ("ROUTER / SITE-A"), bukan
     /// dua grup terpisah atau nested; (2) host di root Sessions tetap
     /// ungrouped; (3) sesi non-SSH2 KEHITUNG skipped, tidak diimpor;
     /// (4) TIDAK ADA password ter-import (credential_id sengaja tanpa
@@ -4189,7 +4189,7 @@ mod tests {
 
         let groups = vault.list_groups().await.unwrap();
         assert_eq!(groups.len(), 1, "rtr-01 & rtr-02 di folder yang sama harus dapat SATU grup, bukan dua");
-        assert_eq!(groups[0].name, "ROUTER / BAROKAH");
+        assert_eq!(groups[0].name, "ROUTER / SITE-A");
 
         let profiles = vault.list_all_profiles().await.unwrap();
         assert_eq!(profiles.len(), 3);
@@ -4210,13 +4210,13 @@ mod tests {
         }
 
         // Import ULANG file yang sama -> grup TIDAK boleh terduplikasi
-        // (harus reuse "ROUTER / BAROKAH" yang sudah ada), meski host
+        // (harus reuse "ROUTER / SITE-A" yang sudah ada), meski host
         // baru (id beda) tetap kebuat lagi (itu ekspektasi wajar untuk
         // import naif tanpa dedup-by-hostname — di luar scope v1 ini).
         let parsed_again = terminus_core::import::securecrt::parse(IMPORT_SAMPLE_XML).unwrap();
         import_parsed_hosts_into_vault(&vault, parsed_again).await.unwrap();
         let groups_after = vault.list_groups().await.unwrap();
-        assert_eq!(groups_after.len(), 1, "import ulang TIDAK BOLEH bikin grup 'ROUTER / BAROKAH' dobel");
+        assert_eq!(groups_after.len(), 1, "import ulang TIDAK BOLEH bikin grup 'ROUTER / SITE-A' dobel");
     }
 
     /// Membuktikan `export_hosts_from_vault` (dipakai
@@ -4237,7 +4237,7 @@ mod tests {
         assert_eq!(export_hosts.len(), 3);
 
         let rtr01 = export_hosts.iter().find(|h| h.label == "rtr-01").unwrap();
-        assert_eq!(rtr01.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+        assert_eq!(rtr01.group_path, vec!["ROUTER".to_string(), "SITE-A".to_string()]);
         let standalone = export_hosts.iter().find(|h| h.label == "standalone-host").unwrap();
         assert!(standalone.group_path.is_empty(), "host ungrouped di vault harus jadi group_path kosong lagi");
 
@@ -4248,7 +4248,7 @@ mod tests {
         let rtr01_reimported = reimported.hosts.iter().find(|h| h.label == "rtr-01").unwrap();
         assert_eq!(rtr01_reimported.host, "10.1.1.1");
         assert_eq!(rtr01_reimported.port, 22);
-        assert_eq!(rtr01_reimported.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+        assert_eq!(rtr01_reimported.group_path, vec!["ROUTER".to_string(), "SITE-A".to_string()]);
     }
 
     /// Vault kosong (belum ada host apa pun) -> `export_hosts_from_vault`
@@ -4430,8 +4430,8 @@ mod tests {
 
             // Hapus grup -> host-b (di dalamnya) HARUS ikut kehapus
             // permanen (CASCADE, lihat VaultStore::delete_group — perubahan
-            // perilaku SENGAJA atas permintaan eksplisit user, sebelumnya
-            // host-b cuma balik jadi ungrouped). host-a (di luar grup)
+            // perilaku SENGAJA, sebelumnya host-b cuma balik jadi
+            // ungrouped). host-a (di luar grup)
             // TIDAK boleh ikut kena.
             ui.global::<HostsModel>().invoke_group_delete_requested(group_id);
             wait_until(|| ui.global::<HostsModel>().get_groups().row_count() == 0, "grup Production terhapus").await;
@@ -4655,17 +4655,17 @@ mod tests {
             // panel_host_password -> delete -> hilang lagi. ---
             ui.global::<HostsModel>().invoke_identity_create_requested(
                 "NOC Router".into(),
-                "bro-noc".into(),
+                "noc-admin".into(),
                 "secret-identity-pw".into(),
             );
             wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 1, "identity tersimpan muncul")
                 .await;
             let identity_item = ui.global::<HostsModel>().get_identities().row_data(0).unwrap();
             assert_eq!(identity_item.label, "NOC Router");
-            assert_eq!(identity_item.username, "bro-noc");
+            assert_eq!(identity_item.username, "noc-admin");
             assert_eq!(
                 ui.global::<HostsModel>().get_identity_labels().row_data(0).unwrap(),
-                "NOC Router (bro-noc)",
+                "NOC Router (noc-admin)",
                 "identity_labels harus SEJAJAR index dengan identities"
             );
 
@@ -4683,7 +4683,7 @@ mod tests {
                 "identity_picked mengisi username+password dari vault",
             )
             .await;
-            assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "bro-noc");
+            assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "noc-admin");
 
             ui.global::<HostsModel>().invoke_identity_delete_requested(identity_item.id.clone());
             wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 0, "identity terhapus").await;

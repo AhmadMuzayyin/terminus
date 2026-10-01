@@ -74,28 +74,24 @@ component TabChip inherits Rectangle {
 // app-window.slint). Isinya, urut dari kiri: (1) tombol buka/tutup
 // sidebar (2) daftar tab SSH yang lagi terbuka (3) kotak pencarian
 // (disembunyikan waktu halaman Terminal aktif) (4) tombol pengaturan
-// terminal ⚙ (PINDAH ke sini dari header halaman Terminal — atas
-// permintaan user, biar tidak nyempil sendirian di pojok). Sesi SSH
+// terminal ⚙ (PINDAH ke sini dari header halaman Terminal, biar
+// tidak nyempil sendirian di pojok). Sesi SSH
 // yang jalan di background (mis. user lagi buka halaman Hosts) tetap
 // gampang dibalikin tampilannya kapan saja lewat tab-tab di sini tanpa
 // connect ulang.
 //
-// CATATAN SCOPE: ini BUKAN window chrome custom/frameless (bar ini
-// TIDAK menggantikan title bar asli OS — minimize/maximize/close di
-// gambar referensi Termius yang ditunjukkan user itu kontrol jendela
-// NATIF, beda proyek/scope dari mengganti dekorasi window OS, butuh
-// integrasi platform terpisah). Kalau itu yang benar-benar dimaksud,
-// perlu dikonfirmasi dulu sebagai pekerjaan tersendiri.
+// Bar ini SEKALIGUS menggantikan title bar asli OS (`no-frame: true`
+// di app-window.slint): kontrol minimize/maximize/close ada di ujung
+// kanan, dan ruang kosongnya jadi area drag untuk memindah jendela.
 export component TerminalTabBar inherits Rectangle {
     in property <bool> sidebar-collapsed: false;
     // Disembunyikan waktu layar unlock (belum ada sidebar buat
     // ditoggle sama sekali di situ — NavRail cuma dirender sesudah
-    // `VaultModel.is-unlocked`, lihat app-window.slint) — atas
-    // permintaan eksplisit user.
+    // `VaultModel.is-unlocked`, lihat app-window.slint).
     in property <bool> show-sidebar-toggle: true;
     in property <bool> show-search: true;
-    // Cuma tampil waktu halaman Terminal aktif (atas permintaan user
-    // — sebelumnya SELALU ada, dianggap tidak relevan di halaman lain).
+    // Cuma tampil waktu halaman Terminal aktif (sebelumnya SELALU
+    // ada, tidak relevan di halaman lain).
     in property <bool> show-settings-gear: false;
     callback toggle-sidebar-requested();
     // Diteruskan dari `HostsModel.focus-search-requested` (shortcut

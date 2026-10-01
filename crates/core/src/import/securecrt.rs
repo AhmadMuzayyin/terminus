@@ -11,23 +11,23 @@
 //! ```xml
 //! <key name="Sessions">
 //!     <key name="ROUTER">
-//!         <key name="BAROKAH">
-//!             <key name="FRR-BAROKAH-FWD">
+//!         <key name="SITE-A">
+//!             <key name="FRR-EDGE-01">
 //!                 <dword name="Is Session">1</dword>
 //!                 <string name="Protocol Name">SSH2</string>
-//!                 <string name="Hostname">103.86.117.203</string>
-//!                 <string name="Username">bro-noc</string>
-//!                 <dword name="[SSH2] Port">14922</dword>
+//!                 <string name="Hostname">203.0.113.10</string>
+//!                 <string name="Username">noc-admin</string>
+//!                 <dword name="[SSH2] Port">2200</dword>
 //!                 ...
 //!             </key>
 //!         </key>
 //!     </key>
 //! </key>
 //! ```
-//! Folder "ROUTER" > "BAROKAH" jadi `group_path: ["ROUTER", "BAROKAH"]`
+//! Folder "ROUTER" > "SITE-A" jadi `group_path: ["ROUTER", "SITE-A"]`
 //! — caller (lihat `crates/app/src/state.rs`) yang memutuskan cara
 //! memetakan path bertingkat itu ke satu grup flat (join jadi satu
-//! nama, mis. "ROUTER / BAROKAH"), karena model grup kita saat ini
+//! nama, mis. "ROUTER / SITE-A"), karena model grup kita saat ini
 //! sengaja tidak bertingkat.
 //!
 //! **Password TIDAK PERNAH diimpor.** `Password V2` di file SecureCRT
@@ -165,13 +165,13 @@ mod tests {
         </key>
         <key name="Sessions">
             <key name="ROUTER">
-                <key name="BAROKAH">
-                    <key name="FRR-BAROKAH-FWD">
+                <key name="SITE-A">
+                    <key name="FRR-EDGE-01">
                         <dword name="Is Session">1</dword>
                         <string name="Protocol Name">SSH2</string>
-                        <string name="Hostname">103.86.117.203</string>
-                        <string name="Username">bro-noc</string>
-                        <dword name="[SSH2] Port">14922</dword>
+                        <string name="Hostname">203.0.113.10</string>
+                        <string name="Username">noc-admin</string>
+                        <dword name="[SSH2] Port">2200</dword>
                     </key>
                 </key>
             </key>
@@ -197,11 +197,11 @@ mod tests {
         assert_eq!(result.hosts.len(), 2, "cuma 2 sesi SSH2 valid, sisanya dilewati");
         assert_eq!(result.skipped, 1, "sesi Serial harus kehitung skipped");
 
-        let nested = result.hosts.iter().find(|h| h.label == "FRR-BAROKAH-FWD").unwrap();
-        assert_eq!(nested.host, "103.86.117.203");
-        assert_eq!(nested.username, "bro-noc");
-        assert_eq!(nested.port, 14922);
-        assert_eq!(nested.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+        let nested = result.hosts.iter().find(|h| h.label == "FRR-EDGE-01").unwrap();
+        assert_eq!(nested.host, "203.0.113.10");
+        assert_eq!(nested.username, "noc-admin");
+        assert_eq!(nested.port, 2200);
+        assert_eq!(nested.group_path, vec!["ROUTER".to_string(), "SITE-A".to_string()]);
 
         let root_level = result.hosts.iter().find(|h| h.label == "prod-web-01").unwrap();
         assert_eq!(root_level.host, "10.0.0.5");

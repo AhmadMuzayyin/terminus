@@ -191,8 +191,8 @@ impl SerialSession {
     }
 
     /// Tutup port secara SUNGGUHAN (klik "Disconnect" di UI, ATAU
-    /// sebelum sesi lama di-drop waktu connect ulang) — permintaan
-    /// eksplisit user: disconnect harus BENERAN memutus, bukan cuma
+    /// sebelum sesi lama di-drop waktu connect ulang). Disconnect
+    /// harus BENERAN memutus, bukan cuma
     /// kosmetik, supaya connect ulang WAJIB login lagi ke device
     /// (bukan nyambung ke sesi CLI yang ternyata masih nyangkut).
     ///

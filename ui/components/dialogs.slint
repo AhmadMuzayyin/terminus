@@ -277,9 +277,8 @@ export component VaultDialog inherits DialogScrim {
     // (lihat app-window.slint: `if !VaultModel.is-unlocked :
     // VaultDialog{}`, tidak ada apa pun di belakangnya buat "diredupkan"
     // scrim), jadi background-nya di-override jadi OPAQUE — gradasi
-    // radial buatan (atas permintaan user "tambahkan background
-    // image": tidak ada asset foto asli yang dikasih/tersedia di repo
-    // ini buat dipakai, jadi dekorasi gradient+lingkaran blur ini
+    // radial buatan (pengganti background image — repo ini tidak
+    // punya asset foto, jadi dekorasi gradient+lingkaran blur ini
     // gantinya) + beberapa lingkaran blur lembut warna primary/success
     // biar tidak polos hitam rata.
     background: Tokens.surface;
@@ -504,7 +503,7 @@ export component VaultDialog inherits DialogScrim {
 //
 // SENGAJA `Rectangle` + posisi manual (BUKAN `HorizontalLayout` biasa
 // lagi) — dulu satu baris tanpa wrap, begitu jumlah grup banyak (mis.
-// hasil Import XML: "ROUTER / BAROKAH", "SERVER / BOSTI", dst — bisa
+// hasil Import XML: "ROUTER / SITE-A", "SERVER / SITE-B", dst — bisa
 // 7+ grup dengan nama panjang), total lebarnya jauh melebihi lebar
 // slide-over (380px) dan TIDAK ADA yang wrap ke baris berikutnya —
 // akibatnya seluruh isi slide-over ikut melebar & kepotong di tepi
@@ -825,7 +824,7 @@ export component IdentitiesDialog inherits DialogScrim {
                 font-weight: 600;
             }
             new-label-field := DialogField { label-text: "Label"; placeholder: "mis. NOC Router"; }
-            new-username-field := DialogField { label-text: "Username"; placeholder: "mis. bro-noc"; }
+            new-username-field := DialogField { label-text: "Username"; placeholder: "mis. noc-admin"; }
             new-password-field := DialogField { label-text: "Password"; placeholder: "••••••••"; is-password: true; }
 
             Rectangle { vertical-stretch: 1; }

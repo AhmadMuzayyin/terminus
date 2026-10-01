@@ -121,11 +121,11 @@ mod tests {
                 group_path: vec![],
             },
             ExportHost {
-                label: "FRR-BAROKAH-FWD".to_string(),
-                host: "103.86.117.203".to_string(),
-                port: 14922,
-                username: "bro-noc".to_string(),
-                group_path: vec!["ROUTER".to_string(), "BAROKAH".to_string()],
+                label: "FRR-EDGE-01".to_string(),
+                host: "203.0.113.10".to_string(),
+                port: 2200,
+                username: "noc-admin".to_string(),
+                group_path: vec!["ROUTER".to_string(), "SITE-A".to_string()],
             },
         ];
 
@@ -134,11 +134,11 @@ mod tests {
         assert_eq!(parsed.hosts.len(), 2);
         assert_eq!(parsed.skipped, 0);
 
-        let nested = parsed.hosts.iter().find(|h| h.label == "FRR-BAROKAH-FWD").unwrap();
-        assert_eq!(nested.host, "103.86.117.203");
-        assert_eq!(nested.username, "bro-noc");
-        assert_eq!(nested.port, 14922);
-        assert_eq!(nested.group_path, vec!["ROUTER".to_string(), "BAROKAH".to_string()]);
+        let nested = parsed.hosts.iter().find(|h| h.label == "FRR-EDGE-01").unwrap();
+        assert_eq!(nested.host, "203.0.113.10");
+        assert_eq!(nested.username, "noc-admin");
+        assert_eq!(nested.port, 2200);
+        assert_eq!(nested.group_path, vec!["ROUTER".to_string(), "SITE-A".to_string()]);
 
         let flat = parsed.hosts.iter().find(|h| h.label == "prod-web-01").unwrap();
         assert_eq!(flat.host, "10.0.0.5");

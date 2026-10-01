@@ -1,4 +1,4 @@
-// Test ini jalan lawan MySQL SUNGGUHAN (container mesem-mysql, sama
+// Test ini jalan lawan MySQL SUNGGUHAN (container mysql-prod, sama
 // filosofi dengan test Rust `crates/vault` yang selalu pakai DB
 // beneran, bukan mock). Tabel `refresh_tokens`/`users` dikosongkan di
 // `beforeAll` (bukan per-test) supaya skenario "register CUMA jalan

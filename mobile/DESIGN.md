@@ -1,9 +1,8 @@
 # Terminus Mobile (Android) — Desain Arsitektur
 
 > Dokumen ini SUMBER KEBENARAN buat pekerjaan `mobile/`, sama seperti
-> `backend/DESIGN.md` buat backend. WAJIB dibaca ulang tiap mau lanjut
-> kerja di sini (termasuk lintas sesi) SEBELUM nulis kode. Update dokumen
-> ini kalau ada keputusan yang berubah. Dokumen desain TIDAK BOLEH
+> `backend/DESIGN.md` buat backend. Baca dulu sebelum menambah kode
+> baru; update dokumen ini kalau ada keputusan yang berubah. Dokumen desain TIDAK BOLEH
 > ditaruh di `docs/` — folder itu khusus dokumentasi penggunaan
 > (Terminus Local, Self-hosted, dan Mobile).
 
@@ -220,7 +219,7 @@ tersimpan → masuk otomatis ("Masuk otomatis…").
 ## 9. Urutan Pengerjaan (Milestone)
 
 Dikerjakan SATU-SATU, tiap milestone diverifikasi (build + test + dicoba
-di emulator/HP) sebelum lanjut; user yang commit.
+di emulator/HP) sebelum lanjut.
 
 1. ✅ **Kerangka proyek** — Gradle wrapper, Compose, Material 3, bottom
    navigation dengan 4 layar kosong, `applicationId` placeholder, lisensi.

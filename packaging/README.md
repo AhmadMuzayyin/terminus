@@ -4,7 +4,7 @@ Script buat bungkus binary Terminus jadi paket distributable. Semua
 hasil masuk ke `build/` di root proyek (tidak ke-commit, lihat
 `.gitignore`).
 
-## Linux (bisa dijalankan di mesin manapun, termasuk sandbox ini)
+## Linux (bisa dijalankan di mesin manapun, termasuk CI/container)
 
 ```bash
 # Semua sekaligus (.deb + .rpm + AppImage):

@@ -25,8 +25,8 @@ component ThemeOption inherits Rectangle {
 
         // Swatch: kotak kecil pakai background asli tema + 2 bar
         // pendek pakai warna ANSI hijau/kuning tema itu, ala mini
-        // preview "baris kode" (lihat referensi Termius yang
-        // ditunjukkan user) — SEMUA warna asli dari `Palette`
+        // preview "baris kode" (pola seperti Termius) — SEMUA warna
+        // asli dari `Palette`
         // (`crates/term-emulator/src/palette.rs`), bukan warna acak.
         Rectangle {
             width: 34px;
@@ -249,7 +249,7 @@ component FontSizeStepper inherits HorizontalLayout {
 }
 
 // Panel pengaturan terminal (font + color theme) — SENGAJA tidak
-// permanen kayak referensi Termius yang ditunjukkan user, cuma nongol
+// permanen seperti di Termius, cuma nongol
 // waktu tombol ⚙ di `page-terminal.slint` diklik
 // (`TerminalTabsModel.settings-open`). Sama gaya overlay-mengambang
 // dengan `HostSlideOver` (lihat komentar panjang di situ soal kenapa

@@ -52,7 +52,7 @@ component FilePane inherits Rectangle {
     }
 
     // State seleksi ala file manager (Shift+klik / Shift+Panah,
-    // Ctrl+A, klik-luar-hapus-seleksi — permintaan eksplisit user).
+    // Ctrl+A, klik-luar-hapus-seleksi).
     // `anchor-index`: baris terakhir yang diklik BIASA (tanpa Shift) —
     // titik awal range. `cursor-index`: posisi "kursor" seleksi
     // sekarang, digeser Shift+Panah atau disamakan ke baris yang
@@ -177,7 +177,7 @@ component FilePane inherits Rectangle {
         }
 
         // Path bar BISA DIKETIK LANGSUNG (bukan cuma teks statis lagi,
-        // atas permintaan eksplisit user) — Enter -> lompat ke path
+        // keputusan desain) — Enter -> lompat ke path
         // itu. `text: root.path;` cuma binding AWAL — begitu user
         // ngetik sekali, Slint PUTUS binding deklaratif itu (properti
         // yang pernah ditulis imperatif tidak lagi "ngikutin" ekspresi
@@ -296,8 +296,8 @@ component FilePane inherits Rectangle {
                     animate background, border-width { duration: Tokens.transition-fast; }
 
                     // Klik di area KOSONG (bukan di baris file mana
-                    // pun) -> hapus seleksi panel ini — permintaan
-                    // eksplisit user. Dideklarasikan SEBELUM
+                    // pun) -> hapus seleksi panel ini.
+                    // Dideklarasikan SEBELUM
                     // `ScrollView` di bawah (z-order: baris file, yang
                     // datang belakangan, "menang" duluan kalau memang
                     // diklik TEPAT di barisnya; klik di luar semua
@@ -434,10 +434,9 @@ component FilePane inherits Rectangle {
     }
 }
 
-// Form Manual Connect — MODAL (BUKAN slide-over lagi — atas permintaan
-// eksplisit user: "itu tidak bagus sama sekali... untuk koneksi manual
-// ganti dengan tombol manual yang ada ikon plus nya menampilkan modal
-// saja, tidak perlu slideover"), pola SAMA dengan `NewGroupDialog`/
+// Form Manual Connect — MODAL (BUKAN slide-over lagi: koneksi manual
+// dibuka lewat tombol "+ Manual" yang menampilkan modal), pola SAMA
+// dengan `NewGroupDialog`/
 // `VaultDialog` (`DialogScrim` + kartu di tengah). `DialogScrim`
 // SENGAJA TIDAK tutup waktu diklik di luar (lihat komentar di
 // dialogs.slint) — form-nya bisa keisi separuh, jangan sampai hilang
@@ -718,7 +717,7 @@ component SftpNewFolderDialog inherits DialogScrim {
     }
 }
 
-// Halaman SFTP — DUA TAHAP (atas permintaan eksplisit user):
+// Halaman SFTP — DUA TAHAP:
 // 1. Chooser: pilih host TERSIMPAN (List/Groups, REUSE PERSIS
 //    komponen dari halaman Hosts — `HostGrid`/`GroupGrid`/
 //    `ModeToggle`, di-export dari `page-hosts.slint`) atau isi host
@@ -750,8 +749,8 @@ export component PageSftp inherits Rectangle {
         }
     }
 
-    // Chooser SEKARANG LANGSUNG nampilin host list/group (atas
-    // permintaan eksplisit user) — tidak ada lagi toggle "Host"/
+    // Chooser SEKARANG LANGSUNG nampilin host list/group — tidak ada
+    // lagi toggle "Host"/
     // "Manual" yang jadi gerbang. Manual connect pindah jadi tombol
     // "+ Manual" (buka `SftpManualDialog`, MODAL — bukan slide-over).
     if !SftpModel.connected : VerticalLayout {
@@ -908,7 +907,7 @@ export component PageSftp inherits Rectangle {
         }
 
         // Panel Local (kiri) + Remote (kanan) LANGSUNG bersebelahan —
-        // panah "→"/"←" DIHAPUS (atas permintaan eksplisit user, drag
+        // panah "→"/"←" DIHAPUS (drag
         // & drop antar panel sudah beneran jalan, lihat `DragArea`/
         // `DropArea` di `FilePane` — tidak perlu lagi tombol terpisah).
         // Transfer sekarang MURNI lewat drag & drop, ATAU (per-file)

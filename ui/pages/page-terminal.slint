@@ -11,7 +11,7 @@ import { TerminalSettingsPanel } from "../components/terminal-settings.slint";
 //
 // TIDAK ADA header sendiri lagi di sini (label/address host DIHAPUS —
 // sudah kelihatan di tab chip window bar; tombol pengaturan ⚙ PINDAH
-// ke window bar juga) — atas permintaan eksplisit user, halaman ini
+// ke window bar juga) — halaman ini
 // sekarang MURNI area terminal, penuh dari atas ke bawah.
 export component PageTerminal inherits Rectangle {
     background: Tokens.surface;
@@ -35,8 +35,8 @@ export component PageTerminal inherits Rectangle {
     }
 
     // Backdrop klik-di-luar-buat-tutup — berlaku SAMA di SEMUA
-    // slide-over di aplikasi (atas permintaan eksplisit user: "ini
-    // berlaku pada semua slideover di semua halaman"), pola identik
+    // slide-over di aplikasi (berlaku untuk semua slide-over di semua
+    // halaman), pola identik
     // dengan punya `HostSlideOver` di `page-hosts.slint`: HANYA
     // diinstansiasi waktu panel lagi kebuka, dideklarasikan SEBELUM
     // panel-nya sendiri (z-order di BAWAH panel, jadi klik DI ATAS

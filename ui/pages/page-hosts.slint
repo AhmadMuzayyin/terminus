@@ -332,8 +332,8 @@ export component PageHosts inherits Rectangle {
     clip: true;
 
     // Shortcut Ctrl+S -> fokus kotak pencarian (window bar, lihat
-    // `HostsModel.focus-search-requested`) — atas permintaan
-    // eksplisit user. `FocusScope` tanpa ukuran (murni penangkap
+    // `HostsModel.focus-search-requested`). `FocusScope` tanpa
+    // ukuran (murni penangkap
     // keyboard, tidak ada elemen visual), ambil fokus SEKALI waktu
     // halaman ini pertama dirender (pola sama dengan `TerminalView`)
     // supaya key-pressed langsung aktif tanpa perlu klik dulu — klik
@@ -520,7 +520,7 @@ export component PageHosts inherits Rectangle {
     // grid di belakangnya waktu panel lagi TERTUTUP). Dideklarasikan
     // SEBELUM `slideover` supaya z-order-nya di BAWAH panel sendiri
     // (jadi klik di ATAS panel tidak ikut ke-backdrop, cuma klik di
-    // LUAR-nya yang nutup) — atas permintaan eksplisit user.
+    // LUAR-nya yang nutup).
     if HostsModel.panel-visible : TouchArea {
         width: 100%;
         height: 100%;

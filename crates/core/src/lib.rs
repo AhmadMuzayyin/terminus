@@ -50,8 +50,8 @@ pub struct HostProfile {
     /// host ini — `None` berarti belum pernah eksplisit ganti tema
     /// (UI fallback ke default "Terminus Dark"). Persist di sini
     /// (bukan cuma in-memory) supaya pilihan tema bertahan lintas
-    /// restart app, per host, atas permintaan eksplisit user ("setiap
-    /// host bisa beda theme, next login pakai theme yang di atur
+    /// restart app, per host (tiap host boleh beda tema, login
+    /// berikutnya memakai tema yang terakhir diatur
     /// terakhir kali pada host tersebut").
     pub terminal_theme: Option<String>,
 }

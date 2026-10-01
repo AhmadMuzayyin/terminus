@@ -55,8 +55,8 @@ export async function updateGroup(vaultId: string, id: string, input: Partial<Gr
 // Hapus grup BESERTA semua host di dalamnya (cascade) — TERMASUK
 // password terenkripsi tiap host itu. SENGAJA MIRROR PERSIS perilaku
 // `terminus_vault::store::VaultStore::delete_group` di desktop app
-// (lihat komentar panjang di sana soal ini keputusan destruktif atas
-// permintaan eksplisit user) — client WAJIB konfirmasi dulu ke
+// (lihat komentar panjang di sana soal keputusan desain destruktif
+// ini) — client WAJIB konfirmasi dulu ke
 // pemakainya sebelum manggil endpoint ini, sama seperti dialog
 // konfirmasi di desktop app.
 export async function deleteGroup(vaultId: string, id: string): Promise<void> {

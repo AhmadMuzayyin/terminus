@@ -34,7 +34,7 @@ export component AppWindow inherits Window {
     preferred-height: 800px;
     min-width: 900px;
     min-height: 600px;
-    // Title bar ASLI OS DIHAPUS (atas permintaan eksplisit user) —
+    // Title bar ASLI OS SENGAJA DIHAPUS —
     // gantinya window bar custom di `TerminalTabBar` (☰ + tab + drag
     // region + minimize/maximize/close buatan sendiri). Lihat catatan
     // panjang `window-*-requested` di models.slint soal implikasinya
@@ -43,15 +43,14 @@ export component AppWindow inherits Window {
 
     // Sidebar cuma 3 item: 0 Hosts, 1 SFTP, 2 Console — Keychain/Port
     // Forwarding/Logs SENGAJA dihapus (UI & tidak pernah ada backend-nya
-    // juga) atas permintaan eksplisit user. Nilai 6 (Terminal) SENGAJA
+    // juga). Nilai 6 (Terminal) SENGAJA
     // bukan item sidebar — cuma dituju dari Rust (waktu connect SSH
     // sukses) atau klik tab di `TerminalTabBar`, lihat
     // `crates/app/src/state.rs::switch_to_tab`. `in-out` supaya bisa
     // di-drive dari Rust.
     in-out property <int> current-page: 0;
     // Toggle sidebar (NavRail) dari tombol ☰ di window bar
-    // (`TerminalTabBar`, lihat komentar di sana) — atas permintaan
-    // eksplisit user.
+    // (`TerminalTabBar`, lihat komentar di sana).
     in-out property <bool> sidebar-collapsed: false;
 
     property <string> page-title: root.current-page == 0 ? "Hosts"
@@ -67,7 +66,7 @@ export component AppWindow inherits Window {
     // `terminal-tabs-bar.slint` soal `search-field`).
     VerticalLayout {
         // Window bar — SELALU di paling atas jendela, TERMASUK
-        // SEBELUM vault di-unlock (atas permintaan eksplisit user).
+        // SEBELUM vault di-unlock (keputusan desain).
         // Dulu window-bar ini ikut ke-hide bareng seluruh isi jendela
         // selama layar unlock (`visible: VaultModel.is-unlocked` di
         // level `VerticalLayout` ini) — karena `no-frame: true` di
@@ -97,8 +96,8 @@ export component AppWindow inherits Window {
             // halaman) selama proses connect — window bar (di atas)
             // TETAP kelihatan (minimize/maximize/close tetap jalan),
             // makanya ditaruh di sini (bukan overlay/scrim menutupi
-            // semuanya) — benar-benar "pindah ke halaman baru", persis
-            // permintaan eksplisit user, dipakai SATU komponen yang
+            // semuanya) — benar-benar "pindah ke halaman baru",
+            // dipakai SATU komponen yang
             // sama oleh SEMUA alur connect (SSH/SFTP/Console, lihat
             // `ConnectingModel` di models.slint).
             if ConnectingModel.visible : ConnectingView { }

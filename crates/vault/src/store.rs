@@ -383,7 +383,7 @@ impl VaultStore {
     /// Hapus grup BESERTA semua host di dalamnya (cascade) — TERMASUK
     /// password terenkripsi tiap host itu. Perilaku ini SENGAJA diubah
     /// (sebelumnya: host di dalam grup cuma jadi ungrouped, TIDAK ikut
-    /// terhapus) atas permintaan eksplisit user — tegaskan lagi di sini
+    /// terhapus) — keputusan desain, tegaskan lagi di sini
     /// karena ini operasi DESTRUKTIF & TIDAK BISA DIBATALKAN, makanya
     /// caller (`crates/app/src/state.rs::on_group_delete_requested`)
     /// WAJIB lewat dialog konfirmasi dulu (sama pola dengan hapus host
@@ -608,8 +608,8 @@ mod tests {
         assert!(matches!(err, VaultError::Locked));
     }
 
-    /// Perilaku `delete_group` SENGAJA diubah atas permintaan eksplisit
-    /// user: dulu host di dalam grup cuma jadi ungrouped (nama test ini
+    /// Perilaku `delete_group` SENGAJA diubah (keputusan desain): dulu
+    /// host di dalam grup cuma jadi ungrouped (nama test ini
     /// sebelumnya `hapus_grup_tidak_ikut_hapus_host_di_dalamnya`),
     /// SEKARANG host-nya BENERAN ikut terhapus (cascade) — TERMASUK
     /// password terenkripsinya (dibuktikan `read_secret` gagal
@@ -678,7 +678,7 @@ mod tests {
         let cred_a = Uuid::new_v4();
         store.store_secret(cred_a, b"password-noc-router").unwrap();
         let identity_a =
-            Identity { id: Uuid::new_v4(), label: "NOC Router".into(), username: "bro-noc".into(), credential_id: cred_a };
+            Identity { id: Uuid::new_v4(), label: "NOC Router".into(), username: "noc-admin".into(), credential_id: cred_a };
         store.save_identity(&identity_a).unwrap();
 
         let cred_b = Uuid::new_v4();
@@ -689,7 +689,7 @@ mod tests {
 
         let listed = store.list_identities().unwrap();
         assert_eq!(listed.len(), 2);
-        assert!(listed.iter().any(|i| i.id == identity_a.id && i.username == "bro-noc"));
+        assert!(listed.iter().any(|i| i.id == identity_a.id && i.username == "noc-admin"));
 
         store.delete_identity(identity_a.id).unwrap();
         let after_delete = store.list_identities().unwrap();

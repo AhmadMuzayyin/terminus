@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { decryptSecret, encryptSecret } from "../../crypto/secrets.js";
 import { prisma } from "../../db/client.js";
 import { NotFoundError } from "../../errors.js";
+import { assertGroupInVault } from "../groups/groups.service.js";
 
 export interface HostInput {
   // Lihat komentar `id` di hosts.schema.ts.
@@ -104,6 +105,7 @@ export async function getHost(vaultId: string, id: string): Promise<HostResponse
 // `PUT .../secret`) — mirror pola host hasil Import SecureCRT di
 // desktop app, BUKAN state error.
 export async function createHost(vaultId: string, input: HostInput): Promise<HostResponse> {
+  await assertGroupInVault(vaultId, input.groupId);
   const host = await prisma.hostProfile.create({
     data: {
       // `input.id` undefined -> Prisma pakai default `@default(uuid())`
@@ -131,6 +133,7 @@ export async function updateHost(
   input: Partial<HostInput>,
 ): Promise<HostResponse> {
   await findHostOrThrow(vaultId, id);
+  await assertGroupInVault(vaultId, input.groupId);
   const host = await prisma.hostProfile.update({
     where: { id },
     data: {

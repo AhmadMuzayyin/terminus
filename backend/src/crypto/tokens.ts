@@ -21,7 +21,8 @@ export function signAccessToken(userId: string): string {
 // Lempar `jwt.JsonWebTokenError`/`TokenExpiredError` kalau tidak valid
 // — caller (`middleware/auth.ts`) yang tangkap & ubah jadi 401.
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  const decoded = jwt.verify(token, config.JWT_SECRET);
+  // Algoritma dikunci ke yang dipakai `signAccessToken` (default HS256).
+  const decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ["HS256"] });
   if (typeof decoded === "string" || typeof decoded.sub !== "string") {
     throw new Error("Payload access token tidak sesuai skema yang diharapkan");
   }

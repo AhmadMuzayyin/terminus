@@ -5,9 +5,11 @@
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import jwt from "jsonwebtoken";
 import request from "supertest";
 
 import { createApp } from "../src/app.js";
+import { config } from "../src/config/env.js";
 import { hashPassword } from "../src/crypto/password.js";
 import { signAccessToken } from "../src/crypto/tokens.js";
 import { prisma } from "../src/db/client.js";
@@ -237,5 +239,85 @@ describe("Hosts CRUD + secret", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .send({ label: "x", host: "", username: "" });
     expect(noHost.status).toBe(400);
+  });
+});
+
+describe("Isolasi antar vault untuk groupId/parentId", () => {
+  const OTHER_EMAIL = "other-hosts-test@terminus.test";
+  let otherId = "";
+  let otherVaultId = "";
+  let foreignGroupId = "";
+
+  beforeAll(async () => {
+    await prisma.vault.deleteMany({ where: { owner: { email: OTHER_EMAIL } } });
+    await prisma.user.deleteMany({ where: { email: OTHER_EMAIL } });
+    const other = await prisma.user.create({
+      data: { email: OTHER_EMAIL, passwordHash: await hashPassword("other-password-123") },
+    });
+    otherId = other.id;
+    const vault = await prisma.vault.create({
+      data: {
+        name: "Vault Orang Lain",
+        ownerUserId: otherId,
+        members: { create: { userId: otherId, role: "owner" } },
+        hostGroups: { create: { name: "RAHASIA" } },
+      },
+      include: { hostGroups: true },
+    });
+    otherVaultId = vault.id;
+    foreignGroupId = vault.hostGroups[0]!.id;
+  });
+
+  afterAll(async () => {
+    await prisma.vault.deleteMany({ where: { id: otherVaultId } });
+    await prisma.user.deleteMany({ where: { id: otherId } });
+  });
+
+  it("create host dengan groupId milik vault lain ditolak (400)", async () => {
+    const res = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/hosts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ label: "x", host: "192.0.2.10", username: "u", groupId: foreignGroupId });
+    expect(res.status).toBe(400);
+  });
+
+  it("update host ke groupId milik vault lain ditolak (400)", async () => {
+    const created = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/hosts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ label: "y", host: "192.0.2.11", username: "u" });
+    expect(created.status).toBe(201);
+
+    const res = await request(app)
+      .put(`/api/v1/vaults/${vaultId}/hosts/${created.body.id}`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ groupId: foreignGroupId });
+    expect(res.status).toBe(400);
+  });
+
+  it("create grup dengan parentId milik vault lain ditolak (400), parentId sendiri tetap boleh", async () => {
+    const foreign = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/groups`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "ANAK", parentId: foreignGroupId });
+    expect(foreign.status).toBe(400);
+
+    const parent = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/groups`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "INDUK" });
+    const child = await request(app)
+      .post(`/api/v1/vaults/${vaultId}/groups`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "ANAK", parentId: parent.body.id });
+    expect(child.status).toBe(201);
+  });
+});
+
+describe("Verifikasi access token", () => {
+  it("token dengan algoritma selain HS256 ditolak walau secret-nya benar (401)", async () => {
+    const forged = jwt.sign({ sub: ownerId }, config.JWT_SECRET, { algorithm: "HS512" });
+    const res = await request(app).get(`/api/v1/vaults/${vaultId}/hosts`).set("Authorization", `Bearer ${forged}`);
+    expect(res.status).toBe(401);
   });
 });

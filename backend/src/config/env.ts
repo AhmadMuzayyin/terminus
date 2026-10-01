@@ -17,7 +17,14 @@ const envSchema = z.object({
     .refine((v) => Buffer.from(v, "base64").length === 32, {
       message: "SERVER_MASTER_KEY harus base64 dari 32 byte (256-bit) random",
     }),
-  JWT_SECRET: z.string().min(16, "JWT_SECRET minimal 16 karakter"),
+  JWT_SECRET: z
+    .string()
+    .min(16, "JWT_SECRET minimal 16 karakter")
+    // Nilai contoh dari .env.example — kalau lolos, siapa pun yang baca
+    // repo ini bisa memalsukan access token server tersebut.
+    .refine((v) => !v.startsWith("ganti-dengan-"), {
+      message: "JWT_SECRET masih nilai contoh dari .env.example — ganti dengan string acak",
+    }),
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(2592000),
 });

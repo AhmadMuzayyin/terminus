@@ -39,6 +39,15 @@ impl VaultStore {
         }
         let conn = Connection::open(&db_path)
             .map_err(|e| VaultError::Database(format!("gagal buka database: {e}")))?;
+        // Secret di dalamnya terenkripsi, tapi metadata host (IP,
+        // username, label) plaintext — jangan bisa dibaca user lain di
+        // mesin yang sama. File journal/WAL SQLite mewarisi mode ini.
+        // Gagal chmod (mis. filesystem tanpa mode Unix) tidak fatal.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&db_path, std::fs::Permissions::from_mode(0o600));
+        }
         let store = Self { conn, db_path, unlocked_key: None };
         store.migrate()?;
         Ok(store)
@@ -548,6 +557,16 @@ mod tests {
     fn temp_store() -> VaultStore {
         let path = std::env::temp_dir().join(format!("terminus-vault-test-{}.db", Uuid::new_v4()));
         VaultStore::open_at(path).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_vault_hanya_bisa_dibaca_pemiliknya() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut store = temp_store();
+        store.initialize("password-kuat-123").unwrap();
+        let mode = std::fs::metadata(store.db_path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

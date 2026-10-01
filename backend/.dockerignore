@@ -1,0 +1,11 @@
+# Secret asli tidak boleh ikut ke build context (env diberikan lewat
+# `env_file` di docker-compose.yml saat runtime, bukan dibakar ke image).
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+tests
+coverage
+*.log

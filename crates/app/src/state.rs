@@ -2368,21 +2368,26 @@ fn wire_sftp_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             sftp_model.set_transfer_error("".into());
 
             let remote_path = posix_join(&state.sftp_remote_path.lock().unwrap_or_else(|e| e.into_inner()), name.as_str());
-            let local_path = state.sftp_local_path.lock().unwrap_or_else(|e| e.into_inner()).join(name.as_str());
+            let local_path = local_child(&state.sftp_local_path.lock().unwrap_or_else(|e| e.into_inner()), name.as_str());
 
             let ui_weak_task = ui_weak.clone();
             let state_task = state.clone();
             tokio::spawn(async move {
-                let downloaded: Result<Vec<u8>, String> = {
-                    let sftp = state_task.sftp.lock().await;
-                    match sftp.as_ref() {
-                        Some(browser) => browser.download(&remote_path).await.map_err(|e| e.to_string()),
-                        None => Err("sesi SFTP sudah terputus".to_string()),
+                let downloaded: Result<(std::path::PathBuf, Vec<u8>), String> = match local_path {
+                    Ok(local_path) => {
+                        let sftp = state_task.sftp.lock().await;
+                        match sftp.as_ref() {
+                            Some(browser) => {
+                                browser.download(&remote_path).await.map(|b| (local_path, b)).map_err(|e| e.to_string())
+                            }
+                            None => Err("sesi SFTP sudah terputus".to_string()),
+                        }
                     }
+                    Err(e) => Err(e),
                 };
 
                 let result: Result<(), String> = match downloaded {
-                    Ok(bytes) => tokio::task::spawn_blocking(move || std::fs::write(&local_path, &bytes))
+                    Ok((local_path, bytes)) => tokio::task::spawn_blocking(move || std::fs::write(&local_path, &bytes))
                         .await
                         .expect("blocking task panik")
                         .map_err(|e| format!("gagal tulis file lokal: {e}")),
@@ -3523,6 +3528,18 @@ fn posix_join(path: &str, name: &str) -> String {
     }
 }
 
+/// Path tujuan download di folder lokal. Nama file berasal dari listing
+/// server, jadi wajib tepat satu komponen biasa — tanpa ini nama seperti
+/// `../.bashrc` (atau path absolut, yang di `Path::join` MENGGANTI base)
+/// dari server jahat bisa menimpa file di luar folder yang dipilih user.
+fn local_child(base: &std::path::Path, name: &str) -> Result<std::path::PathBuf, String> {
+    let mut parts = std::path::Path::new(name).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(base.join(name)),
+        _ => Err(format!("nama file tidak aman: {name:?}")),
+    }
+}
+
 fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     if bytes < 1024 {
@@ -4090,6 +4107,16 @@ mod tests {
     use crate::NewHostForm;
     use slint::Model;
     use std::time::Duration as StdDuration;
+
+    #[test]
+    fn local_child_menolak_nama_yang_keluar_dari_folder_tujuan() {
+        let base = std::path::Path::new("/home/user/Downloads");
+        assert_eq!(local_child(base, "laporan.txt").unwrap(), base.join("laporan.txt"));
+        assert!(local_child(base, ".bashrc").is_ok());
+        for bad in ["", ".", "..", "../.bashrc", "/etc/passwd", "a/b", "./x"] {
+            assert!(local_child(base, bad).is_err(), "{bad:?} harusnya ditolak");
+        }
+    }
 
     /// Bukti nyata (bukan cuma "compile") `fontdb` beneran nemuin font
     /// asli di mesin ini — bukan mock/daftar hardcode. Mesin dev tanpa

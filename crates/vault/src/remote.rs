@@ -27,10 +27,18 @@ use crate::VaultError;
 /// Pasangan token hasil login/register/refresh. Publik (beda dari
 /// `TokenPair` internal) karena layer app perlu menyimpan
 /// `refresh_token`-nya (`session_store`) sebelum membangun client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthTokens {
     pub access_token: String,
     pub refresh_token: String,
+}
+
+// `Debug` manual supaya `{:?}`/`unwrap()` tidak pernah mencetak token
+// ke log atau pesan panik.
+impl std::fmt::Debug for AuthTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthTokens").finish_non_exhaustive()
+    }
 }
 
 /// Data akun yang login (`GET/PATCH /auth/me`). `full_name` `None` =
@@ -695,7 +703,7 @@ impl IdentityDto {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct SecretDto {
     password: String,
 }

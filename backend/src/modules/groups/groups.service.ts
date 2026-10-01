@@ -2,7 +2,7 @@
 // konvensi DESIGN.md bagian 3).
 
 import { prisma } from "../../db/client.js";
-import { NotFoundError } from "../../errors.js";
+import { BadRequestError, NotFoundError } from "../../errors.js";
 
 interface GroupInput {
   // Lihat komentar `id` di hosts.schema.ts.
@@ -28,7 +28,19 @@ export async function getGroup(vaultId: string, id: string) {
   return findGroupOrThrow(vaultId, id);
 }
 
+// `groupId`/`parentId` dari body request cuma divalidasi format UUID oleh
+// zod — tanpa cek ini, anggota vault A bisa mengaitkan host/grupnya ke
+// grup milik vault B (yang dia bukan anggotanya).
+export async function assertGroupInVault(vaultId: string, groupId: string | null | undefined) {
+  if (groupId === null || groupId === undefined) return;
+  const group = await prisma.hostGroup.findUnique({ where: { id: groupId }, select: { vaultId: true } });
+  if (!group || group.vaultId !== vaultId) {
+    throw new BadRequestError("Grup tidak ditemukan di vault ini");
+  }
+}
+
 export async function createGroup(vaultId: string, input: GroupInput) {
+  await assertGroupInVault(vaultId, input.parentId);
   return prisma.hostGroup.create({
     data: {
       id: input.id,
@@ -42,6 +54,7 @@ export async function createGroup(vaultId: string, input: GroupInput) {
 
 export async function updateGroup(vaultId: string, id: string, input: Partial<GroupInput>) {
   await findGroupOrThrow(vaultId, id);
+  await assertGroupInVault(vaultId, input.parentId);
   return prisma.hostGroup.update({
     where: { id },
     data: {

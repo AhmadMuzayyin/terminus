@@ -173,6 +173,12 @@ impl SftpBrowser {
         let read_dir = self.session.read_dir(path).await.map_err(|e| SftpError::Io(e.to_string()))?;
 
         let mut entries: Vec<RemoteEntry> = read_dir
+            // Nama dari server tidak dipercaya mentah-mentah: nama entry
+            // SFTP selalu satu komponen, jadi yang mengandung `/` atau NUL
+            // hanya mungkin datang dari server jahat/rusak — dan kalau
+            // lolos ke UI, nama itu ikut dipakai menyusun path lokal waktu
+            // download (path traversal).
+            .filter(|entry| is_single_component(&entry.file_name()))
             .map(|entry| {
                 let meta = entry.metadata();
                 RemoteEntry {
@@ -191,5 +197,24 @@ impl SftpBrowser {
         });
 
         Ok(entries)
+    }
+}
+
+fn is_single_component(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_single_component;
+
+    #[test]
+    fn nama_entry_berbahaya_dari_server_ditolak() {
+        for bad in ["", ".", "..", "../.bashrc", "/etc/passwd", "a/b", "a\0b"] {
+            assert!(!is_single_component(bad), "{bad:?} harusnya ditolak");
+        }
+        for ok in ["config.txt", ".hidden", "..data", "nama dengan spasi", "back\\slash"] {
+            assert!(is_single_component(ok), "{ok:?} harusnya diterima");
+        }
     }
 }

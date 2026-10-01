@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["full"] }
 # gagal compile. Pilih "ring" (pure Rust, gampang cross-compile ke
 # Linux+macOS/ARM) daripada "aws-lc-rs" (butuh cmake/C compiler di build
 # machine).
-russh = { version = "0.58", features = ["ring"] }
+russh = { version = "0.62.7", features = ["ring"] }
 russh-keys = "0.49"
 russh-sftp = "2.1"
 

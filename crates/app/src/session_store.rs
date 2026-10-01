@@ -50,9 +50,26 @@ fn load_or_create_key(config_dir: &std::path::Path) -> anyhow::Result<[u8; 32]> 
     }
     let mut key = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut key);
-    std::fs::write(&path, key)?;
+    write_owner_only(&path, &key)?;
     set_owner_only_permissions(&path)?;
     Ok(key)
+}
+
+/// Tulis file yang langsung dibuat dengan mode 0600 — `fs::write` lalu
+/// chmod menyisakan jeda singkat di mana key terbaca user lain (umask).
+#[cfg(unix)]
+fn write_owner_only(path: &std::path::Path, data: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    file.write_all(data)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_owner_only(path: &std::path::Path, data: &[u8]) -> anyhow::Result<()> {
+    std::fs::write(path, data)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -75,7 +92,10 @@ fn open_db() -> anyhow::Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(path)?;
+    let conn = Connection::open(&path)?;
+    // Isinya sudah terenkripsi; ini lapisan tambahan, jadi gagal chmod
+    // (filesystem tanpa mode Unix) tidak boleh menggagalkan login.
+    let _ = set_owner_only_permissions(&path);
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS session_secret (
             id INTEGER PRIMARY KEY CHECK (id = 1),

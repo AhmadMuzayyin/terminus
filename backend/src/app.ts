@@ -31,7 +31,11 @@ export function createApp(): Express {
       await prisma.$queryRaw`SELECT 1`;
       res.json({ status: "ok", db: "connected" });
     } catch (error) {
-      res.status(503).json({ status: "error", db: "unreachable", message: (error as Error).message });
+      // Endpoint ini publik (tanpa login) — pesan error Prisma bisa
+      // memuat host/port/user database, jadi detailnya cuma ke log.
+      // eslint-disable-next-line no-console -- belum ada logger terpusat
+      console.error("Health check: database tidak bisa dijangkau:", error);
+      res.status(503).json({ status: "error", db: "unreachable" });
     }
   });
 

@@ -27,7 +27,7 @@ di-*fork*, dipelajari, dan dikontribusikan.
   dan SFTP dari HP lewat server Terminus Self-hosted.
 - **[Arsitektur](#architecture)** — struktur workspace crate, prinsip
   desain, tumpukan teknologi.
-- **[Packaging & Rilis](#packaging)** — build executable siap-distribusi
+- **[Build & Rilis](#packaging)** — build executable desktop (Linux, macOS, Windows) dan APK Android
   di tiap OS: `.deb`/`.rpm`/AppImage (Linux), `.app`/`.dmg` (macOS),
   `.exe`/`.zip` (Windows).
 - **[Berkontribusi](#contributing)** — cara kontribusi, konvensi kode,

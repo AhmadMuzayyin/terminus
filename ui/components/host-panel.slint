@@ -53,6 +53,24 @@ export component HostSlideOver inherits Rectangle {
 
     property <string> selected-group-id: HostsModel.panel-host-group-id;
 
+    // Identity dipilih -> Rust menaikkan seq setelah password-nya
+    // didekripsi; timpa isi field secara eksplisit (lihat
+    // `HostsModel.identity-fill-seq`).
+    property <int> identity-fill-seq: HostsModel.identity-fill-seq;
+    changed identity-fill-seq => {
+        username-field.set-text(HostsModel.identity-fill-username);
+        password-field.set-text(HostsModel.identity-fill-password);
+    }
+
+    // Pilihan picker identity (0 = "Isi manual"). Dikembalikan ke 0 tiap
+    // panel pindah host/mode, supaya tidak menampilkan identity yang
+    // dipilih untuk host sebelumnya.
+    property <int> identity-choice: 0;
+    property <string> panel-key: HostsModel.panel-host-id + (HostsModel.panel-is-new ? "/new" : "") + (HostsModel.panel-visible ? "/open" : "");
+    changed panel-key => {
+        root.identity-choice = 0;
+    }
+
     property <NewHostForm> current-form: {
         label: label-field.value,
         host: host-field.value,
@@ -150,39 +168,6 @@ export component HostSlideOver inherits Rectangle {
 
             Rectangle { height: 1px; background: Tokens.outline-variant; }
 
-            // Picker "Identity Tersimpan" — CUMA mode "New Host". Pilih
-            // satu isi otomatis Username/Password di bawah (Rust yang
-            // baca+dekripsi lewat `on_identity_picked`, lihat
-            // `HostsModel.identity-picked`). Tidak tampil di mode edit
-            // host — field Password biasa (kosongkan = tidak diubah)
-            // sudah cukup buat itu, picker ini gampang salah pencet
-            // kalau dipakai buat host yang SUDAH ada.
-            if HostsModel.panel-is-new && HostsModel.identities.length > 0 : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: "Isi dari Identity Tersimpan (opsional)";
-                    color: Tokens.on-surface-variant;
-                    font-family: Tokens.font-body;
-                    font-size: 12px;
-                }
-                ComboBox {
-                    // Label tampilan ("Label (username)") sudah dibangun
-                    // Rust di `HostsModel.identity-labels` — index-nya
-                    // SEJAJAR persis dengan `HostsModel.identities`
-                    // (diisi bareng-bareng di `refresh_hosts_model`),
-                    // dipakai balik buat resolve `.id` waktu dipilih.
-                    // (Slint tidak punya array-comprehension expression
-                    // buat derive ini di sisi Slint sendiri.)
-                    model: HostsModel.identity-labels;
-                    current-index: -1;
-                    selected(text) => {
-                        if self.current-index >= 0 {
-                            HostsModel.identity-picked(HostsModel.identities[self.current-index].id);
-                        }
-                    }
-                }
-            }
-
             label-field := DialogField {
                 label-text: "Label";
                 placeholder: "mis. prod-web-01";
@@ -194,6 +179,33 @@ export component HostSlideOver inherits Rectangle {
                 initial-value: HostsModel.panel-host-host;
             }
             port-spin := SpinBox { width: 100%; minimum: 1; maximum: 65535; value: HostsModel.panel-host-port; }
+
+            // Picker "Identity Tersimpan" — mode baru MAUPUN edit. Pilih
+            // satu -> Username/Password di bawah terisi (Rust yang
+            // baca+dekripsi lewat `on_identity_picked`); di mode edit
+            // baru berlaku setelah Simpan, sama seperti field lain.
+            if HostsModel.identity-count > 0 : VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "Pakai Identity Tersimpan (opsional)";
+                    color: Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 12px;
+                }
+                ComboBox {
+                    // "Isi manual" + label "Label (username)" dari Rust
+                    // (`identity-choice-labels`) — index i>0 SEJAJAR
+                    // dengan `HostsModel.identities[i-1]`.
+                    model: HostsModel.identity-choice-labels;
+                    current-index <=> root.identity-choice;
+                    selected(text) => {
+                        if self.current-index > 0 {
+                            HostsModel.identity-picked(HostsModel.identities[self.current-index - 1].id);
+                        }
+                    }
+                }
+            }
+
             username-field := DialogField {
                 label-text: "Username";
                 placeholder: "mis. root";

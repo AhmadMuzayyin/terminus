@@ -43,6 +43,12 @@ export component DialogField inherits Rectangle {
     public function clear() {
         input.text = "";
     }
+    // Isi field dari luar (mis. identity tersimpan dipilih). Beda dari
+    // `initial-value`, ini tetap berlaku walau user sudah sempat mengetik
+    // (binding `text: initial-value` putus begitu field diketik).
+    public function set-text(value: string) {
+        input.text = value;
+    }
     // Dipancarkan tiap ketukan (bukan cuma waktu submit) — dipakai
     // form yang butuh nilai field-nya TERUS sinkron ke property lain
     // sambil ngetik (mis. `SftpModel.manual-*` di page-sftp.slint).
@@ -710,12 +716,23 @@ export component ExportJsonDialog inherits DialogScrim {
 // `HostSlideOver`, `host-panel.slint`) — dialog ini murni manajemen
 // datanya sendiri, dibuka dari toolbar Hosts.
 export component IdentitiesDialog inherits DialogScrim {
+    // Bersihkan form setelah tambah sukses (Rust menaikkan counter ini).
+    property <int> created-seq: HostsModel.identity-created-seq;
+    changed created-seq => {
+        new-label-field.clear();
+        new-username-field.clear();
+        new-password-field.clear();
+    }
+
     card := DialogCard {
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 6;
-        height: 480px;
+        // Tinggi mengikuti isi (dulu fix 480px — isinya lebih tinggi dari
+        // itu, field Password & tombol jatuh keluar kartu), dibatasi tinggi
+        // jendela; yang menyusut kalau sempit cuma daftar identity.
+        height: min(content.preferred-height, parent.height - 32px);
+        y: max(16px, (parent.height - self.height) / 4);
 
-        VerticalLayout {
+        content := VerticalLayout {
             padding: 24px;
             spacing: Tokens.stack-gap;
 
@@ -746,18 +763,27 @@ export component IdentitiesDialog inherits DialogScrim {
                 }
             }
             Text {
-                text: "Kredensial username+password reusable — pilih salah satu waktu bikin host baru, tanpa isi ulang dari nol tiap kali.";
+                text: "Pasangan username + password yang bisa dipakai ulang — pilih dari form host (baru maupun edit) atau saat connect ke host yang belum punya kredensial.";
                 color: Tokens.on-surface-variant;
                 font-family: Tokens.font-body;
                 font-size: 12px;
                 wrap: word-wrap;
             }
 
+            // Tinggi mengikuti jumlah identity (maks. 5 baris terlihat,
+            // sisanya di-scroll); ini satu-satunya bagian yang menyusut
+            // kalau jendela pendek. Harus eksplisit — `ScrollView` tidak
+            // menghormati `preferred-height`. ~480px = sisa isi kartu.
+            // Pakai `identity-count` (int dari Rust), bukan
+            // `identities.length`: yang terakhir tidak dihitung ulang
+            // waktu model diganti selagi dialog terbuka.
             ScrollView {
-                height: 160px;
+                height: HostsModel.identity-count == 0 ? 24px
+                    : max(40px, min(min(5, HostsModel.identity-count) * 44px - 4px, root.height - 32px - 480px));
                 VerticalLayout {
+                    alignment: start;
                     spacing: 4px;
-                    if HostsModel.identities.length == 0 : Text {
+                    if HostsModel.identity-count == 0 : Text {
                         text: "Belum ada identity tersimpan.";
                         color: Tokens.outline;
                         font-family: Tokens.font-body;
@@ -827,7 +853,7 @@ export component IdentitiesDialog inherits DialogScrim {
             new-username-field := DialogField { label-text: "Username"; placeholder: "mis. noc-admin"; }
             new-password-field := DialogField { label-text: "Password"; placeholder: "••••••••"; is-password: true; }
 
-            Rectangle { vertical-stretch: 1; }
+            Rectangle { height: 4px; }
 
             DialogButton {
                 label-text: HostsModel.identities-busy ? "Menyimpan..." : "Tambah Identity";

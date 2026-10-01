@@ -152,9 +152,9 @@ export global HostsModel {
     in-out property <string> panel-host-tags: ""; // dipisah koma
     in-out property <string> panel-host-status: "";
     // Diisi HANYA lewat `identity-picked` (lihat blok Identity di bawah)
-    // waktu `panel-is-new` — password host BARU biasanya diketik manual
-    // (field ini kosong), TIDAK PERNAH dibaca ulang dari vault (beda
-    // dari `panel-host-username` yang juga dipakai mode edit).
+    // — password tersimpan host TIDAK PERNAH dibaca ulang dari vault ke
+    // sini. Dikosongkan tiap panel diisi ulang (`populate_panel`) supaya
+    // password identity yang dipilih untuk host lain tidak terbawa.
     in-out property <string> panel-host-password: "";
 
     // Buka slide-over dalam mode "New Host": reset semua field
@@ -197,14 +197,28 @@ export global HostsModel {
     // `host-panel.slint`. Dipakai sebagai `model:` picker `ComboBox` di
     // sana, index hasil pilihnya dipakai balik ke `identities[index].id`.
     in-out property <[string]> identity-labels: [];
+    // Sama seperti `identity-labels` tapi diawali entri "Isi manual" —
+    // dipakai picker di layar Connecting, index i>0 -> `identities[i-1]`.
+    in-out property <[string]> identity-choice-labels: [];
+    // Jumlah identity — dipakai ekspresi layout (lihat `IdentitiesDialog`).
+    in-out property <int> identity-count: 0;
     in-out property <bool> show-identities-dialog: false;
     in-out property <bool> identities-busy: false;
+    // Naik tiap identity baru sukses tersimpan — `IdentitiesDialog`
+    // mengosongkan form-nya waktu ini berubah.
+    in-out property <int> identity-created-seq: 0;
     callback identity-create-requested(string /* label */, string /* username */, string /* password */);
     callback identity-delete-requested(string /* identity id */);
-    // Dipanggil `HostSlideOver` waktu satu identity dipilih dari
-    // picker-nya — Rust yang baca+dekripsi password-nya lalu isi
-    // `panel-host-username`/`panel-host-password` di atas.
+    // Dipanggil `HostSlideOver` (mode baru MAUPUN edit) waktu satu
+    // identity dipilih dari picker-nya — Rust yang baca+dekripsi
+    // password-nya, isi `identity-fill-*` lalu naikkan `identity-fill-seq`;
+    // panel memakai perubahan seq itu untuk menimpa isi field Username/
+    // Password secara eksplisit (binding `initial-value` sudah putus
+    // kalau user sempat mengetik). Hasilnya baru tersimpan lewat Simpan.
     callback identity-picked(string /* identity id */);
+    in-out property <int> identity-fill-seq: 0;
+    in-out property <string> identity-fill-username: "";
+    in-out property <string> identity-fill-password: "";
 
     // Notifikasi terakhir (mis. "gagal connect", "host key berubah") —
     // ditampilkan sebagai toast kecil di app-window.slint. Rust yang
@@ -650,8 +664,18 @@ export global ConnectingModel {
     // lanjut connect otomatis (Rust yang urus simpan ke vault +
     // connect, lihat `on_password_submitted` di state.rs), tidak perlu
     // bolak-balik ke panel Host Details lagi.
+    //
+    // Juga dipakai kalau USERNAME-nya yang kosong. Form-nya bisa diisi
+    // manual atau dari identity tersimpan (`HostsModel.identity-choice-
+    // labels`) — kalau identity dipilih, Rust yang baca password-nya
+    // langsung dari vault (plaintext tidak pernah lewat UI).
     in-out property <bool> needs-password: false;
-    callback password-submitted(string);
+    // Username host saat ini (prefill field Username, boleh kosong).
+    in-out property <string> prompt-username: "";
+    // Host sudah punya password tersimpan (yang kurang cuma username) —
+    // field Password boleh dikosongkan.
+    in-out property <bool> has-stored-password: false;
+    callback credentials-submitted(string /* username */, string /* password */, string /* identity id, "" = manual */);
 }
 
 // State unlock/create vault. Terpisah dari HostsModel karena logically

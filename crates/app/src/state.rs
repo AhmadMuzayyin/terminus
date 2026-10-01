@@ -638,9 +638,13 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                     }
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(ui) = ui_weak_task.upgrade() else { return };
-                        ui.global::<HostsModel>().set_identities_busy(false);
+                        let hm = ui.global::<HostsModel>();
+                        hm.set_identities_busy(false);
                         match result {
-                            Ok(()) => refresh_hosts_model(&ui, &state_task),
+                            Ok(()) => {
+                                refresh_hosts_model(&ui, &state_task);
+                                hm.set_identity_created_seq(hm.get_identity_created_seq() + 1);
+                            }
                             Err(e) => show_notice(&ui, &format!("Gagal simpan identity: {e}"), true),
                         }
                     });
@@ -708,8 +712,15 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 let Ok(password) = vault.read_secret(identity.credential_id).await else { return };
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_weak_task.upgrade() else { return };
-                    ui.global::<HostsModel>().set_panel_host_username(identity.username.into());
-                    ui.global::<HostsModel>().set_panel_host_password(String::from_utf8_lossy(&password).into_owned().into());
+                    let hm = ui.global::<HostsModel>();
+                    let password: slint::SharedString = String::from_utf8_lossy(&password).into_owned().into();
+                    hm.set_panel_host_username(identity.username.clone().into());
+                    hm.set_panel_host_password(password.clone());
+                    // Seq yang memicu panel menimpa isi field — tetap jalan
+                    // walau user sudah mengetik (lihat `identity-fill-seq`).
+                    hm.set_identity_fill_username(identity.username.into());
+                    hm.set_identity_fill_password(password);
+                    hm.set_identity_fill_seq(hm.get_identity_fill_seq() + 1);
                 });
             });
         });
@@ -1292,10 +1303,13 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                 };
 
                 match password {
-                    Some(password) => {
+                    Some(password) if !profile.username.is_empty() => {
                         track_connect_task(&state_task, Some(uuid), perform_connect(ui_weak_task, state_task.clone(), profile, password));
                     }
-                    None => {
+                    // Password ATAU username belum ada (host hasil import
+                    // SecureCRT sering tanpa username) -> minta lewat form.
+                    password => {
+                        let has_stored_password = password.is_some();
                         // Password belum ada — DULU langsung gagal dengan
                         // notice error, user harus buka panel Host Details
                         // manual dulu. SEKARANG (keputusan desain):
@@ -1311,11 +1325,14 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                             let subtitle = format!("SSH {}:{}", profile.host, profile.port);
                             let avatar_letter =
                                 label.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".to_string());
+                            let username = profile.username.clone();
                             *state_task.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()) = Some(profile);
                             let cm = ui.global::<ConnectingModel>();
                             cm.set_label(label.into());
                             cm.set_subtitle(subtitle.into());
                             cm.set_avatar_letter(avatar_letter.into());
+                            cm.set_prompt_username(username.into());
+                            cm.set_has_stored_password(has_stored_password);
                             cm.set_needs_password(true);
                             cm.set_visible(true);
                         });
@@ -3175,45 +3192,119 @@ fn wire_connecting_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         });
     }
 
-    // --- Password diisi di layar Connecting (host tersimpan yang
-    //     belum ada password — lihat `on_host_connect_requested` &
-    //     komentar panjang `ConnectingModel.needs-password`,
-    //     models.slint) — simpan ke vault (biar tidak ditanya lagi
-    //     next time) SEKALIGUS langsung connect, satu submit. ---
+    // --- Kredensial diisi di layar Connecting (host tersimpan yang
+    //     belum ada username/password — lihat `on_host_connect_requested`
+    //     & komentar `ConnectingModel.needs-password`, models.slint).
+    //     Sumbernya identity tersimpan (password dibaca langsung dari
+    //     vault, tidak lewat UI) ATAU isian manual. Hasilnya disalin ke
+    //     host (biar tidak ditanya lagi) SEKALIGUS langsung connect. ---
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
-        ui.global::<ConnectingModel>().on_password_submitted(move |password: slint::SharedString| {
-            let Some(ui) = ui_weak.upgrade() else { return };
-            let password = password.to_string();
-            if password.is_empty() {
-                return; // kosong -> jangan apa-apa, biarkan user coba lagi/Batal
-            }
-            let Some(profile) = state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-                return;
-            };
-            let credential_id = match &profile.auth {
-                AuthMethod::Password { credential_id } => *credential_id,
-                _ => return,
-            };
-            let uuid = profile.id;
-            ui.global::<ConnectingModel>().set_needs_password(false);
+        ui.global::<ConnectingModel>().on_credentials_submitted(
+            move |username: slint::SharedString, password: slint::SharedString, identity_id: slint::SharedString| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let identity = match identity_id.as_str() {
+                    "" => None,
+                    raw => {
+                        let Ok(uuid) = Uuid::parse_str(raw) else { return };
+                        let Some(identity) = state.identities_cache.lock().unwrap().iter().find(|i| i.id == uuid).cloned()
+                        else {
+                            show_notice(&ui, "Identity tidak ditemukan", true);
+                            return;
+                        };
+                        Some(identity)
+                    }
+                };
+                let username = match &identity {
+                    Some(identity) => identity.username.clone(),
+                    None => username.trim().to_string(),
+                };
+                if username.is_empty() {
+                    return; // UI sudah mencegah ini; jaga-jaga saja
+                }
+                let Some(mut profile) = state.pending_password_profile.lock().unwrap_or_else(|e| e.into_inner()).take()
+                else {
+                    return;
+                };
+                let credential_id = match &profile.auth {
+                    AuthMethod::Password { credential_id } => *credential_id,
+                    _ => return,
+                };
+                let uuid = profile.id;
+                ui.global::<ConnectingModel>().set_needs_password(false);
 
-            let vault = state.vault();
-            let password_bytes = password.clone().into_bytes();
-            let ui_weak_task = ui_weak.clone();
-            let state_task = state.clone();
-            let fut = async move {
-                // Simpan dulu (best-effort — gagal simpan TIDAK
-                // menggagalkan connect-nya, cuma berarti next time
-                // ditanya lagi) baru connect, biar begitu login sukses
-                // password itu SUDAH ada di vault buat next time.
-                let _ = vault.store_secret(credential_id, password_bytes).await;
-                perform_connect(ui_weak_task, state_task, profile, password).await;
-            };
-            track_connect_task(&state, Some(uuid), fut);
-        });
+                let typed_password = password.to_string();
+                let vault = state.vault();
+                let ui_weak_task = ui_weak.clone();
+                let state_task = state.clone();
+                let fut = async move {
+                    // `Some` = password baru yang perlu disalin ke host;
+                    // `None` = pakai yang sudah tersimpan di host.
+                    let new_password = match &identity {
+                        Some(identity) => match vault.read_secret(identity.credential_id).await {
+                            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+                            Err(e) => {
+                                connect_prompt_failed(&ui_weak_task, &state_task, uuid, format!("Gagal baca identity: {e}"));
+                                return;
+                            }
+                        },
+                        None if !typed_password.is_empty() => Some(typed_password),
+                        None => None,
+                    };
+                    let password = match &new_password {
+                        Some(password) => password.clone(),
+                        None => match vault.read_secret(credential_id).await {
+                            Ok(bytes) if !bytes.is_empty() => String::from_utf8_lossy(&bytes).into_owned(),
+                            _ => {
+                                connect_prompt_failed(&ui_weak_task, &state_task, uuid, "Password belum diisi".into());
+                                return;
+                            }
+                        },
+                    };
+
+                    // Simpan ke host dulu (best-effort — gagal simpan
+                    // TIDAK menggagalkan connect, cuma berarti next time
+                    // ditanya lagi) baru connect.
+                    let mut saved = false;
+                    if let Some(password) = &new_password {
+                        saved |= vault.store_secret(credential_id, password.clone().into_bytes()).await.is_ok();
+                    }
+                    if profile.username != username {
+                        profile.username = username;
+                        saved |= vault.save_profile(profile.clone()).await.is_ok();
+                    }
+                    if saved {
+                        refresh_vault_cache(&state_task).await;
+                        let ui_weak_refresh = ui_weak_task.clone();
+                        let state_refresh = state_task.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak_refresh.upgrade() {
+                                refresh_hosts_model(&ui, &state_refresh);
+                            }
+                        });
+                    }
+                    perform_connect(ui_weak_task, state_task, profile, password).await;
+                };
+                track_connect_task(&state, Some(uuid), fut);
+            },
+        );
     }
+}
+
+/// Kredensial dari layar Connecting tidak bisa dipakai (identity gagal
+/// dibaca / password tetap kosong) — tutup layar, status host balik
+/// offline, tampilkan alasannya.
+fn connect_prompt_failed(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>, host_id: Uuid, message: String) {
+    set_status(state, host_id, "offline");
+    let ui_weak = ui_weak.clone();
+    let state = state.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(ui) = ui_weak.upgrade() else { return };
+        ui.global::<ConnectingModel>().set_visible(false);
+        refresh_hosts_model(&ui, &state);
+        show_notice(&ui, &message, true);
+    });
 }
 
 /// Task yang hidup selama satu sesi Console berlangsung — pola SAMA
@@ -3971,6 +4062,9 @@ fn populate_panel(ui: &AppWindow, state: &Arc<AppState>, profile: &HostProfile) 
     hm.set_panel_host_host(profile.host.clone().into());
     hm.set_panel_host_port(profile.port as i32);
     hm.set_panel_host_username(profile.username.clone().into());
+    // Sisa password identity yang dipilih sebelumnya (host lain / form
+    // New Host) jangan sampai ikut tampil & tersimpan ke host ini.
+    hm.set_panel_host_password("".into());
     hm.set_panel_host_kind(
         match profile.kind {
             ConnectionKind::Ssh => "ssh",
@@ -4049,7 +4143,11 @@ pub(crate) fn refresh_hosts_model(ui: &AppWindow, state: &Arc<AppState>) {
         .map(|i| IdentityItem { id: i.id.to_string().into(), label: i.label.clone().into(), username: i.username.clone().into() })
         .collect();
     ui.global::<HostsModel>().set_identities(ModelRc::new(VecModel::from(identity_items)));
+    let identity_choice_labels: Vec<slint::SharedString> =
+        std::iter::once("Isi manual".into()).chain(identity_labels.iter().cloned()).collect();
     ui.global::<HostsModel>().set_identity_labels(ModelRc::new(VecModel::from(identity_labels)));
+    ui.global::<HostsModel>().set_identity_choice_labels(ModelRc::new(VecModel::from(identity_choice_labels)));
+    ui.global::<HostsModel>().set_identity_count(identities.len() as i32);
 
     let ungrouped_items: Vec<HostItem> = ungrouped.iter().map(|p| host_profile_to_item(state, p)).collect();
     ui.global::<HostsModel>().set_ungrouped_hosts(ModelRc::new(VecModel::from(ungrouped_items)));
@@ -4386,6 +4484,7 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         let state = wire_callbacks(&ui, VaultBackend::Local(Arc::new(Mutex::new(temp_vault()))));
         let ui_weak = ui.as_weak();
+        let state_t = state.clone();
 
         slint::spawn_local(async move {
             let ui = ui_weak.upgrade().unwrap();
@@ -4711,6 +4810,54 @@ mod tests {
             )
             .await;
             assert_eq!(ui.global::<HostsModel>().get_panel_host_username(), "noc-admin");
+            // Jalur yang dipakai panel untuk menimpa field (juga di mode edit).
+            assert!(ui.global::<HostsModel>().get_identity_fill_seq() > 0);
+            assert_eq!(ui.global::<HostsModel>().get_identity_fill_username(), "noc-admin");
+            assert_eq!(ui.global::<HostsModel>().get_identity_fill_password(), "secret-identity-pw");
+            assert_eq!(
+                ui.global::<HostsModel>().get_identity_choice_labels().row_data(0).unwrap(),
+                "Isi manual",
+                "picker layar Connecting diawali entri manual"
+            );
+            assert_eq!(ui.global::<HostsModel>().get_identity_choice_labels().row_data(1).unwrap(), "NOC Router (noc-admin)");
+
+            // Buka host lain -> password identity tadi TIDAK boleh terbawa.
+            let any_host_id = state_t.profiles_cache.lock().unwrap()[0].id.to_string();
+            ui.global::<HostsModel>().invoke_host_selected(any_host_id.into());
+            assert_eq!(ui.global::<HostsModel>().get_panel_host_password(), "", "sisa password identity harus dibersihkan");
+
+            // Connect ke host tanpa username & password -> layar Connecting
+            // minta kredensial; pilih identity -> username & password-nya
+            // disalin ke host, lalu connect jalan.
+            ui.global::<HostsModel>().invoke_create_host_requested(NewHostForm {
+                label: "tanpa-kredensial".into(),
+                host: "127.0.0.1".into(),
+                port: 1,
+                username: "".into(),
+                password: "".into(),
+                kind: "ssh".into(),
+                group_id: "".into(),
+                tags: "".into(),
+            });
+            let find_bare = || state_t.profiles_cache.lock().unwrap().iter().find(|p| p.label == "tanpa-kredensial").cloned();
+            wait_until(|| find_bare().is_some(), "host tanpa kredensial tersimpan").await;
+            let bare = find_bare().unwrap();
+            ui.global::<HostsModel>().invoke_host_connect_requested(bare.id.to_string().into());
+            wait_until(|| ui.global::<ConnectingModel>().get_needs_password(), "layar Connecting minta kredensial").await;
+            assert_eq!(ui.global::<ConnectingModel>().get_prompt_username(), "");
+            assert!(!ui.global::<ConnectingModel>().get_has_stored_password());
+
+            ui.global::<ConnectingModel>().invoke_credentials_submitted("".into(), "".into(), identity_item.id.clone());
+            wait_until(
+                || find_bare().map(|p| p.username == "noc-admin").unwrap_or(false),
+                "username identity tersalin ke host",
+            )
+            .await;
+            let AuthMethod::Password { credential_id } = bare.auth else { panic!("host harus auth password") };
+            let copied = state_t.vault().read_secret(credential_id).await.unwrap();
+            assert_eq!(copied, b"secret-identity-pw", "password identity tersalin ke host");
+            wait_until(|| !ui.global::<ConnectingModel>().get_visible(), "percobaan connect selesai (port 1 pasti gagal)")
+                .await;
 
             ui.global::<HostsModel>().invoke_identity_delete_requested(identity_item.id.clone());
             wait_until(|| ui.global::<HostsModel>().get_identities().row_count() == 0, "identity terhapus").await;

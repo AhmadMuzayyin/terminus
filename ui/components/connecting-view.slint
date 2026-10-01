@@ -1,6 +1,7 @@
+import { ComboBox } from "std-widgets.slint";
 import { Tokens } from "../tokens.slint";
 import { DialogButton, DialogField } from "./dialogs.slint";
-import { ConnectingModel } from "../models.slint";
+import { ConnectingModel, HostsModel } from "../models.slint";
 
 // Titik-titik loading ("● ● ●" bergantian terang-redup) — indikator
 // animasi indeterminate PALING sederhana & PALING kecil resikonya buat
@@ -32,6 +33,104 @@ component LoadingDots inherits HorizontalLayout {
         background: Tokens.primary;
         opacity: i == root.phase ? 1.0 : 0.3;
         animate opacity { duration: Tokens.transition-normal; easing: ease-in-out; }
+    }
+}
+
+// Form kredensial untuk host tersimpan yang belum punya username/
+// password. Pilih identity tersimpan ATAU isi manual; identity dikirim
+// sebagai id saja — password-nya dibaca Rust langsung dari vault.
+component CredentialsPrompt inherits VerticalLayout {
+    width: 280px;
+    spacing: Tokens.stack-gap;
+    // Tanpa ini sisa tinggi dibagi ke elemen tanpa tinggi eksplisit
+    // (ComboBox melar jadi kotak besar).
+    alignment: start;
+
+    // 0 = "Isi manual", i>0 = `HostsModel.identities[i-1]`.
+    property <int> choice: 0;
+    property <bool> manual: root.choice <= 0;
+    property <string> identity-id: root.manual ? "" : HostsModel.identities[root.choice - 1].id;
+    property <bool> can-submit: !root.manual
+        || (user-field.value != "" && (pw-field.value != "" || ConnectingModel.has-stored-password));
+
+    function submit() {
+        if root.can-submit {
+            ConnectingModel.credentials-submitted(user-field.value, pw-field.value, root.identity-id);
+        }
+    }
+
+    Text {
+        text: "Host ini belum punya kredensial lengkap.";
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+
+    if HostsModel.identity-count > 0 : VerticalLayout {
+        spacing: 4px;
+        alignment: start;
+        vertical-stretch: 0;
+        Text {
+            text: "Identity";
+            color: Tokens.on-surface-variant;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+        }
+        ComboBox {
+            height: 34px;
+            model: HostsModel.identity-choice-labels;
+            current-index: 0;
+            selected(text) => { root.choice = self.current-index; }
+        }
+    }
+
+    // Field tetap ada (bukan `if`) supaya nilainya tidak hilang waktu
+    // bolak-balik pilih identity; disembunyikan saja kalau identity dipakai.
+    user-field := DialogField {
+        visible: root.manual;
+        height: root.manual ? 56px : 0px;
+        label-text: "Username";
+        placeholder: "mis. root";
+        initial-value: ConnectingModel.prompt-username;
+        auto-focus: ConnectingModel.prompt-username == "";
+        accepted => { root.submit(); }
+    }
+    pw-field := DialogField {
+        visible: root.manual;
+        height: root.manual ? 56px : 0px;
+        label-text: "Password";
+        placeholder: ConnectingModel.has-stored-password ? "(kosongkan = pakai yang tersimpan)" : "";
+        is-password: true;
+        auto-focus: ConnectingModel.prompt-username != "";
+        accepted => { root.submit(); }
+    }
+
+    Text {
+        text: root.manual
+            ? "Username & password ini disimpan ke host supaya tidak ditanya lagi."
+            : "Login pakai identity ini; username & password-nya disalin ke host.";
+        color: Tokens.outline;
+        font-family: Tokens.font-body;
+        font-size: 11px;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: Tokens.inline-gap;
+        DialogButton {
+            label-text: "Batal";
+            horizontal-stretch: 1;
+            clicked => { ConnectingModel.cancel-requested(); }
+        }
+        DialogButton {
+            label-text: "Connect";
+            filled: true;
+            enabled: root.can-submit;
+            horizontal-stretch: 1;
+            clicked => { root.submit(); }
+        }
     }
 }
 
@@ -99,30 +198,7 @@ export component ConnectingView inherits Rectangle {
         // menunggu input.
         if ConnectingModel.needs-password : HorizontalLayout {
             alignment: center;
-            VerticalLayout {
-                width: 260px;
-                spacing: Tokens.stack-gap;
-                pw-field := DialogField {
-                    label-text: "Password";
-                    is-password: true;
-                    auto-focus: true;
-                    accepted => { ConnectingModel.password-submitted(self.value); }
-                }
-                HorizontalLayout {
-                    spacing: Tokens.inline-gap;
-                    DialogButton {
-                        label-text: "Batal";
-                        horizontal-stretch: 1;
-                        clicked => { ConnectingModel.cancel-requested(); }
-                    }
-                    DialogButton {
-                        label-text: "Connect";
-                        filled: true;
-                        horizontal-stretch: 1;
-                        clicked => { ConnectingModel.password-submitted(pw-field.value); }
-                    }
-                }
-            }
+            CredentialsPrompt { }
         }
 
         if !ConnectingModel.needs-password : VerticalLayout {

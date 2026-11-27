@@ -1,6 +1,7 @@
 import { ComboBox } from "std-widgets.slint";
 import { Tokens } from "../tokens.slint";
 import { DialogButton, DialogField } from "./dialogs.slint";
+import { StatusDot } from "./status-dot.slint";
 import { ConnectingModel, HostsModel } from "../models.slint";
 
 // Titik-titik loading ("● ● ●" bergantian terang-redup) — indikator
@@ -17,7 +18,10 @@ component LoadingDots inherits HorizontalLayout {
 
     Timer {
         interval: 350ms;
-        running: ConnectingModel.visible;
+        // Ikut berhenti waktu error: animasi yang terus berjalan di
+        // layar yang sudah gagal bikin user menunggu sesuatu yang
+        // tidak akan datang.
+        running: ConnectingModel.visible && !ConnectingModel.has-error;
         triggered => {
             root.phase = root.phase + 1;
             if root.phase >= 3 {
@@ -33,6 +37,158 @@ component LoadingDots inherits HorizontalLayout {
         background: Tokens.primary;
         opacity: i == root.phase ? 1.0 : 0.3;
         animate opacity { duration: Tokens.transition-normal; easing: ease-in-out; }
+    }
+}
+
+// Daftar tahap proses connect (lihat `ConnectStageRow` di models.slint
+// dan `ConnectStage` di crates/ssh-engine).
+//
+// Indikator tiap baris SENGAJA memakai `StatusDot` yang sudah ada,
+// bukan glyph centang/silang baru: bahasa visual status di app ini
+// sudah ditetapkan di komponen itu (hijau = beres, amber = jalan,
+// merah = gagal, abu = belum), jadi menambah kosakata tanda baru di
+// sini cuma memaksa user mempelajari dua sistem.
+//
+// Pemetaan int -> string status dilakukan di sini (bukan dikirim
+// sebagai string dari Rust) supaya `ConnectStageRow.state` tetap
+// sejajar dengan urutan `ConnectStage` di engine — satu angka, satu
+// arti, tidak ada string bebas yang bisa salah ketik.
+component StageList inherits VerticalLayout {
+    width: 320px;
+    spacing: 10px;
+    alignment: start;
+
+    for row in ConnectingModel.stages : HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+
+        // Dibungkus VerticalLayout ber-alignment `start` supaya titiknya
+        // sejajar dengan BARIS PERTAMA teks, bukan ikut tengah-tengah
+        // blok teks yang tingginya berubah waktu ada detail.
+        VerticalLayout {
+            alignment: start;
+            vertical-stretch: 0;
+            Rectangle {
+                width: 8px;
+                height: 18px; // setinggi satu baris teks, biar titik ter-center di baris itu
+                StatusDot {
+                    status: row.state == 2 ? "online"
+                        : row.state == 1 ? "connecting"
+                        : row.state == 3 ? "failed"
+                        : "offline";
+                    // Tahap yang belum jalan diredupkan, bukan
+                    // disembunyikan — user tetap melihat sisa
+                    // perjalanan, jadi tahu prosesnya masih panjang
+                    // atau sudah hampir selesai.
+                    opacity: row.state == 0 ? 0.45 : 1.0;
+                    animate opacity { duration: Tokens.transition-normal; }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            alignment: start;
+            horizontal-stretch: 1;
+
+            Text {
+                text: row.label;
+                color: row.state == 3 ? Tokens.error
+                    : row.state == 1 ? Tokens.on-surface
+                    : row.state == 2 ? Tokens.on-surface-variant
+                    : Tokens.outline;
+                font-family: Tokens.font-body;
+                font-size: 12px;
+                // Tahap yang SEDANG jalan ditebalkan: satu titik fokus
+                // yang jelas waktu user melirik sekilas.
+                font-weight: row.state == 1 ? 700 : 400;
+                wrap: word-wrap;
+            }
+
+            // Detail (mis. alamat IP yang sedang dicoba) cuma muncul
+            // kalau ada isinya — baris kosong bikin daftar ini
+            // "bergoyang" tiap tahap berganti.
+            if row.detail != "" : Text {
+                text: row.detail;
+                color: Tokens.outline;
+                font-family: Tokens.font-mono;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+// Blok pesan error koneksi.
+//
+// Dulu error connect cuma lewat toast `show_notice` di state.rs. Itu
+// cukup untuk "gagal, coba lagi", tapi SALAH untuk host key berubah:
+// toast menghilang sendiri, padahal justru pesan itu yang wajib dibaca
+// user. Di sini pesannya menetap sampai user memutuskan sesuatu.
+component ErrorBlock inherits VerticalLayout {
+    width: 340px;
+    spacing: Tokens.stack-gap;
+    alignment: start;
+
+    Text {
+        text: ConnectingModel.error-title;
+        color: Tokens.error;
+        font-family: Tokens.font-headline;
+        font-size: Tokens.text-body-lg;
+        font-weight: 700;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+
+    Text {
+        text: ConnectingModel.error-message;
+        color: Tokens.on-surface-variant;
+        font-family: Tokens.font-body;
+        font-size: 12px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+
+    // Saran tindakan, dibedakan secara visual dari pesan errornya —
+    // ini bagian yang bisa DIKERJAKAN user, jadi tidak boleh tenggelam
+    // di antara teks lain.
+    if ConnectingModel.error-hint != "" : Rectangle {
+        background: Tokens.error-container;
+        border-radius: Tokens.radius-md;
+        VerticalLayout {
+            padding: 10px;
+            Text {
+                text: ConnectingModel.error-hint;
+                color: Tokens.on-error-container;
+                font-family: Tokens.font-body;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    Rectangle { height: 4px; }
+
+    HorizontalLayout {
+        spacing: Tokens.inline-gap;
+        alignment: center;
+
+        DialogButton {
+            label-text: "Tutup";
+            width: 120px;
+            clicked => { ConnectingModel.dismiss-requested(); }
+        }
+        // Tombol ini TIDAK muncul kalau `can-retry` false — khususnya
+        // pada host key berubah. Lihat komentar `is_retryable()` di
+        // crates/ssh-engine: menawarkan "coba lagi" pada peringatan
+        // MITM melatih user menekannya refleks, dan itu menghapus
+        // gunanya peringatan tersebut.
+        if ConnectingModel.can-retry : DialogButton {
+            label-text: "Coba lagi";
+            filled: true;
+            width: 120px;
+            clicked => { ConnectingModel.retry-requested(); }
+        }
     }
 }
 
@@ -156,10 +312,11 @@ export component ConnectingView inherits Rectangle {
                 width: 56px;
                 height: 56px;
                 border-radius: Tokens.radius-lg;
-                background: Tokens.primary-container;
+                background: ConnectingModel.has-error ? Tokens.error-container : Tokens.primary-container;
+                animate background { duration: Tokens.transition-normal; }
                 Text {
                     text: ConnectingModel.avatar-letter;
-                    color: Tokens.on-primary;
+                    color: ConnectingModel.has-error ? Tokens.on-error-container : Tokens.on-primary;
                     font-family: Tokens.font-headline;
                     font-size: 22px;
                     font-weight: 700;
@@ -191,29 +348,35 @@ export component ConnectingView inherits Rectangle {
 
         Rectangle { height: Tokens.gutter-md; }
 
+        // Daftar tahap tetap ditampilkan WAKTU GAGAL juga — justru di
+        // situ gunanya paling besar: baris merahnya menunjukkan proses
+        // berhenti di DNS, socket, auth, atau channel. Tanpa ini user
+        // cuma tahu "gagal" tanpa tahu sejauh mana sempat berjalan.
+        if ConnectingModel.stages.length > 0 && !ConnectingModel.needs-password : HorizontalLayout {
+            alignment: center;
+            StageList { }
+        }
+
+        if ConnectingModel.has-error : HorizontalLayout {
+            alignment: center;
+            ErrorBlock { }
+        }
+
         // Host TERSIMPAN yang belum ada password (mis. hasil Import
         // SecureCRT) — minta di sini, LANGSUNG lanjut connect otomatis
         // begitu di-submit (lihat komentar panjang `ConnectingModel
         // .needs-password`, models.slint), gantikan spinner selama
         // menunggu input.
-        if ConnectingModel.needs-password : HorizontalLayout {
+        if !ConnectingModel.has-error && ConnectingModel.needs-password : HorizontalLayout {
             alignment: center;
             CredentialsPrompt { }
         }
 
-        if !ConnectingModel.needs-password : VerticalLayout {
+        if !ConnectingModel.has-error && !ConnectingModel.needs-password : VerticalLayout {
             spacing: Tokens.gutter-md;
             HorizontalLayout {
                 alignment: center;
                 LoadingDots { }
-            }
-
-            Text {
-                text: "Menghubungkan...";
-                color: Tokens.on-surface-variant;
-                font-family: Tokens.font-body;
-                font-size: 12px;
-                horizontal-alignment: center;
             }
 
             Rectangle { height: Tokens.gutter-md; }

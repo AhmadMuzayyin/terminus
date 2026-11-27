@@ -451,6 +451,14 @@ export struct TerminalTab {
     id: string,
     label: string,
     address: string,
+    // true = chip ini mewakili WORKSPACE (beberapa sesi berdampingan),
+    // bukan satu sesi. Konsekuensinya ada dua dan keduanya penting:
+    // chip-nya digambar berbeda, dan "×" MEMBUBARKAN workspace (sesi
+    // tetap hidup) alih-alih memutus koneksi. Tanpa pembedaan ini satu
+    // klik "×" bisa memutus beberapa server sekaligus.
+    is-workspace: bool,
+    // Jumlah pane di dalamnya; 0 untuk chip sesi biasa.
+    pane-count: int,
 }
 
 // Data + aksi buat tab-tab terminal SSH interaktif beneran (bukan
@@ -472,6 +480,11 @@ export global TerminalTabsModel {
     // di dalam property binding, cuma repeater deklaratif.
     in-out property <string> active-tab-label: "";
     in-out property <string> active-tab-address: "";
+    // Id workspace yang sedang dibuka; "" = sedang melihat sesi
+    // tunggal. Dipakai tab bar untuk menentukan chip mana yang tampak
+    // aktif — `active-tab-id` menunjuk sesi yang fokus (salah satu
+    // pane), jadi tidak bisa dipakai untuk menyorot chip workspace.
+    in-out property <string> active-workspace-id: "";
     in-out property <[TermRow]> rows: []; // isi grid tab yang lagi AKTIF/ditampilkan aja
 
     // Teks/kontrol byte yang harus dikirim apa adanya ke stdin sesi
@@ -586,6 +599,187 @@ export global TerminalTabsModel {
 // `TerminalTabsModel` yang banyak tab sekaligus) — port serial fisik
 // memang eksklusif, tidak ada gunanya pura-pura multi-sesi (pola sama
 // dengan `SftpModel`, satu browser linear, bukan tab).
+// Satu pane di split view.
+//
+// `path` adalah ALAMAT pane di pohon layout, bukan indeks array. Untuk
+// v1 (2 pane) isinya cuma "0" dan "1", jadi kelihatan berlebihan —
+// tapi inilah yang membuat nesting bisa ditambah nanti ("0.1" = anak
+// kedua dari pane pertama) TANPA mengganti tipe data, mengubah
+// callback, atau menyentuh Rust yang sudah ada. Kalau sekarang dipakai
+// `int index`, menambah nesting berarti membongkar semuanya.
+export struct SplitPane {
+    path: string,
+    tab-id: string,   // tab terminal yang dirender di pane ini; "" = pane kosong
+    label: string,
+    address: string,
+    // Status koneksi tab ini, buat titik indikator di judul pane:
+    //   0 = idle, 1 = connecting, 2 = online, 3 = gagal
+    status: int,
+    // Grid terminal MILIK pane ini.
+    //
+    // `TerminalTabsModel.rows` cuma berisi grid tab yang aktif — cukup
+    // untuk satu terminal di layar, tapi tidak bisa dipakai split view
+    // yang harus menampilkan dua sesi HIDUP sekaligus. Jadi tiap pane
+    // bawa grid-nya sendiri, dan Rust mengisi grid untuk SETIAP pane
+    // yang terlihat (bukan cuma yang fokus) — lihat
+    // `refresh_split_model()` di crates/app/src/state.rs.
+    rows: [TermRow],
+
+    // Geometri pane sebagai PECAHAN dari area workspace (0.0..1.0),
+    // dihitung Rust.
+    //
+    // Kenapa pecahan dan bukan "indeks + orientasi + ratio" seperti
+    // sebelumnya: Slint TIDAK punya komponen rekursif, jadi tata letak
+    // bersarang (satu kolom penuh di kiri, kolom kanan terbagi dua)
+    // tidak bisa digambar dengan komponen yang memanggil dirinya
+    // sendiri. Satu-satunya jalan adalah MERATAKAN pohon di Rust jadi
+    // daftar persegi, lalu Slint merender daftar datar itu. Dengan
+    // begitu penambahan kedalaman sarang nanti tidak menyentuh Slint
+    // sama sekali.
+    fx: float,
+    fy: float,
+    fw: float,
+    fh: float,
+}
+
+// Satu pembatas antar pane, hasil perataan pohon tata letak di Rust.
+//
+// Pembatas adalah entitas tersendiri (bukan properti sebuah pane)
+// karena ia milik SIMPUL INTERNAL pohon, bukan milik salah satu pane di
+// kiri/kanannya. `path` menunjuk simpul itu.
+export struct SplitDivider {
+    path: string,
+    fx: float,
+    fy: float,
+    fw: float,
+    fh: float,
+    // true = membelah kiri-kanan, jadi pembatasnya garis tegak.
+    horizontal: bool,
+    ratio: float,
+    // Panjang simpul induk sepanjang sumbu belah, sebagai pecahan dari
+    // seluruh area. Tanpa ini, menggeser pembatas di simpul yang dalam
+    // akan terasa jauh lebih cepat daripada yang di akar — ruangnya
+    // lebih sempit, jadi perpindahan piksel yang sama berarti perubahan
+    // ratio yang lebih besar.
+    span: float,
+}
+
+// Split view: satu tab terminal dibagi jadi beberapa pane yang
+// masing-masing menampilkan sesi SSH berbeda, dengan pembatas yang
+// bisa digeser.
+//
+// Kenapa model terpisah dari `TerminalTabsModel`: tab adalah DAFTAR
+// sesi yang hidup, sedangkan split adalah TATA LETAK yang menampilkan
+// sebagian dari sesi-sesi itu. Menggabungkannya memaksa setiap
+// perubahan layout menyentuh daftar sesi — dan itu cara paling mudah
+// menutup sesi orang secara tidak sengaja hanya karena pane-nya
+// ditutup.
+export global SplitModel {
+    // 0 = tidak split (satu pane penuh), 1 = kiri-kanan, 2 = atas-bawah.
+    // `int` dan bukan bool supaya orientasi ketiga (grid) tidak perlu
+    // mengubah tipe nanti.
+    in-out property <int> orientation: 0;
+    in-out property <[SplitPane]> panes: [];
+    // Pembatas antar pane, satu per simpul internal pohon.
+    in-out property <[SplitDivider]> dividers: [];
+    // Pane yang sedang fokus (menerima ketikan). Alamat, bukan indeks —
+    // lihat komentar `SplitPane.path`.
+    in-out property <string> active-path: "0";
+
+    // --- Focus mode: satu pane memenuhi area, sisanya jadi daftar di
+    //     sidebar. Berguna waktu satu sesi butuh perhatian penuh tanpa
+    //     harus membubarkan tata letak yang sudah disusun.
+    in-out property <bool> focus-mode: false;
+    callback focus-mode-toggled();
+
+    // Bagi pane aktif. 1 = kiri-kanan, 2 = atas-bawah.
+    callback split-requested(int);
+    // Tutup pane (BUKAN menutup sesinya — sesi tetap hidup dan tabnya
+    // tetap ada di tab bar; ini sengaja, lihat komentar global di atas).
+    callback close-pane-requested(string /* path */);
+    // Pembatas selesai digeser. `path` menunjuk simpul yang porsinya
+    // berubah — tanpa itu, workspace dengan beberapa pembatas tidak
+    // bisa tahu yang mana yang digeser. Rust yang menjepit nilainya ke
+    // rentang aman.
+    callback ratio-changed(string /* path simpul */, float /* ratio */);
+    // Klik di dalam pane -> pindahkan fokus ketikan ke situ.
+    callback pane-focused(string /* path */);
+
+    // --- Input/output per pane.
+    //
+    // `TerminalTabsModel.pty-input-requested` mengirim ke sesi yang
+    // AKTIF. Di split view itu tidak cukup: dua sesi terlihat
+    // bersamaan, jadi tujuan ketikan harus disebut eksplisit — kalau
+    // tidak, ketikan bisa masuk ke server yang salah. Untuk perintah
+    // di terminal ke server produksi, kesalahan seperti itu tidak bisa
+    // dibatalkan, jadi `path` di sini wajib, bukan opsional.
+    callback pane-input-requested(string /* path */, string /* byte */);
+    callback pane-scroll-requested(string /* path */, int /* baris */);
+    callback pane-grid-resized(string /* path */, int /* kolom */, int /* baris */);
+
+    // --- Memindahkan pane (sumbernya drag, lihat `DragModel`).
+    //
+    // Diletakkan di sini dan bukan di `DragModel` karena keduanya
+    // MENGUBAH tata letak workspace; `DragModel` hanya membawa keadaan
+    // seretan yang sedang berlangsung. Memisahkan "apa yang sedang
+    // diseret" dari "apa yang berubah karenanya" menjaga satu model
+    // tidak jadi tempat sampah dua urusan.
+    //
+    // Pane diseret ke pane lain -> keduanya bertukar posisi.
+    callback panes-reordered(string /* path asal */, string /* path tujuan */);
+    // Pane diseret ke tab bar -> dikeluarkan dari workspace, kembali
+    // jadi tab sendiri. Sesinya TIDAK diputus.
+    callback pane-extracted(string /* path */);
+}
+
+// Keadaan drag & drop tab.
+//
+// Slint 1.x tidak punya API drag-and-drop bawaan, jadi ini dirakit
+// manual. Satu hal yang menentukan seluruh desainnya: selama tombol
+// mouse ditekan, Slint mengunci event ke TouchArea tempat drag dimulai
+// — elemen lain TIDAK menerima hover sama sekali. Jadi zona drop tidak
+// bisa tahu sendiri kalau sedang dilewati; ia harus membandingkan
+// posisi pointer absolut dengan `absolute-position` miliknya. Itulah
+// kenapa `pointer-x/y` ada di sini dan bukan di masing-masing komponen.
+export global DragModel {
+    // Diset chip asal waktu pointer bergerak melewati ambang, BUKAN
+    // waktu tombol ditekan — kalau tidak, klik biasa untuk pindah tab
+    // akan ikut terbaca sebagai drag dan tab jadi susah diklik.
+    in-out property <bool> active: false;
+    in-out property <string> tab-id: "";
+    in-out property <string> label: "";
+    in-out property <length> pointer-x;
+    in-out property <length> pointer-y;
+    // Kalau yang diseret adalah PANE (bukan chip tab), ini path pane
+    // asalnya. "" = yang diseret chip tab dari tab bar.
+    //
+    // Satu properti ini yang membedakan dua arah perpindahan: memasukkan
+    // sesi ke workspace, dan mengeluarkan/menukar pane di dalamnya.
+    // Tanpa penanda asal, drop di pane tidak bisa dibedakan antara
+    // "ganti isi pane" dan "tukar posisi dua pane".
+    in-out property <string> source-pane-path: "";
+
+    // Diisi zona drop lewat handler `changed`: sumber drag tidak punya
+    // cara tahu apa yang ada di bawah kursor.
+    in-out property <bool> over-terminal: false;
+    in-out property <string> over-pane-path: "";
+    in-out property <bool> over-tab-bar: false;
+    // Arah belah yang diusulkan pane tujuan (1 = kiri-kanan, 2 =
+    // atas-bawah). Diisi pane saat kursor masuk, karena hanya dia yang
+    // tahu ukuran pikselnya sendiri.
+    in-out property <int> drop-orientation: 1;
+
+    // Dijatuhkan di area terminal sesi lain -> gabungkan keduanya jadi
+    // workspace baru.
+    callback dropped-on-terminal(string /* id tab yang diseret */);
+    // Dijatuhkan tepat di satu pane workspace -> pane itu berganti isi.
+    // Arah belah ditentukan PANE-nya, bukan Rust: hanya Slint yang tahu
+    // ukuran piksel pane saat itu, dan pane yang lebih lebar dari tinggi
+    // sebaiknya dibelah kiri-kanan — membelah sisi pendek menghasilkan
+    // pane yang terlalu sempit untuk dipakai.
+    callback dropped-on-pane(string /* id tab */, string /* path pane */, int /* 1=kiri-kanan, 2=atas-bawah */);
+}
+
 export global ConsoleModel {
     // Label siap-tampil per port terdeteksi (isi `ComboBox` "Port") —
     // path ASLI (mis. "/dev/ttyUSB0") TIDAK dikirim ke Slint sama
@@ -637,6 +831,22 @@ export global ConsoleModel {
 // cuma badge status di kartu host, SFTP teks "Menghubungkan..." di
 // tombol, Console juga teks di tombol). Bukan modal/dialog (tidak ada
 // scrim) — benar-benar "pindah ke halaman baru".
+// Satu baris tahap di layar Connecting. `state` dipakai angka (bukan
+// enum Slint) karena nilainya datang dari Rust lewat `ConnectStage`
+// (lihat `crates/ssh-engine/src/lib.rs`), dan Slint tidak bisa berbagi
+// definisi enum dengan Rust — pemetaannya dipusatkan di satu tempat:
+// `connect_stage_rows()` di `crates/app/src/state.rs`.
+//
+//   0 = belum jalan (redup)
+//   1 = sedang berjalan (ada indikator)
+//   2 = selesai (centang)
+//   3 = GAGAL di tahap ini (merah)
+export struct ConnectStageRow {
+    label: string,
+    detail: string,   // mis. alamat IP yang sedang dicoba; "" = tidak ada
+    state: int,
+}
+
 export global ConnectingModel {
     in-out property <bool> visible: false;
     in-out property <string> label: "";     // nama host, mis. "WEB-SERVER"
@@ -647,6 +857,46 @@ export global ConnectingModel {
     // cuma 1 huruf) karena Slint tidak punya fungsi ekspresi ambil
     // substring/karakter tunggal sebuah string.
     in-out property <string> avatar-letter: "?";
+
+    // --- Narasi tahap koneksi.
+    //
+    // Diisi Rust dari `ConnectStage` engine (BUKAN animasi timer di
+    // sisi Slint): tiap baris mencerminkan tahap yang betul-betul
+    // terjadi, jadi kalau koneksi macet, baris yang masih `state: 1`
+    // menunjuk persis di mana macetnya. Ini alasan utama narasi ini
+    // ada — spinner tanpa keterangan tidak memberi user apa pun untuk
+    // ditindaklanjuti.
+    //
+    // Daftarnya LENGKAP sejak awal (tahap yang belum jalan tampil
+    // redup) supaya user melihat sisa perjalanan, bukan baris yang
+    // muncul satu-satu tanpa ujung yang jelas.
+    in-out property <[ConnectStageRow]> stages: [];
+
+    // --- Keadaan error.
+    //
+    // Error koneksi TIDAK lagi lewat toast `show_notice` seperti dulu:
+    // toast hilang sendiri, padahal pesan host-key-berubah justru
+    // harus dibaca dan tidak boleh terlewat. Jadi layar ini yang
+    // menampilkannya, lengkap dengan tahap mana yang merah.
+    in-out property <bool> has-error: false;
+    in-out property <string> error-title: "";     // `SshEngineError::title()`
+    in-out property <string> error-message: "";   // `Display` error-nya
+    in-out property <string> error-hint: "";      // `hint()`, "" = tidak ada saran
+    // `SshEngineError::is_retryable()`. Sengaja ikut dari Rust dan
+    // tidak disimpulkan di Slint: untuk host key berubah, tombol "Coba
+    // lagi" HARUS tidak muncul — itu keputusan keamanan, bukan selera
+    // tampilan (lihat komentar `is_retryable` di ssh-engine).
+    in-out property <bool> can-retry: false;
+    // Host yang dicoba terakhir, dipakai tombol "Coba lagi". Disimpan
+    // di sini (bukan di `AppState` Rust) karena isinya cuma id, dan
+    // retry-nya LEWAT `HostsModel.host-connect-requested` supaya
+    // password dibaca ULANG dari vault — tidak ada kredensial yang
+    // menetap di memori hanya demi tombol ini.
+    in-out property <string> retry-host-id: "";
+    callback retry-requested();
+    // Tutup layar error dan kembali ke daftar host.
+    callback dismiss-requested();
+
     // Batal SUNGGUHAN menghentikan proses connect di background
     // (`tokio::task::AbortHandle::abort()`, lihat `track_connect_task`
     // di state.rs) — BUKAN cuma menyembunyikan overlay ini, supaya

@@ -20,12 +20,12 @@ import { TerminalTabBar } from "./components/terminal-tabs-bar.slint";
 import { VaultDialog, NewGroupDialog, ExportJsonDialog, IdentitiesDialog } from "./components/dialogs.slint";
 import { ConfirmDeleteHostDialog, ConfirmDeleteGroupDialog, ConfirmBulkDeleteDialog, ConfirmLogoutDialog } from "./components/confirm-dialog.slint";
 import { ConnectingView } from "./components/connecting-view.slint";
-import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel } from "./models.slint";
+import { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel, SplitModel, DragModel } from "./models.slint";
 // Re-export eksplisit: `import` doang cuma bikin visible LOKAL di file
 // ini, Rust codegen (`slint::include_modules!()`) cuma expose global
 // yang benar-benar di-`export` dari file root (app-window.slint) ini —
 // makanya butuh baris `export` terpisah, bukan cuma `import`.
-export { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel }
+export { HostsModel, VaultModel, TerminalTabsModel, SftpModel, ConsoleModel, ConnectingModel, ProfileModel, SplitModel, DragModel }
 
 export component AppWindow inherits Window {
     title: "Terminus";
@@ -174,5 +174,41 @@ export component AppWindow inherits Window {
             height: 100%;
         }
         TouchArea { clicked => { HostsModel.notice-message = ""; } }
+    }
+
+    // Bayangan tab yang sedang diseret.
+    //
+    // Dideklarasikan PALING AKHIR supaya z-order-nya di atas segalanya
+    // — bayangan yang tersembunyi di balik panel membuat drag terasa
+    // rusak padahal berfungsi. Sengaja TIDAK memakai TouchArea: elemen
+    // ini hanya gambar, dan selama drag Slint sudah mengunci event ke
+    // TouchArea chip asal.
+    //
+    // Posisinya digeser setengah tinggi ke atas dan sedikit ke kanan
+    // supaya tidak persis di bawah kursor — kalau menutupi kursor,
+    // user tidak bisa melihat zona drop yang sedang dia tuju.
+    if DragModel.active : Rectangle {
+        x: DragModel.pointer-x + 12px;
+        y: DragModel.pointer-y - 16px;
+        width: ghost-label.preferred-width + 24px;
+        height: 32px;
+        border-radius: Tokens.radius-default;
+        background: Tokens.surface-container-highest;
+        border-width: 1px;
+        border-color: Tokens.primary;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #000000.with-alpha(45%);
+        opacity: 0.95;
+
+        ghost-label := Text {
+            text: DragModel.label;
+            color: Tokens.on-surface;
+            font-family: Tokens.font-body;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
     }
 }

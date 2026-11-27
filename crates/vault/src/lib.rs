@@ -35,6 +35,14 @@ pub enum VaultError {
     #[error("master password salah")]
     WrongPassword,
 
+    /// Master password kosong. SENGAJA dibedakan dari `WrongPassword`:
+    /// ini bukan tebakan yang meleset, melainkan vault yang sama sekali
+    /// tidak terlindungi — Argon2id dengan senang hati menurunkan kunci
+    /// dari string kosong, jadi tanpa penjagaan eksplisit sebuah vault
+    /// bisa dibuat DAN dibuka hanya dengan menekan Enter.
+    #[error("master password tidak boleh kosong")]
+    EmptyPassword,
+
     #[error("database error: {0}")]
     Database(String),
 

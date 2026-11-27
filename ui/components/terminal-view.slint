@@ -61,6 +61,14 @@ export component TerminalSurface inherits Rectangle {
     // penuh area, bukan ukuran tetap dengan ruang kosong di sisinya.
     callback grid-resized(int, int);
 
+    // Pintasan khusus split view. Default MATI supaya tab tunggal
+    // (`TerminalView`) dan Console tidak mengiklankan tombol yang tak
+    // punya pane untuk ditutup — pintasan yang diam saat ditekan lebih
+    // membingungkan daripada tidak ada pintasan sama sekali.
+    in property <bool> pane-shortcuts: false;
+    callback shortcut-focus-mode();
+    callback shortcut-close-pane();
+
     // Diukur dari 10 karakter supaya pembulatan sub-piksel tidak
     // numpuk jadi meleset di kolom-kolom kanan.
     property <length> cell-w: measure.preferred-width / 10;
@@ -133,6 +141,18 @@ export component TerminalSurface inherits Rectangle {
             if (event.modifiers.control && event.modifiers.shift) {
                 if (event.text == "C" || event.text == "c") { root.copy-selection(); return accept; }
                 if (event.text == "V" || event.text == "v") { root.paste-clipboard(); return accept; }
+                // Ctrl+SHIFT+W, bukan Ctrl+W: Ctrl+W polos sudah berarti
+                // "hapus kata" dan dikirim ke server di cabang bawah.
+                // Menimpanya berarti mengambil tombol yang dipakai
+                // setiap hari di shell demi tombol yang jarang dipakai.
+                if (root.pane-shortcuts && (event.text == "M" || event.text == "m")) {
+                    root.shortcut-focus-mode();
+                    return accept;
+                }
+                if (root.pane-shortcuts && (event.text == "W" || event.text == "w")) {
+                    root.shortcut-close-pane();
+                    return accept;
+                }
             }
             if (event.modifiers.control && event.text != "") {
                 if (event.text == "c") { root.input("\u{3}"); return accept; }

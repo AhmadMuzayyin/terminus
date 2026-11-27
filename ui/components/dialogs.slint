@@ -347,8 +347,14 @@ export component VaultDialog inherits DialogScrim {
                 // Dipanggil dari tombol Buat&Unlock/Unlock MAUPUN dari
                 // Enter di field password — satu tempat biar dua pemicu
                 // itu tidak duplikasi logic.
+                // Penolakan yang MENGIKAT ada di
+                // `VaultStore::initialize`/`unlock`
+                // (`VaultError::EmptyPassword`) — bukan di sini. Gate di
+                // UI ini cuma supaya Enter di field kosong tidak memicu
+                // derive Argon2id yang sengaja lambat hanya untuk
+                // kembali membawa error.
                 function submit() {
-                    if !VaultModel.busy {
+                    if !VaultModel.busy && password-field.value != "" {
                         if VaultModel.is-first-run {
                             VaultModel.create-requested(password-field.value);
                         } else {
@@ -377,7 +383,11 @@ export component VaultDialog inherits DialogScrim {
                     // di sini paling kelihatan gunanya.
                     label-text: VaultModel.busy ? "Memproses..." : (VaultModel.is-first-run ? "Buat & Unlock" : "Unlock");
                     filled: true;
-                    enabled: !VaultModel.busy;
+                    // Mati selama field masih kosong: tombol yang bisa
+                    // diklik tapi pasti gagal membuat user menduga
+                    // aplikasinya yang rusak, bukan masukannya yang
+                    // kurang.
+                    enabled: !VaultModel.busy && password-field.value != "";
                     clicked => { submit(); }
                 }
             }

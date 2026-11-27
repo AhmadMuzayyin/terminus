@@ -1,6 +1,32 @@
 import { Tokens } from "../tokens.slint";
-import { TerminalTabsModel } from "../models.slint";
+import { TerminalTabsModel, SplitModel, DragModel } from "../models.slint";
 import { SearchField } from "./top-tabs.slint";
+
+// Ikon split: kotak dengan satu garis pembelah.
+//
+// Digambar pakai Rectangle, BUKAN glyph unicode seperti "⚙" di tombol
+// pengaturan: glyph pembelah layar (⬓, ▥, dsb.) jauh lebih jarang ada
+// di font sistem, dan kalau tidak ada, yang muncul kotak tofu — tombol
+// jadi tidak bisa dikenali sama sekali. Dua Rectangle selalu tergambar.
+component SplitGlyph inherits Rectangle {
+    // false = belah kiri-kanan (garis tegak), true = belah atas-bawah.
+    in property <bool> stacked: false;
+    in property <color> tint: Tokens.on-surface-variant;
+
+    width: 16px;
+    height: 12px;
+    border-width: 1px;
+    border-color: root.tint;
+    border-radius: 2px;
+
+    Rectangle {
+        background: root.tint;
+        width: root.stacked ? parent.width : 1px;
+        height: root.stacked ? 1px : parent.height;
+        x: root.stacked ? 0px : (parent.width - 1px) / 2;
+        y: root.stacked ? (parent.height - 1px) / 2 : 0px;
+    }
+}
 
 // Satu tab: label host + tombol "×" buat nutup (disconnect beneran,
 // lihat komentar `tab-close-requested` di models.slint). Klik badan tab
@@ -9,6 +35,9 @@ component TabChip inherits Rectangle {
     in property <string> tab-id;
     in property <string> label;
     in property <bool> active;
+    // Chip ini mewakili workspace (beberapa sesi), bukan satu sesi.
+    in property <bool> is-workspace: false;
+    in property <int> pane-count: 0;
 
     width: chip-content.preferred-width + 16px;
     height: 32px;
@@ -19,8 +48,68 @@ component TabChip inherits Rectangle {
     border-width: root.active ? 1px : 0px;
     border-color: Tokens.outline-variant;
 
+    // Chip workspace tidak bisa diseret di v1: menyeret workspace ke
+    // dalam workspace lain butuh aturan penggabungan tata letak yang
+    // belum ada, dan membiarkannya diseret hanya akan menghasilkan
+    // drop yang diam-diam tidak melakukan apa-apa.
+    in property <bool> draggable: true;
+
+    // Ambang 6px memisahkan klik dari seret. Tanpa ini, getaran kecil
+    // tangan saat mengklik sudah memulai drag dan tab jadi sulit
+    // dipilih dengan cara biasa.
+    property <length> drag-threshold: 6px;
+
     touch := TouchArea {
-        clicked => { TerminalTabsModel.tab-selected(root.tab-id); }
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.up) {
+                // Keputusan drop diambil di sini, bukan di zona drop:
+                // selama tombol ditekan event terkunci ke TouchArea ini,
+                // jadi hanya chip asal yang tahu kapan tombol dilepas.
+                // `source-pane-path` kosong = drag ini memang berasal
+                // dari chip tab. Penjagaan ini mencegah chip ikut
+                // memutuskan hasil drag yang sedang dilakukan sebuah
+                // pane.
+                if (DragModel.active && DragModel.source-pane-path == "") {
+                    if (DragModel.over-pane-path != "") {
+                        // Arah belah ditentukan di zona drop (pane
+                        // tujuan) dan dititipkan lewat
+                        // `DragModel.drop-orientation` — hanya pane itu
+                        // yang tahu ukuran pikselnya sendiri.
+                        DragModel.dropped-on-pane(root.tab-id, DragModel.over-pane-path, DragModel.drop-orientation);
+                    } else if (DragModel.over-terminal) {
+                        DragModel.dropped-on-terminal(root.tab-id);
+                    }
+                    DragModel.active = false;
+                    DragModel.tab-id = "";
+                    DragModel.over-terminal = false;
+                    DragModel.over-pane-path = "";
+                }
+            }
+        }
+
+        moved => {
+            if (root.draggable && self.pressed) {
+                DragModel.pointer-x = self.absolute-position.x + self.mouse-x;
+                DragModel.pointer-y = self.absolute-position.y + self.mouse-y;
+                if (!DragModel.active
+                    && (Math.abs(self.mouse-x - self.pressed-x) > root.drag-threshold
+                        || Math.abs(self.mouse-y - self.pressed-y) > root.drag-threshold)) {
+                    DragModel.active = true;
+                    DragModel.tab-id = root.tab-id;
+                    DragModel.label = root.label;
+                }
+            }
+        }
+
+        // `clicked` tidak ditembakkan kalau pointer sempat diseret jauh,
+        // jadi drag tidak akan ikut memindahkan tab secara tidak
+        // sengaja. Penjagaan `!DragModel.active` tetap dipasang untuk
+        // kasus lepas-tombol yang berurutan rapat.
+        clicked => {
+            if (!DragModel.active) {
+                TerminalTabsModel.tab-selected(root.tab-id);
+            }
+        }
     }
 
     chip-content := HorizontalLayout {
@@ -28,12 +117,29 @@ component TabChip inherits Rectangle {
         padding-right: 6px;
         spacing: 8px;
 
-        Rectangle {
+        // Penanda kiri: titik hijau untuk sesi tunggal, ikon split +
+        // jumlah pane untuk workspace. Keduanya menempati lebar yang
+        // mirip supaya barisan chip tidak terlihat bergoyang.
+        if !root.is-workspace : Rectangle {
             width: 6px;
             height: 6px;
             y: (parent.height - self.height) / 2;
             border-radius: 3px;
             background: Tokens.success;
+        }
+        if root.is-workspace : HorizontalLayout {
+            spacing: 4px;
+            SplitGlyph {
+                tint: root.active ? Tokens.primary : Tokens.on-surface-variant;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.pane-count;
+                color: Tokens.outline;
+                font-family: Tokens.font-mono;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
         }
         Text {
             text: root.label;
@@ -84,6 +190,25 @@ component TabChip inherits Rectangle {
 // di app-window.slint): kontrol minimize/maximize/close ada di ujung
 // kanan, dan ruang kosongnya jadi area drag untuk memindah jendela.
 export component TerminalTabBar inherits Rectangle {
+    // --- Zona drop untuk MENGELUARKAN pane dari workspace.
+    //
+    // Hanya aktif saat yang diseret adalah pane (`source-pane-path`
+    // terisi). Chip tab yang diseret ke tab bar tidak melakukan apa-apa
+    // — ia sudah ada di sini, jadi tidak ada perpindahan yang masuk
+    // akal untuk dilakukan.
+    //
+    // Sama seperti zona drop lainnya, ini membandingkan posisi pointer
+    // absolut dan bukan `has-hover`, karena selama drag event terkunci
+    // ke TouchArea sumber.
+    property <bool> drag-over: DragModel.active
+        && DragModel.source-pane-path != ""
+        && DragModel.pointer-x >= self.absolute-position.x
+        && DragModel.pointer-x <= self.absolute-position.x + self.width
+        && DragModel.pointer-y >= self.absolute-position.y
+        && DragModel.pointer-y <= self.absolute-position.y + self.height;
+
+    changed drag-over => { DragModel.over-tab-bar = self.drag-over; }
+
     in property <bool> sidebar-collapsed: false;
     // Disembunyikan waktu layar unlock (belum ada sidebar buat
     // ditoggle sama sekali di situ — NavRail cuma dirender sesudah
@@ -146,7 +271,16 @@ export component TerminalTabBar inherits Rectangle {
         for t in TerminalTabsModel.tabs : TabChip {
             tab-id: t.id;
             label: t.label;
-            active: t.id == TerminalTabsModel.active-tab-id;
+            // Chip workspace dianggap aktif kalau workspace ITU yang
+            // sedang dibuka. `active-tab-id` menunjuk sesi yang fokus
+            // (salah satu pane), jadi membandingkannya langsung akan
+            // membuat chip workspace tidak pernah tampak aktif.
+            active: t.is-workspace
+                ? t.id == TerminalTabsModel.active-workspace-id
+                : TerminalTabsModel.active-workspace-id == "" && t.id == TerminalTabsModel.active-tab-id;
+            is-workspace: t.is-workspace;
+            pane-count: t.pane-count;
+            draggable: !t.is-workspace;
         }
 
         // SELALU diinstansiasi (bukan `if root.show-search : ...` lagi)
@@ -185,6 +319,68 @@ export component TerminalTabBar inherits Rectangle {
                 double-clicked => {
                     TerminalTabsModel.window-maximize-toggle-requested();
                 }
+            }
+        }
+
+        // --- Tombol split. Memakai gate `show-settings-gear` yang sama
+        //     karena keduanya aksi khusus halaman terminal — di halaman
+        //     Hosts/SFTP tombol ini tidak ada artinya.
+        //
+        //     Belum split: dua tombol (arah belah). Sudah split: satu
+        //     tombol gabung. Menampilkan ketiganya sekaligus akan
+        //     memaksa user menebak mana yang membatalkan split.
+        if root.show-settings-gear && SplitModel.orientation == 0 : Rectangle {
+            width: 36px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Tokens.radius-default;
+            background: split-h-touch.pressed ? Tokens.surface-container-high.darker(10%) : split-h-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            SplitGlyph {
+                stacked: false;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            split-h-touch := TouchArea {
+                clicked => { SplitModel.split-requested(1); }
+            }
+        }
+
+        if root.show-settings-gear && SplitModel.orientation == 0 : Rectangle {
+            width: 36px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Tokens.radius-default;
+            background: split-v-touch.pressed ? Tokens.surface-container-high.darker(10%) : split-v-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            SplitGlyph {
+                stacked: true;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            split-v-touch := TouchArea {
+                clicked => { SplitModel.split-requested(2); }
+            }
+        }
+
+        // Gabung kembali jadi satu pane. Menutup PANE KEDUA, bukan
+        // sesinya — sesi di pane itu tetap hidup dan tabnya tetap ada
+        // di tab bar ini (lihat komentar `SplitModel` di models.slint).
+        if root.show-settings-gear && SplitModel.orientation != 0 : Rectangle {
+            width: 36px;
+            height: 40px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Tokens.radius-default;
+            background: unsplit-touch.pressed ? Tokens.surface-container-high.darker(10%) : unsplit-touch.has-hover ? Tokens.surface-container-high : transparent;
+            animate background { duration: Tokens.transition-fast; }
+            SplitGlyph {
+                stacked: SplitModel.orientation == 2;
+                tint: Tokens.primary;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            unsplit-touch := TouchArea {
+                clicked => { SplitModel.close-pane-requested("1"); }
             }
         }
 

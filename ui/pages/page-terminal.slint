@@ -1,6 +1,7 @@
 import { Tokens } from "../tokens.slint";
-import { TerminalTabsModel } from "../models.slint";
+import { TerminalTabsModel, SplitModel, DragModel } from "../models.slint";
 import { TerminalView } from "../components/terminal-view.slint";
+import { SplitTerminalView } from "../components/split-view.slint";
 import { TerminalSettingsPanel } from "../components/terminal-settings.slint";
 
 // Halaman "virtual" (bukan item sidebar — dituju lewat `current-page ==
@@ -21,17 +22,93 @@ export component PageTerminal inherits Rectangle {
     // `HorizontalLayout` yang ikut menyusutkan lebar terminal.
     clip: true;
 
-    Rectangle {
+    drop-zone := Rectangle {
         x: Tokens.container-padding;
         y: Tokens.container-padding;
         width: parent.width - 2 * Tokens.container-padding;
         height: parent.height - 2 * Tokens.container-padding;
         border-radius: Tokens.radius-lg;
-        background: TerminalTabsModel.terminal-bg-color;
-        border-width: 1px;
-        border-color: Tokens.outline-variant;
+
+        // --- Zona drop: menjatuhkan tab di sini menggabungkannya
+        //     dengan sesi yang sedang tampil jadi satu workspace.
+        //
+        // Deteksinya membandingkan posisi pointer absolut dengan
+        // `absolute-position` elemen ini, BUKAN `has-hover`: selama
+        // tombol mouse ditekan Slint mengunci event ke TouchArea tempat
+        // drag dimulai (chip tab), jadi elemen ini tidak akan pernah
+        // menerima hover betapapun tepat kursornya berada di atasnya.
+        //
+        // Hanya berlaku saat belum split — kalau sudah, pane
+        // masing-masing yang jadi sasaran drop (lihat split-view.slint).
+        property <bool> drag-over: DragModel.active
+            && SplitModel.orientation == 0
+            && DragModel.pointer-x >= self.absolute-position.x
+            && DragModel.pointer-x <= self.absolute-position.x + self.width
+            && DragModel.pointer-y >= self.absolute-position.y
+            && DragModel.pointer-y <= self.absolute-position.y + self.height;
+
+        // Chip asal yang memutuskan apa yang terjadi saat tombol
+        // dilepas, jadi ia perlu tahu kursor sedang di atas apa —
+        // hanya elemen ini yang bisa memberitahunya.
+        changed drag-over => {
+            DragModel.over-terminal = self.drag-over;
+            // Arah belah ditulis dari SINI, lalu dibaca Rust
+            // (`dropped_on_terminal`) — bukan dua-duanya memutuskan
+            // sendiri. Hanya Slint yang tahu ukuran piksel area ini, dan
+            // kalau Rust memakai arah bawaannya sendiri, preview biru di
+            // bawah bisa menjanjikan satu bentuk sementara hasilnya
+            // bentuk lain.
+            if (self.drag-over) {
+                DragModel.drop-orientation = self.width > self.height ? 1 : 2;
+            }
+        }
+        // Di mode split, background & border pembungkus ini dimatikan:
+        // tiap pane sudah punya border dan background sendiri, dan dua
+        // lapis border bikin area terminal terlihat sempit sekaligus
+        // kotor.
+        background: SplitModel.orientation == 0 ? TerminalTabsModel.terminal-bg-color : transparent;
+        // Tepi menyala waktu tab melayang di atas area ini — satu-
+        // satunya umpan balik bahwa melepas tombol di sini akan
+        // melakukan sesuatu. Tanpa itu drag terasa seperti tidak
+        // berfungsi sampai user mencoba dan kaget.
+        border-width: self.drag-over ? 2px : (SplitModel.orientation == 0 ? 1px : 0px);
+        // `primary-container` (biru pekat) = "boleh dijatuhkan di sini",
+        // sama dengan lapisan per-pane di split-view.slint. Dibedakan
+        // dari `primary` (biru pucat) yang dipakai untuk "sedang fokus",
+        // supaya dua keadaan itu tidak terlihat sama.
+        border-color: self.drag-over ? Tokens.primary-container : Tokens.outline-variant;
+        animate border-color { duration: Tokens.transition-fast; }
         clip: true;
-        TerminalView { }
+
+        // `orientation == 0` = tidak split. Jalur satu-terminal
+        // SENGAJA tetap memakai `TerminalView` apa adanya (bukan
+        // SplitTerminalView dengan satu pane) supaya perilaku yang
+        // sudah jalan tidak berubah sama sekali waktu split tidak
+        // dipakai — split view murni jadi jalur tambahan.
+        if SplitModel.orientation == 0 : TerminalView { }
+        if SplitModel.orientation != 0 : SplitTerminalView {
+            width: 100%;
+            height: 100%;
+        }
+
+        // Preview paruh yang akan ditempati terminal yang dijatuhkan.
+        // Dideklarasikan SETELAH kedua cabang di atas supaya berada di
+        // z-order teratas dan tidak tertimbun isi terminal.
+        //
+        // Paruh KEDUA, karena `create_workspace` dipanggil dengan sesi
+        // yang sedang tampil sebagai `first` dan yang dijatuhkan sebagai
+        // `second`.
+        //
+        // Hanya untuk jalur SATU terminal: di mode split, tiap pane sudah
+        // punya lapisannya sendiri, dan menumpuk lapisan pembungkus di
+        // atasnya justru menyembunyikan pane mana yang dibidik.
+        if drop-zone.drag-over : Rectangle {
+            x: DragModel.drop-orientation == 1 ? parent.width / 2 : 0px;
+            y: DragModel.drop-orientation == 2 ? parent.height / 2 : 0px;
+            width: DragModel.drop-orientation == 1 ? parent.width / 2 : parent.width;
+            height: DragModel.drop-orientation == 2 ? parent.height / 2 : parent.height;
+            background: Tokens.primary-container.with-alpha(0.28);
+        }
     }
 
     // Backdrop klik-di-luar-buat-tutup — berlaku SAMA di SEMUA

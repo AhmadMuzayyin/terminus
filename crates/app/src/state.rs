@@ -20,8 +20,9 @@
 
 use crate::host_key_store::AppHostKeyStore;
 use crate::{
-    console, AppWindow, ConnectingModel, ConsoleModel, FileEntry, GroupItem, HostItem, HostsModel, IdentityItem,
-    NewHostForm, SftpModel, TermRow, TerminalTab, TerminalTabsModel, VaultModel,
+    console, AppWindow, ConnectStageRow, ConnectingModel, ConsoleModel, DragModel, FileEntry, GroupItem, HostItem,
+    HostsModel,
+    IdentityItem, NewHostForm, SftpModel, SplitDivider, SplitModel, SplitPane, TermRow, TerminalTab, TerminalTabsModel, VaultModel,
 };
 use terminus_core::{AuthMethod, ConnectionKind, HostGroup, HostProfile, Identity};
 use terminus_serial_engine::{SerialOutputEvent, SerialPortEntry, SerialSession};
@@ -197,6 +198,15 @@ pub struct AppState {
     /// requested` & `on_password_submitted`) — `None` waktu tidak lagi
     /// nunggu input apa pun.
     pending_password_profile: Arc<Mutex<Option<HostProfile>>>,
+    /// Semua workspace yang ada (lihat `Workspace`). Sumber
+    /// kebenarannya di sini, BUKAN di properti Slint: properti UI bisa
+    /// ditimpa rebuild model kapan saja, sedangkan ini yang menentukan
+    /// ke sesi mana sebuah ketikan dikirim — salah tujuan di terminal
+    /// produksi tidak bisa dibatalkan.
+    workspaces: Arc<Mutex<Vec<Workspace>>>,
+    /// Workspace yang sedang dibuka, kalau user sedang melihat
+    /// workspace dan bukan tab sesi tunggal.
+    active_workspace: Arc<Mutex<Option<Uuid>>>,
 }
 
 /// Dipanggil sekali dari `main.rs` setelah `AppWindow::new()`. Nyambungin
@@ -239,6 +249,8 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
         console_ports: Arc::new(Mutex::new(Vec::new())),
         active_connect: Arc::new(Mutex::new(None)),
         pending_password_profile: Arc::new(Mutex::new(None)),
+        workspaces: Arc::new(Mutex::new(Vec::new())),
+        active_workspace: Arc::new(Mutex::new(None)),
     });
 
     // `is_initialized` method lifecycle Local-only (lihat
@@ -295,6 +307,8 @@ pub fn wire_callbacks(ui: &AppWindow, vault: VaultBackend) -> Arc<AppState> {
     wire_sftp_callbacks(ui, &state);
     wire_console_callbacks(ui, &state);
     wire_connecting_callbacks(ui, &state);
+    wire_split_callbacks(ui, &state);
+    wire_drag_callbacks(ui, &state);
     state
 }
 
@@ -1333,6 +1347,13 @@ fn wire_hosts_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
                             cm.set_avatar_letter(avatar_letter.into());
                             cm.set_prompt_username(username.into());
                             cm.set_has_stored_password(has_stored_password);
+                            // WAJIB: form kredensial di
+                            // connecting-view.slint disembunyikan
+                            // selama `has-error` true. Tanpa reset ini,
+                            // host yang connect-nya baru saja gagal
+                            // akan menampilkan layar error TANPA form
+                            // password — user tidak punya jalan maju.
+                            cm.set_has_error(false);
                             cm.set_needs_password(true);
                             cm.set_visible(true);
                         });
@@ -1965,7 +1986,29 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         ui.global::<TerminalTabsModel>().on_tab_selected(move |tab_id: slint::SharedString| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Ok(uuid) = Uuid::parse_str(&tab_id) else { return };
+
+            // Chip workspace dan chip sesi hidup di daftar yang sama
+            // (lihat `refresh_terminal_tabs_model`), jadi id-nya harus
+            // dicocokkan ke workspace DULU — kalau tidak, klik chip
+            // workspace akan dicari di `tab_meta`, tidak ketemu, dan
+            // tidak terjadi apa-apa.
+            let is_workspace =
+                state.workspaces.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|w| w.id == uuid);
+            if is_workspace {
+                *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) = Some(uuid);
+                // Fokus ketikan jatuh ke pane aktif workspace ini.
+                if let Some(focus) = active_workspace(&state).map(|w| w.active) {
+                    switch_to_tab(&ui, &state, focus);
+                }
+                refresh_split_model(&ui, &state);
+                return;
+            }
+
+            // Pindah ke sesi tunggal: tinggalkan workspace supaya
+            // halaman terminal kembali ke `TerminalView` biasa.
+            *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) = None;
             switch_to_tab(&ui, &state, uuid);
+            refresh_split_model(&ui, &state);
         });
     }
 
@@ -1978,6 +2021,23 @@ fn wire_terminal_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
         ui.global::<TerminalTabsModel>().on_tab_close_requested(move |tab_id: slint::SharedString| {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Ok(uuid) = Uuid::parse_str(&tab_id) else { return };
+
+            // "×" pada chip WORKSPACE membubarkan tata letaknya, BUKAN
+            // memutus sesi-sesinya. Memutus beberapa koneksi sekaligus
+            // dari satu klik tidak bisa dibatalkan, dan user yang cuma
+            // ingin berhenti memakai split view tidak sedang meminta
+            // itu. Sesinya kembali muncul sebagai tab masing-masing.
+            let is_workspace =
+                state.workspaces.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|w| w.id == uuid);
+            if is_workspace {
+                let surviving = dissolve_workspace(&state, uuid);
+                if let Some(id) = surviving {
+                    switch_to_tab(&ui, &state, id);
+                }
+                refresh_terminal_tabs_model(&ui, &state);
+                refresh_split_model(&ui, &state);
+                return;
+            }
 
             finalize_tab_closed(&ui, &state, uuid);
 
@@ -3161,6 +3221,421 @@ where
     *state.active_connect.lock().unwrap_or_else(|e| e.into_inner()) = Some((host_id, handle.abort_handle()));
 }
 
+/// Callback split view (`SplitModel`, models.slint).
+///
+/// Aturan yang dipegang semua handler di sini: menutup pane TIDAK
+/// pernah menutup sesinya. Sesi tetap hidup dan tabnya tetap ada di tab
+/// bar, jadi tata letak bisa diutak-atik tanpa risiko kehilangan kerja
+/// yang sedang berjalan di server.
+fn wire_split_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
+    // --- Bagi pane aktif: 1 = kiri-kanan, 2 = atas-bawah.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_split_requested(move |orientation: i32| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Some(active) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+
+            // Sudah di dalam workspace: panggilan berikutnya cuma
+            // mengganti arah belah, tidak menambah pane.
+            let already_split = with_active_workspace(&state, |w| {
+                if let LayoutNode::Split { orientation: slot, .. } = &mut w.root {
+                    *slot = orientation;
+                }
+            })
+            .is_some();
+            if already_split {
+                refresh_split_model(&ui, &state);
+                return;
+            }
+
+            // Pane kedua diisi sesi LAIN. Mengisinya dengan sesi yang
+            // sama akan menampilkan satu shell di dua pane — dua kursor
+            // pada shell yang sama, membingungkan dan tidak ada
+            // gunanya. Tanpa sesi kedua, tidak ada yang bisa dibagi.
+            let Some(second) = state
+                .tab_meta
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|t| t.id)
+                .find(|id| *id != active)
+            else {
+                show_notice(&ui, "Butuh minimal dua sesi terbuka untuk split view", false);
+                return;
+            };
+
+            create_workspace(&ui, &state, orientation, active, second);
+        });
+    }
+
+    // --- Tutup satu pane; sisanya kembali jadi tampilan tunggal.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_close_pane_requested(move |path: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+
+            let Some(workspace_id) = *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) else {
+                return;
+            };
+
+            // Buang pane-nya. Kalau tersisa kurang dari dua, workspace
+            // itu kehilangan alasan untuk ada — dibubarkan, dan
+            // sesinya kembali muncul sebagai tab biasa.
+            let remaining = with_active_workspace(&state, |w| {
+                if w.root.remove_leaf(path.as_str()).is_some() {
+                    // Kalau yang terbuang adalah pane yang sedang
+                    // fokus, fokus pindah ke sesi pertama yang tersisa
+                    // — membiarkannya menunjuk sesi yang sudah tidak
+                    // ada berarti ketikan berikutnya hilang entah ke
+                    // mana.
+                    let leaves = w.root.leaves();
+                    if !leaves.contains(&w.active) {
+                        if let Some(first) = leaves.first().copied() {
+                            w.active = first;
+                        }
+                    }
+                }
+                w.root.leaves().len()
+            })
+            .unwrap_or(0);
+
+            let surviving = if remaining < 2 { dissolve_workspace(&state, workspace_id) } else { None };
+
+            // Sesi yang tersisa jadi tab aktif supaya tampilan tunggal
+            // menampilkan sesi yang baru saja dilihat user, bukan tab
+            // lama yang kebetulan masih tercatat aktif.
+            if let Some(id) = surviving {
+                switch_to_tab(&ui, &state, id);
+            }
+            refresh_terminal_tabs_model(&ui, &state);
+            refresh_split_model(&ui, &state);
+        });
+    }
+
+    // --- Pindah fokus ketikan antar pane.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_pane_focused(move |path: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+
+            let tab = with_active_workspace(&state, |w| {
+                let session = w.root.leaf_at(path.as_str())?;
+                w.active = session;
+                Some(session)
+            })
+            .flatten();
+
+            // `active_terminal` ikut dipindah supaya sorotan di tab bar,
+            // tema terminal, dan panel pengaturan menunjuk sesi yang
+            // sama dengan pane yang fokus — kalau tidak, user mengatur
+            // tema untuk host yang bukan sedang dilihatnya.
+            if let Some(id) = tab {
+                switch_to_tab(&ui, &state, id);
+            }
+            refresh_split_model(&ui, &state);
+        });
+    }
+
+    // --- Pembatas selesai digeser.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_ratio_changed(move |path: slint::SharedString, ratio: f32| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            // `set_ratio` yang menjepit nilainya — batas itu milik
+            // model, bukan milik tampilan, supaya nilai tersimpannya
+            // tetap aman walau datang dari mana pun.
+            with_active_workspace(&state, |w| w.root.set_ratio(path.as_str(), ratio));
+            refresh_split_model(&ui, &state);
+        });
+    }
+
+    // --- Focus mode: satu pane memenuhi area, sisanya jadi daftar.
+    //
+    // Keadaannya disimpan di workspace, bukan di properti Slint:
+    // properti UI ditimpa tiap `refresh_split_model`, jadi kalau
+    // disimpan di sana focus mode akan mati sendiri setiap ada output
+    // baru dari server.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_focus_mode_toggled(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            with_active_workspace(&state, |w| w.focus_mode = !w.focus_mode);
+            refresh_split_model(&ui, &state);
+        });
+    }
+
+    // --- Ketikan ke pane tertentu.
+    //
+    // Sengaja TIDAK memakai `active_terminal` seperti
+    // `TerminalTabsModel.on_pty_input_requested`: di split view tujuan
+    // ketikan ditentukan pane pengirimnya, bukan tab mana yang
+    // kebetulan tercatat aktif. Kalau keduanya sempat tidak sinkron,
+    // memakai `active_terminal` berarti mengirim perintah ke server
+    // yang salah.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_pane_input_requested(
+            move |path: slint::SharedString, text: slint::SharedString| {
+                let Some(host_id) = active_workspace(&state).and_then(|w| w.tab_at(path.as_str())) else {
+                    return;
+                };
+                let scrolled_back = state
+                    .terminals
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&host_id)
+                    .is_some_and(|t| t.scroll_to_bottom());
+                if scrolled_back {
+                    render_and_cache_tab(&ui_weak, &state, host_id);
+                }
+                let bytes = text.as_bytes().to_vec();
+                let state = state.clone();
+                tokio::spawn(async move {
+                    if let Some(session) = state.sessions.lock().await.get(&host_id) {
+                        let _ = session.write(&bytes).await;
+                    }
+                });
+            },
+        );
+    }
+
+    // --- Roda mouse di satu pane.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_pane_scroll_requested(move |path: slint::SharedString, lines: i32| {
+            let Some(host_id) = active_workspace(&state).and_then(|w| w.tab_at(path.as_str())) else {
+                return;
+            };
+            let arrow_keys = {
+                let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(term) = terminals.get_mut(&host_id) else { return };
+                let bytes = term.alternate_scroll_bytes(lines);
+                if bytes.is_none() {
+                    term.scroll_view(lines);
+                }
+                bytes
+            };
+            match arrow_keys {
+                Some(bytes) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        if let Some(session) = state.sessions.lock().await.get(&host_id) {
+                            let _ = session.write(&bytes).await;
+                        }
+                    });
+                }
+                None => render_and_cache_tab(&ui_weak, &state, host_id),
+            }
+        });
+    }
+
+    // --- Dua pane bertukar posisi (drag pane ke pane lain).
+    //
+    // Menukar, BUKAN menggeser-sisipkan: dengan dua pane keduanya sama
+    // hasilnya, dan menukar tetap benar kalau nanti pane-nya lebih
+    // banyak — isi pane tujuan tidak pernah hilang.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_panes_reordered(
+            move |from: slint::SharedString, to: slint::SharedString| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let swapped = with_active_workspace(&state, |w| {
+                    if from.as_str() == to.as_str() {
+                        return false;
+                    }
+                    let Some(moved) = w.root.leaf_at(from.as_str()) else { return false };
+                    if !w.root.swap_leaves(from.as_str(), to.as_str()) {
+                        return false;
+                    }
+                    // Fokus mengikuti sesi yang DISERET ke posisi
+                    // barunya — user baru saja memegang pane itu, jadi
+                    // itu yang dia maksud.
+                    w.active = moved;
+                    true
+                })
+                .unwrap_or(false);
+
+                if swapped {
+                    refresh_split_model(&ui, &state);
+                }
+            },
+        );
+    }
+
+    // --- Pane dikeluarkan dari workspace (drag pane ke tab bar).
+    //
+    // Sesinya TIDAK diputus — ia kembali muncul sebagai tab sendiri.
+    // Ini kebalikan dari drop yang membuat workspace, dan tanpanya
+    // sesi yang sudah masuk workspace tidak punya jalan keluar selain
+    // membubarkan seluruh workspace.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_pane_extracted(move |path: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Some(workspace_id) = *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) else {
+                return;
+            };
+
+            let extracted = with_active_workspace(&state, |w| {
+                let id = w.root.remove_leaf(path.as_str())?;
+                if let Some(first) = w.root.leaves().first().copied() {
+                    w.active = first;
+                }
+                Some(id)
+            })
+            .flatten();
+
+            let Some(extracted) = extracted else { return };
+
+            // Tersisa kurang dari dua pane: workspace kehilangan alasan
+            // untuk ada, jadi dibubarkan dan sisanya ikut kembali jadi
+            // tab biasa.
+            let remaining = active_workspace(&state).map(|w| w.panes().len()).unwrap_or(0);
+            if remaining < 2 {
+                dissolve_workspace(&state, workspace_id);
+            }
+
+            // Tampilkan sesi yang baru dikeluarkan: user menariknya ke
+            // tab bar, yang berarti dia ingin memakainya sendirian.
+            *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            switch_to_tab(&ui, &state, extracted);
+            refresh_terminal_tabs_model(&ui, &state);
+            refresh_split_model(&ui, &state);
+        });
+    }
+
+    // --- Ukuran grid satu pane berubah.
+    //
+    // BERBEDA dari `TerminalTabsModel.on_grid_resized` yang menyamakan
+    // ukuran SEMUA terminal ke satu `state.term_size` global: di split
+    // view tiap pane punya ukuran piksel sendiri, jadi menyamakannya
+    // akan membuat salah satu sesi memakai ukuran yang bukan miliknya
+    // (teks terpotong atau ruang kosong di program layar penuh).
+    // `term_size` global sengaja TIDAK disentuh di sini — nilainya
+    // tetap jadi ukuran awal untuk sesi baru.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<SplitModel>().on_pane_grid_resized(move |path: slint::SharedString, cols: i32, rows: i32| {
+            let Some((cols, rows)) = console::valid_term_size(cols, rows) else { return };
+            let Some(host_id) = active_workspace(&state).and_then(|w| w.tab_at(path.as_str())) else {
+                return;
+            };
+
+            {
+                let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+                let Some(term) = terminals.get_mut(&host_id) else { return };
+                if term.size() == (cols, rows) {
+                    return;
+                }
+                term.resize(cols, rows);
+            }
+
+            let state_task = state.clone();
+            tokio::spawn(async move {
+                if let Some(session) = state_task.sessions.lock().await.get(&host_id) {
+                    let _ = session.resize_pty(cols, rows).await;
+                }
+            });
+
+            render_and_cache_tab(&ui_weak, &state, host_id);
+        });
+    }
+}
+
+/// Callback drag & drop tab (`DragModel`, models.slint).
+///
+/// Inilah jalur utama pembuatan workspace — tombol split di tab bar
+/// cuma jalur cadangan. Menyeret satu tab ke terminal tab lain adalah
+/// cara yang langsung menyatakan "tampilkan dua ini berdampingan",
+/// tanpa user harus lebih dulu memilih arah belah.
+fn wire_drag_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
+    // --- Dijatuhkan di area terminal (belum split) -> workspace baru.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<DragModel>().on_dropped_on_terminal(move |dragged: slint::SharedString| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Ok(dragged) = Uuid::parse_str(&dragged) else { return };
+            let Some(current) = *state.active_terminal.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+
+            // Menjatuhkan tab ke terminalnya sendiri tidak berarti
+            // apa-apa — satu sesi di dua pane cuma menampilkan shell
+            // yang sama dua kali.
+            if dragged == current {
+                return;
+            }
+
+            // Arah belah DIBACA dari `DragModel`, yang ditulis
+            // page-terminal.slint dari rasio piksel area terminal —
+            // bukan ditentukan lagi di sini. Dua tempat yang
+            // masing-masing memutuskan arah berarti preview biru bisa
+            // menjanjikan satu bentuk sementara hasilnya bentuk lain,
+            // dan itu persis keluhan yang membuat perubahan ini ada.
+            //
+            // Fallback 1 (kiri-kanan) untuk nilai yang belum diisi:
+            // terminal lebih sering dibatasi lebar baris daripada jumlah
+            // baris, jadi dua kolom berdampingan lebih berguna daripada
+            // dua tumpukan pendek.
+            let orientation = match ui.global::<DragModel>().get_drop_orientation() {
+                2 => 2,
+                _ => 1,
+            };
+            create_workspace(&ui, &state, orientation, current, dragged);
+        });
+    }
+
+    // --- Dijatuhkan tepat di satu pane -> pane itu berganti isi.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<DragModel>().on_dropped_on_pane(
+            move |dragged: slint::SharedString, path: slint::SharedString, orientation: i32| {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let Ok(dragged) = Uuid::parse_str(&dragged) else { return };
+
+                let changed = with_active_workspace(&state, |w| {
+                    // Sesi yang sudah ada di pane LAIN tidak boleh
+                    // ditarik ke sini: hasilnya satu sesi tampil dua
+                    // kali, dan pane asalnya jadi kosong tanpa diminta.
+                    if w.root.leaves().contains(&dragged) {
+                        return false;
+                    }
+                    // MEMBELAH pane tujuan, bukan mengganti isinya.
+                    //
+                    // Inilah yang membuat tata letak campuran mungkin:
+                    // membelah pane kanan menghasilkan "kolom kiri
+                    // penuh, kolom kanan terbagi dua" tanpa menyentuh
+                    // pane kiri sama sekali. Mengganti isi berarti
+                    // jumlah pane tidak pernah bertambah, dan sesi yang
+                    // tergantikan terlempar keluar tanpa diminta.
+                    if !w.root.split_leaf(path.as_str(), dragged, orientation) {
+                        return false;
+                    }
+                    w.active = dragged;
+                    true
+                })
+                .unwrap_or(false);
+
+                if changed {
+                    switch_to_tab(&ui, &state, dragged);
+                    refresh_terminal_tabs_model(&ui, &state);
+                    refresh_split_model(&ui, &state);
+                }
+            },
+        );
+    }
+}
+
 /// Callback layar "Connecting" (`ConnectingModel`, models.slint) —
 /// SATU-SATUNYA yang perlu di-wire di sini cuma tombol "Batal" (isi
 /// `label`/`subtitle`/`visible`-nya sendiri diisi LANGSUNG dari
@@ -3189,6 +3664,47 @@ fn wire_connecting_callbacks(ui: &AppWindow, state: &Arc<AppState>) {
             cm.set_visible(false);
             ui.global::<SftpModel>().set_connecting(false);
             ui.global::<ConsoleModel>().set_connecting(false);
+        });
+    }
+
+    // --- Tombol "Coba lagi" di layar error koneksi.
+    //
+    // Retry SENGAJA lewat `HostsModel.host-connect-requested` (jalur
+    // yang sama dengan klik host dari daftar), BUKAN memanggil
+    // `perform_connect` langsung dengan password yang disimpan: dengan
+    // begini password dibaca ULANG dari vault tiap percobaan, jadi
+    // tidak ada kredensial yang menetap di memori hanya demi tombol
+    // ini. Efek sampingnya bagus juga — kalau user sempat memperbaiki
+    // kredensial di panel Host Details, retry otomatis memakai yang
+    // baru.
+    {
+        let ui_weak = ui.as_weak();
+        ui.global::<ConnectingModel>().on_retry_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let cm = ui.global::<ConnectingModel>();
+            let host_id = cm.get_retry_host_id();
+            cm.set_has_error(false);
+            if host_id.is_empty() {
+                // Tidak tahu host mana yang harus diulang (mestinya
+                // tidak terjadi) — tutup saja daripada menggantung di
+                // layar yang tombolnya tidak berfungsi.
+                cm.set_visible(false);
+                return;
+            }
+            ui.global::<HostsModel>().invoke_host_connect_requested(host_id);
+        });
+    }
+
+    // Tutup layar error dan kembali ke halaman sebelumnya.
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.global::<ConnectingModel>().on_dismiss_requested(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let cm = ui.global::<ConnectingModel>();
+            cm.set_has_error(false);
+            cm.set_visible(false);
+            refresh_hosts_model(&ui, &state);
         });
     }
 
@@ -3417,6 +3933,13 @@ async fn sftp_connect_and_refresh(
                 cm.set_label(label.into());
                 cm.set_subtitle(subtitle.into());
                 cm.set_avatar_letter(avatar_letter.into());
+                // Alur SFTP memakai ULANG layar Connecting yang sama,
+                // tapi tidak melaporkan tahap (narasi tahap khusus
+                // sesi SSH interaktif). Error dari percobaan SSH
+                // sebelumnya harus dibersihkan, kalau tidak layar SFTP
+                // terbuka dengan pesan merah yang bukan miliknya.
+                cm.set_has_error(false);
+                cm.set_stages(slint::ModelRc::default());
                 cm.set_visible(true);
             }
         });
@@ -3750,21 +4273,571 @@ fn finalize_tab_closed(ui: &AppWindow, state: &Arc<AppState>, id: Uuid) {
     refresh_hosts_model(ui, state);
 }
 
-/// Baca ulang `state.tab_meta` dan tulis ke `TerminalTabsModel.tabs`.
-fn refresh_terminal_tabs_model(ui: &AppWindow, state: &Arc<AppState>) {
-    let items: Vec<TerminalTab> = state
+/// Satu workspace: beberapa sesi SSH yang tampil berdampingan dalam
+/// satu tata letak.
+///
+/// Workspace adalah ENTITAS, bukan sekadar mode tampilan. Begitu dua
+/// tab digabung, keduanya hilang dari tab bar dan digantikan satu chip
+/// workspace — pola yang sama dipakai Termius (`hiddenTabsInSplitView`,
+/// `workspaceFromSplitViewIsCreated`). Kalau split hanya "mode", ia
+/// bubar setiap user pindah tab, dan tata letak yang sudah disusun
+/// harus dibangun ulang terus-menerus.
+///
+/// `panes` diindeks oleh posisi, dan posisi itulah yang jadi `path`
+/// ("0", "1") di `SplitPane`. Dibuat `Vec` supaya penambahan pane
+/// (nesting) nanti tidak mengubah tipe ini.
+#[derive(Clone)]
+struct Workspace {
+    id: Uuid,
+    /// Akar pohon tata letak.
+    root: LayoutNode,
+    /// Sesi yang menerima ketikan, disimpan sebagai ID SESI dan bukan
+    /// path/indeks pane.
+    ///
+    /// Path berubah setiap pohonnya berubah bentuk — membelah sebuah
+    /// pane menggeser path semua saudaranya. Kalau fokus disimpan
+    /// sebagai path, satu operasi belah bisa memindahkan fokus ke sesi
+    /// lain tanpa diminta, dan ketikan berikutnya masuk ke server yang
+    /// salah. ID sesi tidak pernah bergeser.
+    active: Uuid,
+    /// Focus mode: pane aktif memenuhi area, sisanya jadi daftar di
+    /// sidebar. Disimpan PER WORKSPACE, bukan global, supaya keluar-
+    /// masuk workspace tidak mengubah pilihan user di workspace lain.
+    focus_mode: bool,
+}
+
+/// Satu simpul pohon tata letak.
+///
+/// Biner, bukan n-ary, karena itu yang cocok dengan interaksinya:
+/// menjatuhkan tab ke sebuah pane MEMBELAH pane itu jadi dua. Simpul
+/// n-ary akan memaksa pertanyaan "disisipkan di posisi ke berapa" yang
+/// tidak punya jawaban alami dari sebuah gerakan drop.
+///
+/// Pohon ini TIDAK dirender sebagai komponen bersarang: Slint tidak
+/// punya komponen rekursif. Ia diratakan jadi daftar persegi oleh
+/// `flatten()` (lihat komentar `SplitPane.fx` di models.slint).
+#[derive(Clone)]
+enum LayoutNode {
+    /// Satu pane berisi satu sesi.
+    Leaf(Uuid),
+    /// Dua anak yang berbagi ruang simpul ini.
+    Split {
+        /// 1 = kiri-kanan, 2 = atas-bawah.
+        orientation: i32,
+        /// Porsi anak pertama.
+        ratio: f32,
+        first: Box<LayoutNode>,
+        second: Box<LayoutNode>,
+    },
+}
+
+/// Satu pane hasil perataan: path, sesi, dan persegi dalam pecahan.
+struct FlatPane {
+    path: String,
+    session: Uuid,
+    rect: (f32, f32, f32, f32),
+}
+
+/// Satu pembatas hasil perataan.
+struct FlatDivider {
+    /// Path simpul `Split` yang dikendalikannya — inilah yang dikirim
+    /// balik saat digeser.
+    path: String,
+    rect: (f32, f32, f32, f32),
+    horizontal: bool,
+    ratio: f32,
+    /// Panjang simpul induk sepanjang sumbu belah, sebagai pecahan dari
+    /// seluruh area. Dibutuhkan Slint untuk menerjemahkan geseran dalam
+    /// piksel jadi perubahan `ratio`: tanpa ini, menggeser pembatas di
+    /// simpul yang dalam akan terasa jauh lebih cepat daripada yang di
+    /// akar, karena ruangnya lebih sempit.
+    span: f32,
+}
+
+impl LayoutNode {
+    /// Semua sesi di pohon ini, urut kiri-ke-kanan / atas-ke-bawah.
+    fn leaves(&self) -> Vec<Uuid> {
+        match self {
+            LayoutNode::Leaf(id) => vec![*id],
+            LayoutNode::Split { first, second, .. } => {
+                let mut out = first.leaves();
+                out.extend(second.leaves());
+                out
+            }
+        }
+    }
+
+    /// Sesi di `path`, kalau path itu menunjuk sebuah daun.
+    fn leaf_at(&self, path: &str) -> Option<Uuid> {
+        match self.node_at(path)? {
+            LayoutNode::Leaf(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Simpul di `path`. Path adalah urutan "0"/"1" dipisah titik;
+    /// path kosong berarti akar.
+    fn node_at(&self, path: &str) -> Option<&LayoutNode> {
+        let mut node = self;
+        if !path.is_empty() {
+            for step in path.split('.') {
+                let LayoutNode::Split { first, second, .. } = node else { return None };
+                node = match step {
+                    "0" => first.as_ref(),
+                    "1" => second.as_ref(),
+                    _ => return None,
+                };
+            }
+        }
+        Some(node)
+    }
+
+    fn node_at_mut(&mut self, path: &str) -> Option<&mut LayoutNode> {
+        let mut node = self;
+        if !path.is_empty() {
+            for step in path.split('.') {
+                let LayoutNode::Split { first, second, .. } = node else { return None };
+                node = match step {
+                    "0" => first.as_mut(),
+                    "1" => second.as_mut(),
+                    _ => return None,
+                };
+            }
+        }
+        Some(node)
+    }
+
+    /// Belah daun di `path` jadi dua: isi lama tetap di posisi pertama,
+    /// `session` masuk sebagai yang kedua.
+    ///
+    /// Inilah operasi yang membuat tata letak campuran mungkin —
+    /// membelah pane kanan menghasilkan "kolom kiri penuh, kolom kanan
+    /// terbagi dua" tanpa menyentuh pane kiri sama sekali.
+    fn split_leaf(&mut self, path: &str, session: Uuid, orientation: i32) -> bool {
+        let Some(node) = self.node_at_mut(path) else { return false };
+        let LayoutNode::Leaf(existing) = node else { return false };
+        let existing = *existing;
+        *node = LayoutNode::Split {
+            orientation,
+            ratio: 0.5,
+            first: Box::new(LayoutNode::Leaf(existing)),
+            second: Box::new(LayoutNode::Leaf(session)),
+        };
+        true
+    }
+
+    /// Buang daun di `path`; simpul induknya digantikan saudaranya.
+    ///
+    /// Mengembalikan sesi yang dibuang. Akar yang tinggal satu daun
+    /// tidak bisa dibuang di sini — pemanggil yang memutuskan untuk
+    /// membubarkan workspace-nya.
+    fn remove_leaf(&mut self, path: &str) -> Option<Uuid> {
+        if path.is_empty() {
+            return None;
+        }
+        let (parent_path, step) = match path.rsplit_once('.') {
+            Some((parent, step)) => (parent, step),
+            None => ("", path),
+        };
+        let parent = self.node_at_mut(parent_path)?;
+        let LayoutNode::Split { first, second, .. } = parent else { return None };
+
+        // Saudara yang bertahan naik menggantikan induknya.
+        let (removed, surviving) = match step {
+            "0" => (first.leaves().first().copied(), (**second).clone()),
+            "1" => (second.leaves().first().copied(), (**first).clone()),
+            _ => return None,
+        };
+        // Hanya daun yang boleh dibuang lewat jalur ini; membuang
+        // sub-pohon utuh akan menutup beberapa pane sekaligus dari satu
+        // gerakan, yang tidak pernah diminta user.
+        let target_is_leaf = matches!(
+            match step {
+                "0" => first.as_ref(),
+                _ => second.as_ref(),
+            },
+            LayoutNode::Leaf(_)
+        );
+        if !target_is_leaf {
+            return None;
+        }
+        *parent = surviving;
+        removed
+    }
+
+    /// Tukar isi dua daun.
+    fn swap_leaves(&mut self, a: &str, b: &str) -> bool {
+        let (Some(left), Some(right)) = (self.leaf_at(a), self.leaf_at(b)) else { return false };
+        if let Some(LayoutNode::Leaf(slot)) = self.node_at_mut(a) {
+            *slot = right;
+        }
+        if let Some(LayoutNode::Leaf(slot)) = self.node_at_mut(b) {
+            *slot = left;
+        }
+        true
+    }
+
+    /// Ubah porsi simpul `Split` di `path`.
+    fn set_ratio(&mut self, path: &str, ratio: f32) -> bool {
+        let Some(LayoutNode::Split { ratio: slot, .. }) = self.node_at_mut(path) else { return false };
+        *slot = Workspace::clamp_ratio(ratio);
+        true
+    }
+
+    /// Path daun yang berisi `session`.
+    fn path_of(&self, session: Uuid) -> Option<String> {
+        fn walk(node: &LayoutNode, session: Uuid, path: &str) -> Option<String> {
+            match node {
+                LayoutNode::Leaf(id) if *id == session => Some(path.to_string()),
+                LayoutNode::Leaf(_) => None,
+                LayoutNode::Split { first, second, .. } => {
+                    let child = |step: &str| if path.is_empty() { step.to_string() } else { format!("{path}.{step}") };
+                    walk(first, session, &child("0")).or_else(|| walk(second, session, &child("1")))
+                }
+            }
+        }
+        walk(self, session, "")
+    }
+
+    /// Ratakan pohon jadi daftar pane + pembatas dengan geometri dalam
+    /// pecahan. Satu-satunya tempat geometri dihitung.
+    fn flatten(&self) -> (Vec<FlatPane>, Vec<FlatDivider>) {
+        fn walk(
+            node: &LayoutNode,
+            path: String,
+            rect: (f32, f32, f32, f32),
+            panes: &mut Vec<FlatPane>,
+            dividers: &mut Vec<FlatDivider>,
+        ) {
+            let (x, y, w, h) = rect;
+            match node {
+                LayoutNode::Leaf(id) => panes.push(FlatPane { path, session: *id, rect }),
+                LayoutNode::Split { orientation, ratio, first, second } => {
+                    let horizontal = *orientation == 1;
+                    let child = |step: &str| if path.is_empty() { step.to_string() } else { format!("{path}.{step}") };
+
+                    if horizontal {
+                        let split_w = w * ratio;
+                        walk(first, child("0"), (x, y, split_w, h), panes, dividers);
+                        walk(second, child("1"), (x + split_w, y, w - split_w, h), panes, dividers);
+                        dividers.push(FlatDivider {
+                            path: path.clone(),
+                            rect: (x + split_w, y, 0.0, h),
+                            horizontal: true,
+                            ratio: *ratio,
+                            span: w,
+                        });
+                    } else {
+                        let split_h = h * ratio;
+                        walk(first, child("0"), (x, y, w, split_h), panes, dividers);
+                        walk(second, child("1"), (x, y + split_h, w, h - split_h), panes, dividers);
+                        dividers.push(FlatDivider {
+                            path: path.clone(),
+                            rect: (x, y + split_h, w, 0.0),
+                            horizontal: false,
+                            ratio: *ratio,
+                            span: h,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut panes = Vec::new();
+        let mut dividers = Vec::new();
+        walk(self, String::new(), (0.0, 0.0, 1.0, 1.0), &mut panes, &mut dividers);
+        (panes, dividers)
+    }
+}
+
+impl Workspace {
+    const RATIO_MIN: f32 = 0.15;
+    const RATIO_MAX: f32 = 0.85;
+
+    /// Batas geser pembatas. Pane selebar 0px tidak bisa dikembalikan
+    /// user karena pembatasnya pun tak bisa diraih lagi — jadi nilai
+    /// ekstrem ditolak di sini, bukan cuma ditahan di tampilan.
+    fn clamp_ratio(v: f32) -> f32 {
+        v.clamp(Self::RATIO_MIN, Self::RATIO_MAX)
+    }
+
+    /// Label chip di tab bar.
+    ///
+    /// Selalu "Workspace", BUKAN gabungan nama anggotanya. Dua alasan:
+    /// nama gabungan tumbuh tak terkendali begitu pane-nya tiga atau
+    /// lebih ("A + B + C + D" memenuhi tab bar dan tetap tidak
+    /// terbaca), dan nama tiap sesi sudah tertulis di judul pane
+    /// masing-masing — chip-nya cukup menyatakan "ini sebuah
+    /// workspace". Jumlah pane-nya ditampilkan terpisah sebagai angka
+    /// di sebelah ikon.
+    fn label(&self) -> String {
+        "Workspace".to_string()
+    }
+
+    /// Semua sesi di workspace ini.
+    fn panes(&self) -> Vec<Uuid> {
+        self.root.leaves()
+    }
+
+    /// Sesi di `path`.
+    fn tab_at(&self, path: &str) -> Option<Uuid> {
+        self.root.leaf_at(path)
+    }
+
+    /// Path pane yang sedang fokus.
+    fn active_path(&self) -> String {
+        self.root.path_of(self.active).unwrap_or_default()
+    }
+}
+
+/// Workspace yang sedang ditampilkan, kalau ada.
+fn active_workspace(state: &Arc<AppState>) -> Option<Workspace> {
+    let active = (*state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()))?;
+    state.workspaces.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|w| w.id == active).cloned()
+}
+
+/// Ubah workspace yang sedang ditampilkan di tempat.
+///
+/// Mengembalikan `None` kalau tidak ada workspace aktif — semua
+/// callback split memakai ini supaya tidak ada satu pun yang diam-diam
+/// bekerja pada workspace yang salah setelah user berpindah tab.
+fn with_active_workspace<R>(state: &Arc<AppState>, f: impl FnOnce(&mut Workspace) -> R) -> Option<R> {
+    let active = (*state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()))?;
+    let mut workspaces = state.workspaces.lock().unwrap_or_else(|e| e.into_inner());
+    workspaces.iter_mut().find(|w| w.id == active).map(f)
+}
+
+/// Bubarkan workspace: hapus dari daftar, sesinya kembali jadi tab
+/// biasa. Mengembalikan sesi yang sebaiknya ditampilkan sesudahnya.
+///
+/// Sesi TIDAK diputus — membubarkan tata letak tidak boleh menutup
+/// pekerjaan yang sedang jalan di server.
+fn dissolve_workspace(state: &Arc<AppState>, workspace_id: Uuid) -> Option<Uuid> {
+    let mut workspaces = state.workspaces.lock().unwrap_or_else(|e| e.into_inner());
+    let idx = workspaces.iter().position(|w| w.id == workspace_id)?;
+    let removed = workspaces.remove(idx);
+    drop(workspaces);
+
+    let mut active = state.active_workspace.lock().unwrap_or_else(|e| e.into_inner());
+    if *active == Some(workspace_id) {
+        *active = None;
+    }
+    // Sesi yang tadinya fokus yang ditampilkan sesudahnya — itu yang
+    // terakhir dilihat user.
+    Some(removed.active)
+}
+
+/// Dorong workspace yang sedang dibuka + isi grid tiap pane ke
+/// `SplitModel`.
+///
+/// Grid diambil dari `tab_cache` (snapshot terakhir tiap tab) untuk
+/// SETIAP pane yang terlihat, bukan cuma yang fokus — itu inti split
+/// view: dua sesi hidup tampil bersamaan. `TerminalTabsModel.rows`
+/// tidak bisa dipakai karena isinya cuma tab aktif.
+fn refresh_split_model(ui: &AppWindow, state: &Arc<AppState>) {
+    // Tidak ada workspace aktif = tampilan terminal tunggal.
+    // `orientation: 0` itulah yang membuat `page-terminal.slint`
+    // memilih `TerminalView` biasa, bukan `SplitTerminalView`.
+    let Some(split) = active_workspace(state) else {
+        let sm = ui.global::<SplitModel>();
+        sm.set_orientation(0);
+        sm.set_panes(ModelRc::new(VecModel::from(Vec::<SplitPane>::new())));
+        ui.global::<TerminalTabsModel>().set_active_workspace_id(slint::SharedString::new());
+        return;
+    };
+    ui.global::<TerminalTabsModel>().set_active_workspace_id(split.id.to_string().into());
+    // `TabMeta` bukan `Clone`, dan menahan kunci `tab_meta` selama
+    // membangun model berarti memegangnya lebih lama dari perlu — jadi
+    // salin hanya field yang dipakai, lalu lepas kuncinya.
+    let meta: Vec<(Uuid, String, String)> = state
         .tab_meta
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
-        .map(|t| TerminalTab { id: t.id.to_string().into(), label: t.label.clone().into(), address: t.address.clone().into() })
+        .map(|t| (t.id, t.label.clone(), t.address.clone()))
         .collect();
+    let statuses = state.statuses.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let cache = state.tab_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    let (flat_panes, flat_dividers) = split.root.flatten();
+
+    let panes: Vec<SplitPane> = flat_panes
+        .iter()
+        .map(|pane| {
+            let tab = pane.session;
+            let (fx, fy, fw, fh) = pane.rect;
+            let info = meta.iter().find(|(tab_id, _, _)| *tab_id == tab);
+            let rows = cache
+                .get(&tab)
+                .cloned()
+                .map(console::plain_rows_to_slint)
+                .unwrap_or_else(|| ModelRc::new(VecModel::from(Vec::<TermRow>::new())));
+            SplitPane {
+                path: pane.path.clone().into(),
+                tab_id: tab.to_string().into(),
+                label: info.map(|(_, label, _)| label.clone()).unwrap_or_else(|| "(kosong)".into()).into(),
+                address: info.map(|(_, _, address)| address.clone()).unwrap_or_default().into(),
+                status: match statuses.get(&tab).map(String::as_str) {
+                    Some("online") => 2,
+                    Some("connecting") => 1,
+                    Some("failed") => 3,
+                    _ => 0,
+                },
+                rows,
+                fx,
+                fy,
+                fw,
+                fh,
+            }
+        })
+        .collect();
+
+    let dividers: Vec<SplitDivider> = flat_dividers
+        .iter()
+        .map(|d| SplitDivider {
+            path: d.path.clone().into(),
+            fx: d.rect.0,
+            fy: d.rect.1,
+            fw: d.rect.2,
+            fh: d.rect.3,
+            horizontal: d.horizontal,
+            ratio: d.ratio,
+            span: d.span,
+        })
+        .collect();
+
+    let sm = ui.global::<SplitModel>();
+    // `orientation` tinggal menandakan "ada workspace terbuka" untuk
+    // `page-terminal.slint`; bentuk tata letak sesungguhnya sekarang
+    // ada di `panes`/`dividers`, bukan di satu angka arah.
+    sm.set_orientation(match &split.root {
+        LayoutNode::Split { orientation, .. } => *orientation,
+        LayoutNode::Leaf(_) => 1,
+    });
+    sm.set_active_path(split.active_path().into());
+    sm.set_dividers(ModelRc::new(VecModel::from(dividers)));
+    sm.set_focus_mode(split.focus_mode);
+    sm.set_panes(ModelRc::new(VecModel::from(panes)));
+}
+
+/// Buat workspace baru dari dua sesi lalu langsung tampilkan.
+///
+/// Inilah perilaku `workspaceFromSplitViewIsCreated`: begitu dua sesi
+/// digabung, keduanya HILANG dari tab bar dan digantikan satu chip
+/// workspace. Tanpa itu, sesi yang sama muncul dua kali — sekali
+/// sebagai pane, sekali sebagai tab — dan menutup yang satu membuat
+/// yang lain tampak rusak.
+fn create_workspace(ui: &AppWindow, state: &Arc<AppState>, orientation: i32, first: Uuid, second: Uuid) {
+    let workspace = Workspace {
+        id: Uuid::new_v4(),
+        root: LayoutNode::Split {
+            orientation,
+            ratio: 0.5,
+            first: Box::new(LayoutNode::Leaf(first)),
+            second: Box::new(LayoutNode::Leaf(second)),
+        },
+        active: first,
+        focus_mode: false,
+    };
+    let id = workspace.id;
+    state.workspaces.lock().unwrap_or_else(|e| e.into_inner()).push(workspace);
+    *state.active_workspace.lock().unwrap_or_else(|e| e.into_inner()) = Some(id);
+
+    switch_to_tab(ui, state, first);
+    refresh_terminal_tabs_model(ui, state);
+    refresh_split_model(ui, state);
+}
+
+/// Baca ulang `state.tab_meta` + daftar workspace, lalu tulis ke
+/// `TerminalTabsModel.tabs`.
+///
+/// Sesi yang sudah masuk sebuah workspace TIDAK ikut ditampilkan
+/// sebagai tab sendiri — diwakili chip workspace-nya.
+fn refresh_terminal_tabs_model(ui: &AppWindow, state: &Arc<AppState>) {
+    let meta: Vec<(Uuid, String, String)> = state
+        .tab_meta
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .map(|t| (t.id, t.label.clone(), t.address.clone()))
+        .collect();
+    let workspaces = state.workspaces.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    let mut items: Vec<TerminalTab> = meta
+        .iter()
+        .filter(|(id, _, _)| !workspaces.iter().any(|w| w.panes().contains(id)))
+        .map(|(id, label, address)| TerminalTab {
+            id: id.to_string().into(),
+            label: label.clone().into(),
+            address: address.clone().into(),
+            is_workspace: false,
+            pane_count: 0,
+        })
+        .collect();
+
+    items.extend(workspaces.iter().map(|w| TerminalTab {
+        id: w.id.to_string().into(),
+        label: w.label().into(),
+        address: format!("{} sesi", w.panes().len()).into(),
+        is_workspace: true,
+        pane_count: w.panes().len() as i32,
+    }));
+
     ui.global::<TerminalTabsModel>().set_tabs(ModelRc::new(VecModel::from(items)));
+}
+
+/// Bangun SELURUH daftar baris tahap untuk layar Connecting dari satu
+/// tahap "sekarang" (lihat `ConnectStage` di crates/ssh-engine dan
+/// `ConnectStageRow` di ui/models.slint).
+///
+/// Daftarnya selalu lengkap 6 baris — tahap sebelum `current` ditandai
+/// selesai, sesudahnya belum jalan. Dibangun ulang utuh tiap kali
+/// (bukan menambal satu baris) karena ini satu-satunya cara memastikan
+/// tampilan selalu konsisten dengan posisi sebenarnya: tidak ada
+/// state lama yang bisa tertinggal kalau sebuah laporan progres
+/// terlewat.
+///
+/// SATU-SATUNYA tempat pemetaan `ConnectStage` -> angka `state` di
+/// Slint. Kalau tahap di engine berubah, cuma fungsi ini yang ikut
+/// berubah.
+fn connect_stage_rows(
+    current: terminus_ssh_engine::ConnectStage,
+    detail: Option<String>,
+    failed: bool,
+) -> slint::ModelRc<ConnectStageRow> {
+    let current_idx = current.index();
+    let rows: Vec<ConnectStageRow> = terminus_ssh_engine::ConnectStage::ALL
+        .iter()
+        .enumerate()
+        .map(|(idx, stage)| ConnectStageRow {
+            label: stage.label().into(),
+            // Detail cuma menempel di baris yang sedang berjalan —
+            // alamat IP yang sudah lewat tidak informatif lagi, dan
+            // menumpuknya bikin daftar ini susah dibaca sekilas.
+            detail: if idx == current_idx {
+                detail.clone().unwrap_or_default().into()
+            } else {
+                slint::SharedString::new()
+            },
+            state: if idx < current_idx {
+                2 // selesai
+            } else if idx == current_idx {
+                if failed {
+                    3 // gagal di sini
+                } else {
+                    1 // sedang berjalan
+                }
+            } else {
+                0 // belum jalan
+            },
+        })
+        .collect();
+    slint::ModelRc::new(slint::VecModel::from(rows))
 }
 
 /// Jalankan proses connect SSH beneran: set status "connecting", buka
 /// koneksi, kalau sukses buka tab terminal baru (spawn reader + pindah
-/// tampilan ke situ), kalau gagal tampilkan notice error. `profile` +
+/// tampilan ke situ), kalau gagal tampilkan layar error. `profile` +
 /// `password` dioper LANGSUNG sebagai argumen (bukan dibaca ulang dari
 /// vault di sini) — dipakai dari DUA tempat: host yang SUDAH tersimpan
 /// (`on_host_connect_requested`, baca dari vault dulu) MAUPUN dari
@@ -3795,6 +4868,16 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
                 cm.set_label(label.into());
                 cm.set_subtitle(subtitle.into());
                 cm.set_avatar_letter(avatar_letter.into());
+                // Bersihkan sisa error percobaan SEBELUMNYA sebelum
+                // layar ditampilkan lagi — kalau tidak, percobaan baru
+                // muncul dengan pesan merah percobaan lama dan user
+                // mengira sudah gagal padahal baru mulai.
+                cm.set_has_error(false);
+                cm.set_error_title(slint::SharedString::new());
+                cm.set_error_message(slint::SharedString::new());
+                cm.set_error_hint(slint::SharedString::new());
+                cm.set_can_retry(false);
+                cm.set_stages(connect_stage_rows(terminus_ssh_engine::ConnectStage::ResolvingAddress, None, false));
                 cm.set_visible(true);
             }
         });
@@ -3804,9 +4887,49 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
     // `known_hosts` store yang always-local, lihat
     // docs/desktop-selfhosted-integration.md bagian 2.7).
     let host_key_store: Arc<dyn HostKeyStore> = Arc::new(AppHostKeyStore::new(state.vault().local_store()));
-    let result = terminus_ssh_engine::connect(&profile, SecretMaterial::Password(password), host_key_store).await;
+    // Pelapor progres: tiap tahap yang dilaporkan engine dibangun jadi
+    // daftar baru lalu dikirim ke UI. Harus lewat
+    // `invoke_from_event_loop` karena laporan datang dari task tokio,
+    // sedangkan properti Slint cuma boleh disentuh dari thread event
+    // loop-nya.
+    //
+    // `Weak` (bukan strong handle) supaya window yang sudah ditutup
+    // tidak ditahan hidup oleh task connect yang masih jalan.
+    let progress: terminus_ssh_engine::ProgressSink = {
+        let ui_weak = ui_weak.clone();
+        Arc::new(move |stage, detail| {
+            let ui_weak = ui_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.global::<ConnectingModel>().set_stages(connect_stage_rows(stage, detail, false));
+                }
+            });
+        })
+    };
 
-    let notice: Option<String> = match result {
+    let result = terminus_ssh_engine::connect_with_progress(
+        &profile,
+        SecretMaterial::Password(password),
+        host_key_store,
+        Some(&progress),
+    )
+    .await;
+
+    // Kegagalan dibawa sebagai data TERSTRUKTUR, bukan satu String
+    // seperti dulu: layar Connecting butuh judul, pesan, saran, tahap
+    // yang merah, dan boleh-tidaknya "Coba lagi" secara terpisah.
+    // Memformatnya jadi satu string di sini berarti UI harus
+    // membongkarnya lagi — dan itu cara paling mudah kehilangan
+    // perbedaan antara "server mati" dan "host key berubah".
+    struct ConnectFailure {
+        title: String,
+        message: String,
+        hint: String,
+        can_retry: bool,
+        stage: Option<terminus_ssh_engine::ConnectStage>,
+    }
+
+    let failure: Option<ConnectFailure> = match result {
         Ok(session) => {
             // Selaraskan ukuran PTY server dengan grid `TerminalInstance`
             // (`state.term_size`) — best-effort, gagal resize TIDAK
@@ -3826,16 +4949,39 @@ async fn perform_connect(ui_weak: slint::Weak<AppWindow>, state: Arc<AppState>, 
         }
         Err(e) => {
             set_status(&state, uuid, "failed");
-            Some(e.to_string())
+            Some(ConnectFailure {
+                title: e.title().to_string(),
+                message: e.to_string(),
+                hint: e.hint().unwrap_or_default().to_string(),
+                can_retry: e.is_retryable(),
+                stage: e.stage(),
+            })
         }
     };
 
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(ui) = ui_weak.upgrade() {
-            ui.global::<ConnectingModel>().set_visible(false);
-            match notice {
-                Some(msg) => show_notice(&ui, &msg, true),
+            let cm = ui.global::<ConnectingModel>();
+            match failure {
+                Some(f) => {
+                    // Layar Connecting SENGAJA tetap terbuka waktu
+                    // gagal (dulu: ditutup + toast `show_notice`).
+                    // Toast hilang sendiri, dan untuk host key berubah
+                    // itu salah — pesan yang menandakan kemungkinan
+                    // penyadapan tidak boleh bisa terlewat begitu saja.
+                    if let Some(stage) = f.stage {
+                        cm.set_stages(connect_stage_rows(stage, None, true));
+                    }
+                    cm.set_error_title(f.title.into());
+                    cm.set_error_message(f.message.into());
+                    cm.set_error_hint(f.hint.into());
+                    cm.set_can_retry(f.can_retry);
+                    cm.set_retry_host_id(uuid.to_string().into());
+                    cm.set_has_error(true);
+                }
                 None => {
+                    cm.set_has_error(false);
+                    cm.set_visible(false);
                     refresh_terminal_tabs_model(&ui, &state);
                     switch_to_tab(&ui, &state, uuid);
                 }
@@ -3962,6 +5108,24 @@ fn render_and_cache_tab(ui_weak: &slint::Weak<AppWindow>, state: &Arc<AppState>,
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak2.upgrade() {
                 ui.global::<TerminalTabsModel>().set_rows(console::plain_rows_to_slint(plain));
+            }
+        });
+    }
+
+    // Di split view, tab yang BUKAN aktif pun bisa sedang terlihat di
+    // pane sebelah. Tanpa cabang ini pane itu membeku di snapshot
+    // terakhir waktu ia aktif — terlihat seperti sesi yang hang,
+    // padahal servernya mengirim data terus.
+    //
+    // Dibatasi ke tab yang betul-betul menempati sebuah pane supaya
+    // output tab yang tersembunyi tidak memicu rebuild model.
+    let in_visible_pane = active_workspace(state).is_some_and(|w| w.panes().contains(&host_id));
+    if in_visible_pane {
+        let ui_weak3 = ui_weak.clone();
+        let state3 = state.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak3.upgrade() {
+                refresh_split_model(&ui, &state3);
             }
         });
     }

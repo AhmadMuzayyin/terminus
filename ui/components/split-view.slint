@@ -1,0 +1,653 @@
+import { Tokens } from "../tokens.slint";
+import { SplitModel, TerminalTabsModel, TermRow, DragModel } from "../models.slint";
+import { TerminalSurface } from "./terminal-view.slint";
+import { StatusDot } from "./status-dot.slint";
+
+// Tooltip tombol baris judul pane.
+//
+// Slint tidak punya tooltip bawaan, jadi ini sekadar Rectangle yang
+// dipasang-copot lewat `if`. Bentuknya "label + pintasan" dan BUKAN
+// cuma label: tombol ikon tanpa teks sudah menyembunyikan namanya,
+// menyembunyikan pintasannya juga berarti tidak ada tempat sama sekali
+// di UI ini untuk menemukan tombol papan ketiknya.
+component PaneTooltip inherits Rectangle {
+    in property <string> label;
+    in property <string> shortcut;
+
+    // Lebar mengikuti isi — tooltip dengan lebar tetap akan memotong
+    // teks yang justru jadi alasan keberadaannya.
+    width: row.preferred-width;
+    height: 22px;
+    background: Tokens.surface-container-highest;
+    border-color: Tokens.outline-variant;
+    border-width: 1px;
+    border-radius: Tokens.radius-sm;
+
+    row := HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        alignment: center;
+        Text {
+            text: root.label;
+            color: Tokens.on-surface;
+            font-family: Tokens.font-body;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.shortcut;
+            color: Tokens.outline;
+            font-family: Tokens.font-mono;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Satu pane: judul kecil + area terminal.
+//
+// Isinya `TerminalSurface` (BUKAN `TerminalView`): `TerminalView`
+// menempel langsung ke `TerminalTabsModel.rows`, yaitu grid tab yang
+// aktif saja — kalau dipakai di sini kedua pane akan menampilkan
+// terminal yang SAMA. `TerminalSurface` menerima `rows` eksplisit,
+// seam yang memang sudah disiapkan proyek ini supaya satu
+// implementasi melayani tab SSH maupun Console (lihat komentar
+// `TerminalTabsModel.selection-text` di models.slint).
+component TerminalPane inherits Rectangle {
+    in property <string> path;
+    in property <string> label;
+    in property <string> address;
+    in property <int> status;
+    in property <[TermRow]> rows;
+    in property <bool> focused;
+
+    // Tinggi baris judul. Dipakai dua kali — oleh baris judulnya
+    // sendiri dan oleh overlay fokus yang harus BERHENTI di bawahnya —
+    // jadi disimpan sebagai properti, bukan diulang sebagai angka.
+    property <length> header-height: 26px;
+
+    border-radius: Tokens.radius-md;
+    background: TerminalTabsModel.terminal-bg-color;
+    // Pane yang fokus diberi garis tepi warna primer — satu-satunya
+    // penanda ke mana ketikan akan masuk. Tanpa ini dua pane terlihat
+    // identik dan user tidak punya cara tahu server mana yang sedang
+    // menerima perintahnya.
+    // --- Zona drop per pane: menjatuhkan tab tepat di sebuah pane
+    //     mengganti ISI pane itu, bukan membuat workspace baru.
+    //
+    // Sama seperti zona drop di page-terminal.slint, deteksinya
+    // membandingkan posisi pointer absolut — `has-hover` tidak pernah
+    // menyala selama drag karena event terkunci ke chip asal.
+    property <bool> drag-over: DragModel.active
+        && DragModel.pointer-x >= self.absolute-position.x
+        && DragModel.pointer-x <= self.absolute-position.x + self.width
+        && DragModel.pointer-y >= self.absolute-position.y
+        && DragModel.pointer-y <= self.absolute-position.y + self.height;
+
+    // Menulis path pane ini saat kursor masuk, dan mengosongkannya saat
+    // keluar — tapi HANYA kalau yang tertulis memang milik pane ini.
+    // Tanpa penjagaan itu, pane yang baru ditinggalkan bisa menghapus
+    // path pane yang baru saja dimasuki, dan drop-nya hilang.
+    changed drag-over => {
+        if (self.drag-over) {
+            DragModel.over-pane-path = root.path;
+            // Belah pada sisi PANJANG: pane yang lebih lebar dari
+            // tinggi dibagi kiri-kanan. Membelah sisi pendek
+            // menghasilkan dua pane yang terlalu sempit untuk dipakai.
+            DragModel.drop-orientation = root.width > root.height ? 1 : 2;
+        } else if (DragModel.over-pane-path == root.path) {
+            DragModel.over-pane-path = "";
+        }
+    }
+
+    // Dua keadaan berbeda, dua nada biru: `primary-container` (biru
+    // pekat) untuk "di sini boleh dijatuhkan", `primary` (biru pucat)
+    // untuk "pane ini yang menerima ketikan". Satu warna untuk keduanya
+    // membuat pane yang sedang fokus tidak bisa dibedakan dari pane yang
+    // sedang dibidik drop.
+    border-color: root.drag-over ? Tokens.primary-container
+        : root.focused ? Tokens.primary
+        : Tokens.outline-variant;
+    border-width: root.drag-over ? 2px : 1px;
+    animate border-color { duration: Tokens.transition-fast; }
+    clip: true;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Judul pane. Sengaja ADA (padahal tab bar sudah menampilkan
+        // nama host) karena di split view dua host terlihat sekaligus —
+        // tanpa label per pane, user harus mengingat pane mana milik
+        // host mana.
+        Rectangle {
+            height: root.header-height;
+            background: Tokens.surface-container;
+            vertical-stretch: 0;
+
+            // Pegangan seret pane.
+            //
+            // Dideklarasikan SEBELUM HorizontalLayout di bawah supaya
+            // z-order-nya di bawah: tombol "×" (punya TouchArea sendiri)
+            // tetap menerima klik, sedangkan area label — yang isinya
+            // cuma Text dan tidak menangkap pointer — jatuh ke sini.
+            // Kalau urutannya dibalik, pane tidak bisa ditutup lagi.
+            drag-handle := TouchArea {
+                mouse-cursor: DragModel.active ? MouseCursor.grabbing : MouseCursor.grab;
+
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.up && DragModel.active
+                        && DragModel.source-pane-path == root.path) {
+                        if (DragModel.over-tab-bar) {
+                            SplitModel.pane-extracted(root.path);
+                        } else if (DragModel.over-pane-path != "" && DragModel.over-pane-path != root.path) {
+                            SplitModel.panes-reordered(root.path, DragModel.over-pane-path);
+                        }
+                        DragModel.active = false;
+                        DragModel.source-pane-path = "";
+                        DragModel.over-pane-path = "";
+                        DragModel.over-tab-bar = false;
+                        DragModel.over-terminal = false;
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        DragModel.pointer-x = self.absolute-position.x + self.mouse-x;
+                        DragModel.pointer-y = self.absolute-position.y + self.mouse-y;
+                        // Ambang sama dengan chip tab (6px) supaya klik
+                        // untuk memfokuskan pane tidak ikut terbaca
+                        // sebagai seret.
+                        if (!DragModel.active
+                            && (Math.abs(self.mouse-x - self.pressed-x) > 6px
+                                || Math.abs(self.mouse-y - self.pressed-y) > 6px)) {
+                            DragModel.active = true;
+                            DragModel.source-pane-path = root.path;
+                            // `tab-id` sengaja tidak diisi: untuk drag
+                            // pane, Rust bekerja dengan path, bukan id
+                            // sesi. Mengisinya hanya menciptakan dua
+                            // sumber kebenaran untuk hal yang sama.
+                            DragModel.label = root.label;
+                        }
+                    }
+                }
+
+                clicked => {
+                    if (!DragModel.active) {
+                        SplitModel.pane-focused(root.path);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 4px;
+                spacing: 6px;
+                // SENGAJA tanpa `alignment: start`: alignment itu
+                // membagikan anak dari kiri dengan ukuran minimumnya
+                // dan MENGABAIKAN horizontal-stretch, sehingga tombol
+                // ikut menempel di belakang teks alamat alih-alih di
+                // tepi kanan. Dengan alignment bawaan (stretch), spacer
+                // di bawah yang menyerap sisa ruang.
+
+                VerticalLayout {
+                    alignment: center;
+                    vertical-stretch: 0;
+                    horizontal-stretch: 0;
+                    StatusDot {
+                        status: root.status == 2 ? "online"
+                            : root.status == 1 ? "connecting"
+                            : root.status == 3 ? "failed"
+                            : "offline";
+                    }
+                }
+
+                Text {
+                    text: root.label;
+                    color: root.focused ? Tokens.on-surface : Tokens.on-surface-variant;
+                    font-family: Tokens.font-body;
+                    font-size: 11px;
+                    font-weight: root.focused ? 700 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                }
+                Text {
+                    text: root.address;
+                    color: Tokens.outline;
+                    font-family: Tokens.font-mono;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                }
+
+                // Spacer yang mendorong tombol ke tepi kanan. Dipisah
+                // dari teks alamat (yang dulu memegang stretch-nya)
+                // supaya alamat berhenti tepat setelah teksnya dan
+                // ruang kosongnya tidak bisa salah terbaca sebagai
+                // bagian dari label yang bisa diseret.
+                Rectangle { horizontal-stretch: 1; }
+
+                // Focus mode: pane ini memenuhi area, sisanya jadi
+                // daftar di sidebar. Ikonnya kotak penuh (lawan dari
+                // kotak-terbelah milik tombol split) supaya arah
+                // tindakannya terbaca tanpa teks.
+                Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    border-radius: Tokens.radius-sm;
+                    background: focus-area.has-hover ? Tokens.surface-container-highest : transparent;
+                    focus-area := TouchArea {
+                        clicked => {
+                            // Pindahkan fokus ke pane ini DULU, baru
+                            // masuk focus mode — kalau tidak, yang
+                            // memenuhi layar adalah pane lain yang
+                            // kebetulan sedang aktif, bukan yang
+                            // tombolnya ditekan.
+                            SplitModel.pane-focused(root.path);
+                            SplitModel.focus-mode-toggled();
+                        }
+                    }
+                    Rectangle {
+                        width: 10px;
+                        height: 9px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        border-width: 1px;
+                        border-color: focus-area.has-hover ? Tokens.on-surface : Tokens.outline;
+                        border-radius: 2px;
+                    }
+                }
+
+                // Tutup PANE, bukan sesinya — sesi tetap hidup dan
+                // tabnya tetap ada di tab bar (lihat komentar global
+                // `SplitModel` di models.slint). Menutup sesi orang
+                // hanya karena pane-nya ditutup adalah kehilangan kerja
+                // yang tidak bisa dibatalkan.
+                Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    border-radius: Tokens.radius-sm;
+                    background: close-area.has-hover ? Tokens.surface-container-highest : transparent;
+                    close-area := TouchArea {
+                        clicked => { SplitModel.close-pane-requested(root.path); }
+                    }
+                    Text {
+                        text: "×";
+                        color: close-area.has-hover ? Tokens.on-surface : Tokens.outline;
+                        font-family: Tokens.font-body;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                }
+            }
+        }
+
+        // Area terminal. Semua event dirutekan dengan `root.path`
+        // eksplisit — lihat komentar `pane-input-requested` di
+        // models.slint soal kenapa tujuan ketikan tidak boleh implisit.
+        TerminalSurface {
+            rows: root.rows;
+            // Pintasan dinyalakan di sini saja — bukan di
+            // `TerminalView`, yang tidak punya pane untuk ditutup.
+            pane-shortcuts: true;
+            shortcut-focus-mode() => {
+                SplitModel.pane-focused(root.path);
+                SplitModel.focus-mode-toggled();
+            }
+            shortcut-close-pane() => { SplitModel.close-pane-requested(root.path); }
+            input(bytes) => { SplitModel.pane-input-requested(root.path, bytes); }
+            scroll-lines(lines) => { SplitModel.pane-scroll-requested(root.path, lines); }
+            grid-resized(cols, row-count) => { SplitModel.pane-grid-resized(root.path, cols, row-count); }
+        }
+    }
+
+    // Klik di badan terminal -> pindahkan fokus ke pane ini.
+    //
+    // Dideklarasikan SETELAH konten supaya berada di z-order atas, tapi
+    // sengaja hanya dipasang waktu pane BELUM fokus: `TerminalSurface`
+    // di bawahnya tetap butuh klik untuk seleksi teks, jadi begitu pane
+    // fokus lapisan ini hilang dan seleksi bekerja normal. Satu klik
+    // untuk memindahkan fokus, klik berikutnya sudah menyeleksi.
+    //
+    // Mulai DI BAWAH baris judul, bukan dari y=0. Kalau menutupi judul
+    // juga, pane yang belum fokus tidak bisa diseret maupun ditutup —
+    // overlay ini berada di z-order paling atas, jadi ia akan menelan
+    // event pegangan seret dan tombol "×" di sana.
+    if !root.focused : TouchArea {
+        y: root.header-height;
+        width: 100%;
+        height: parent.height - root.header-height;
+        clicked => { SplitModel.pane-focused(root.path); }
+    }
+
+    // Lapisan hijau yang memenuhi pane saat tab diseret ke atasnya.
+    //
+    // Garis tepi saja tidak cukup: dengan beberapa pane bersebelahan,
+    // perbedaan 1px vs 2px di tepi harus dicari dengan mata, sedangkan
+    // yang perlu dijawab seketika saat tangan masih memegang tab adalah
+    // "pane MANA yang akan menerima ini". Isian warna menjawab itu dari
+    // sudut mata.
+    //
+    // Tanpa TouchArea — murni visual. Menambahkan TouchArea di sini
+    // justru merusak drop-nya, karena deteksi zona drop membandingkan
+    // koordinat pointer, bukan hover.
+    // Hanya menutupi PARUH yang akan ditempati pane baru, bukan seluruh
+    // pane. Pane yang menyala penuh menjanjikan "terminal ini diganti",
+    // padahal yang terjadi adalah pane ini dibelah — jadi preview-nya
+    // harus berbentuk sama dengan hasilnya.
+    //
+    // Paruh KEDUA, karena `Workspace::split_leaf` menaruh sesi yang
+    // masuk sebagai `second` dengan ratio 0.5: kanan untuk belah
+    // kiri-kanan (orientation 1), bawah untuk belah atas-bawah (2).
+    // Kalau urutan itu berubah di Rust, paruh di sini harus ikut.
+    if root.drag-over : Rectangle {
+        x: DragModel.drop-orientation == 1 ? parent.width / 2 : 0px;
+        y: DragModel.drop-orientation == 2 ? parent.height / 2 : 0px;
+        width: DragModel.drop-orientation == 1 ? parent.width / 2 : parent.width;
+        height: DragModel.drop-orientation == 2 ? parent.height / 2 : parent.height;
+        background: Tokens.primary-container.with-alpha(0.28);
+    }
+
+    // Tooltip kedua tombol judul. Dideklarasikan PALING AKHIR supaya
+    // berada di z-order teratas — kalau lebih awal, overlay fokus di
+    // atas akan menutupinya.
+    //
+    // Disembunyikan selama drag: saat menyeret pane, kursor melewati
+    // banyak baris judul dan tooltip yang berkedip di sepanjang jalan
+    // hanya menghalangi pandangan ke zona drop.
+    //
+    // Ditempel ke tepi kanan pane, bukan ke posisi tombolnya: kedua
+    // tombol memang sudah di sana, dan `Math.max` menjaga tooltip tetap
+    // terlihat di pane yang sempit.
+    if focus-area.has-hover && !DragModel.active : PaneTooltip {
+        label: "Focus mode";
+        shortcut: "Ctrl+Shift+M";
+        x: Math.max(4px, root.width - self.width - 4px);
+        y: root.header-height + 4px;
+    }
+    if close-area.has-hover && !DragModel.active : PaneTooltip {
+        label: "Close pane";
+        shortcut: "Ctrl+Shift+W";
+        x: Math.max(4px, root.width - self.width - 4px);
+        y: root.header-height + 4px;
+    }
+}
+
+// Split view: pane-pane workspace beserta pembatasnya.
+//
+// Root-nya `Rectangle` polos dan geometrinya manual, bukan
+// `HorizontalLayout`/`VerticalLayout`: anak langsung sebuah layout
+// x/y-nya dikelola layout itu dan binding manual diabaikan (pelajaran
+// yang sudah dicatat di `page-sftp.slint` dan `EmptyHostsNotice`).
+// Posisi tiap pane datang sebagai pecahan dari Rust, jadi memang harus
+// ditempatkan sendiri.
+export component SplitTerminalView inherits Rectangle {
+    // Lebar pembatas sekaligus celah antar pane.
+    property <length> divider-size: 6px;
+
+    // --- Tata letak biasa (bukan focus mode).
+    //
+    // Geometri tiap pane datang sebagai PECAHAN dari Rust
+    // (`pane_fractions()`), bukan dihitung di sini. Lihat komentar
+    // `SplitPane.fx` di models.slint: Slint tidak punya komponen
+    // rekursif, jadi tata letak bersarang harus diratakan di Rust dan
+    // dirender sebagai daftar datar. Konsekuensinya bagus — menambah
+    // kedalaman sarang nanti tidak menyentuh file ini sama sekali.
+    //
+    // Celah antar pane dibuat dengan menyusutkan tiap persegi setengah
+    // `divider-size` di tiap sisi yang bersentuhan. Lebih sederhana
+    // daripada menghitung posisi pembatas dulu lalu menyisakan ruang.
+    if !SplitModel.focus-mode : Rectangle {
+        width: 100%;
+        height: 100%;
+
+        for pane in SplitModel.panes : TerminalPane {
+            path: pane.path;
+            label: pane.label;
+            address: pane.address;
+            status: pane.status;
+            rows: pane.rows;
+            focused: SplitModel.active-path == pane.path;
+
+            x: parent.width * pane.fx + (pane.fx > 0 ? root.divider-size / 2 : 0px);
+            y: parent.height * pane.fy + (pane.fy > 0 ? root.divider-size / 2 : 0px);
+            width: parent.width * pane.fw
+                - (pane.fx > 0 ? root.divider-size / 2 : 0px)
+                - (pane.fx + pane.fw < 1.0 ? root.divider-size / 2 : 0px);
+            height: parent.height * pane.fh
+                - (pane.fy > 0 ? root.divider-size / 2 : 0px)
+                - (pane.fy + pane.fh < 1.0 ? root.divider-size / 2 : 0px);
+        }
+    }
+
+    // --- Focus mode: satu pane memenuhi area, sisanya jadi daftar.
+    if SplitModel.focus-mode : HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+
+        // Sidebar daftar terminal di workspace ini. Lebar tetap, bukan
+        // proporsional: daftar nama tidak bertambah panjang hanya
+        // karena jendela dilebarkan.
+        Rectangle {
+            width: 220px;
+            horizontal-stretch: 0;
+            background: Tokens.surface-container-low;
+            border-radius: Tokens.radius-md;
+
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    vertical-stretch: 0;
+                    Text {
+                        text: "Terminals";
+                        color: Tokens.on-surface-variant;
+                        font-family: Tokens.font-body;
+                        font-size: 12px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: SplitModel.panes.length;
+                        color: Tokens.outline;
+                        font-family: Tokens.font-mono;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                for pane in SplitModel.panes : Rectangle {
+                    height: 44px;
+                    vertical-stretch: 0;
+                    border-radius: Tokens.radius-sm;
+                    background: SplitModel.active-path == pane.path
+                        ? Tokens.surface-container-high
+                        : (entry-touch.has-hover ? Tokens.surface-container : transparent);
+                    animate background { duration: Tokens.transition-fast; }
+
+                    entry-touch := TouchArea {
+                        clicked => { SplitModel.pane-focused(pane.path); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            vertical-stretch: 0;
+                            StatusDot {
+                                status: pane.status == 2 ? "online"
+                                    : pane.status == 1 ? "connecting"
+                                    : pane.status == 3 ? "failed"
+                                    : "offline";
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: pane.label;
+                                color: SplitModel.active-path == pane.path
+                                    ? Tokens.on-surface : Tokens.on-surface-variant;
+                                font-family: Tokens.font-body;
+                                font-size: 12px;
+                                font-weight: SplitModel.active-path == pane.path ? 700 : 400;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: pane.address;
+                                color: Tokens.outline;
+                                font-family: Tokens.font-mono;
+                                font-size: 10px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pane yang sedang fokus, memenuhi sisa area.
+        //
+        // Dicari dengan `for` + `if` karena Slint tidak punya cara
+        // imperatif mencari elemen di dalam array dari sebuah binding
+        // (pola yang sama sudah dicatat di `TerminalTabsModel
+        // .active-tab-label`, models.slint). Hanya satu yang lolos
+        // filter, jadi hasilnya satu pane.
+        Rectangle {
+            horizontal-stretch: 1;
+            for pane in SplitModel.panes : TerminalPane {
+                visible: SplitModel.active-path == pane.path;
+                width: SplitModel.active-path == pane.path ? parent.width : 0px;
+                height: SplitModel.active-path == pane.path ? parent.height : 0px;
+                path: pane.path;
+                label: pane.label;
+                address: pane.address;
+                status: pane.status;
+                rows: pane.rows;
+                focused: true;
+            }
+        }
+    }
+
+    // --- Pembatas, satu per simpul internal pohon.
+    //
+    // Datang sebagai daftar dari Rust (`flatten()`), bukan dihitung di
+    // sini: pohon bersarang bisa punya banyak pembatas pada kedalaman
+    // berbeda, dan hanya Rust yang tahu bentuk pohonnya.
+    if !SplitModel.focus-mode : Rectangle {
+        width: 100%;
+        height: 100%;
+
+        for divider in SplitModel.dividers : Rectangle {
+            // Ratio LOKAL selama drag supaya pembatas mengikuti kursor
+            // tanpa menunggu bolak-balik ke Rust.
+            property <float> live-ratio: divider.ratio;
+            property <float> drag-origin: divider.ratio;
+
+            // Geseran piksel SELAMA jari masih menekan.
+            //
+            // Ini yang sebelumnya hilang: `live-ratio` dihitung tapi
+            // tidak pernah dipakai untuk apa pun sampai tombol dilepas,
+            // jadi pembatas diam di tempat sepanjang gerakan dan
+            // seretannya terasa tidak berfungsi sama sekali. Pane tidak
+            // bisa ikut bergerak hidup — bentuk pohon hanya diketahui
+            // Rust — tapi PEMBATASNYA bisa, dan garis yang mengikuti
+            // kursor sudah cukup untuk menunjukkan di mana batas baru
+            // akan jatuh.
+            property <length> drag-offset: 0px;
+
+            x: (divider.horizontal
+                    ? parent.width * divider.fx - root.divider-size / 2
+                    : parent.width * divider.fx)
+                + (divider.horizontal ? self.drag-offset : 0px);
+            y: (divider.horizontal
+                    ? parent.height * divider.fy
+                    : parent.height * divider.fy - root.divider-size / 2)
+                + (divider.horizontal ? 0px : self.drag-offset);
+            width: divider.horizontal ? root.divider-size : parent.width * divider.fw;
+            height: divider.horizontal ? parent.height * divider.fh : root.divider-size;
+
+            background: drag-area.pressed ? Tokens.primary-container.with-alpha(0.35)
+                : drag-area.has-hover ? Tokens.primary.with-alpha(0.35)
+                : transparent;
+            animate background { duration: Tokens.transition-fast; }
+
+            // Pegangan yang SELALU terlihat, samar saat diam dan biru
+            // penuh saat dipegang.
+            //
+            // Celah 6px antar pane tanpa penanda apa pun tidak memberi
+            // tahu siapa pun bahwa ia bisa diseret; sebelumnya pembatas
+            // hanya muncul setelah kursor kebetulan lewat di atasnya.
+            Rectangle {
+                width: divider.horizontal ? 3px : 28px;
+                height: divider.horizontal ? 28px : 3px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: 2px;
+                background: drag-area.pressed || drag-area.has-hover
+                    ? Tokens.primary-container
+                    : Tokens.outline-variant;
+                animate background { duration: Tokens.transition-fast; }
+            }
+
+            drag-area := TouchArea {
+                mouse-cursor: divider.horizontal ? MouseCursor.col-resize : MouseCursor.row-resize;
+
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.down) {
+                        parent.drag-origin = divider.ratio;
+                        parent.drag-offset = 0px;
+                    }
+                    // Dikirim SEKALI saat dilepas, bukan tiap piksel:
+                    // menulis state di tiap event `moved` berarti
+                    // ratusan tulis untuk satu gerakan tangan.
+                    if (ev.kind == PointerEventKind.up) {
+                        SplitModel.ratio-changed(divider.path, parent.live-ratio);
+                        // Dinolkan supaya garis kembali diposisikan oleh
+                        // `fx/fy` hasil hitungan Rust. Kalau offset-nya
+                        // dibiarkan, geserannya akan terhitung DUA KALI
+                        // begitu Rust mengirim pecahan yang baru.
+                        parent.drag-offset = 0px;
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        // Geseran piksel dibagi panjang simpul INDUK
+                        // (`span` x ukuran wadah), bukan ukuran wadah
+                        // penuh — tanpa itu pembatas di simpul yang
+                        // dalam akan bergerak jauh lebih cepat daripada
+                        // yang di akar.
+                        parent.live-ratio = Math.min(0.85, Math.max(0.15,
+                            divider.horizontal
+                                ? parent.drag-origin + (self.mouse-x - self.pressed-x) / (root.width * divider.span)
+                                : parent.drag-origin + (self.mouse-y - self.pressed-y) / (root.height * divider.span)));
+                        // Diturunkan dari `live-ratio` yang SUDAH
+                        // diclamp, bukan langsung dari geseran kursor:
+                        // kalau tidak, garis terus mengikuti kursor
+                        // melewati batas 15%/85% lalu melompat mundur
+                        // saat dilepas.
+                        parent.drag-offset = (parent.live-ratio - parent.drag-origin)
+                            * divider.span
+                            * (divider.horizontal ? root.width : root.height);
+                    }
+                }
+            }
+        }
+    }
+}

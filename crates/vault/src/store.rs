@@ -162,6 +162,17 @@ impl VaultStore {
     /// verifier. Vault langsung ke-unlock setelah ini (user baru saja
     /// mengetik password-nya, tidak perlu ketik ulang).
     pub fn initialize(&mut self, master_password: &str) -> Result<(), VaultError> {
+        // Dijaga di SINI, bukan cuma di dialog Slint: UI hanyalah satu
+        // dari beberapa pemanggil (`state.rs`, test, dan pemanggil baru
+        // mana pun nanti), dan penjagaan yang hanya ada di UI akan
+        // dilewati oleh semua pemanggil lainnya.
+        //
+        // Spasi-saja ikut ditolak, tapi HANYA waktu membuat — supaya
+        // password yang mustahil diketik ulang dengan benar tidak pernah
+        // sempat menjadi satu-satunya kunci ke kredensial seseorang.
+        if master_password.trim().is_empty() {
+            return Err(VaultError::EmptyPassword);
+        }
         if self.is_initialized()? {
             return Err(VaultError::Database("vault sudah pernah dibuat".into()));
         }
@@ -181,6 +192,17 @@ impl VaultStore {
     }
 
     pub fn unlock(&mut self, master_password: &str) -> Result<(), VaultError> {
+        // Ditolak SEBELUM derive key, bukan sesudah.
+        //
+        // Di sini `is_empty()`, BUKAN `trim().is_empty()` seperti di
+        // `initialize`: vault yang dibuat sebelum penjagaan ini ada
+        // mungkin password-nya memang spasi, dan menolaknya di sini
+        // berarti mengunci orang itu dari datanya sendiri secara
+        // permanen. Password kosong tidak punya masalah itu — kosong
+        // berarti vault-nya tidak pernah benar-benar terkunci.
+        if master_password.is_empty() {
+            return Err(VaultError::EmptyPassword);
+        }
         let (salt, verifier): (Vec<u8>, Vec<u8>) = self
             .conn
             .query_row("SELECT salt, verifier FROM vault_meta WHERE id = 1", [], |row| {
@@ -567,6 +589,27 @@ mod tests {
         store.initialize("password-kuat-123").unwrap();
         let mode = std::fs::metadata(store.db_path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn master_password_kosong_ditolak_saat_membuat() {
+        let mut store = temp_store();
+        assert!(matches!(store.initialize(""), Err(VaultError::EmptyPassword)));
+        assert!(matches!(store.initialize("   "), Err(VaultError::EmptyPassword)));
+        // Yang penting bukan cuma error-nya, tapi bahwa vault-nya TIDAK
+        // ikut terbuka: `initialize` yang gagal tapi meninggalkan kunci
+        // di memori sama saja dengan tidak menolak apa pun.
+        assert!(!store.is_unlocked());
+        assert!(!store.is_initialized().unwrap());
+    }
+
+    #[test]
+    fn master_password_kosong_ditolak_saat_unlock() {
+        let mut store = temp_store();
+        store.initialize("password-kuat-123").unwrap();
+        store.lock();
+        assert!(matches!(store.unlock(""), Err(VaultError::EmptyPassword)));
+        assert!(!store.is_unlocked());
     }
 
     #[test]
